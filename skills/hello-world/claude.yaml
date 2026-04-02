@@ -1,0 +1,5 @@
+# Claude Code specific overrides for hello-world skill
+# These fields are merged into SKILL.md frontmatter during install
+
+user-invocable: true
+argument-hint: "[name]"
