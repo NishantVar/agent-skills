@@ -17,52 +17,36 @@ usage() {
   exit 1
 }
 
-uninstall_claude() {
-  local skill_name="$1"
-  local dest="$CLAUDE_SKILLS/$skill_name"
-
-  if [[ -d "$dest" ]]; then
-    rm -rf "$dest"
-    echo "  Removed $skill_name from Claude Code ($dest)"
-  else
-    echo "  $skill_name not installed for Claude Code (skipped)"
-  fi
+agent_label() {
+  echo "$1" | awk '{print toupper(substr($0,1,1)) substr($0,2)}'
 }
 
-uninstall_symlink() {
-  local agent="$1"
-  local skill_name="$2"
-  local dest_base
-
-  case "$agent" in
-    codex) dest_base="$CODEX_SKILLS" ;;
-    gemini) dest_base="$GEMINI_SKILLS" ;;
+dest_for_agent() {
+  case "$1" in
+    claude) echo "$CLAUDE_SKILLS" ;;
+    codex)  echo "$CODEX_SKILLS" ;;
+    gemini) echo "$GEMINI_SKILLS" ;;
   esac
-
-  local dest="$dest_base/$skill_name"
-  local agent_label
-  agent_label="$(echo "$agent" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
-
-  if [[ -L "$dest" ]]; then
-    rm "$dest"
-    echo "  Removed $skill_name from $agent_label ($dest)"
-  elif [[ -d "$dest" ]]; then
-    rm -rf "$dest"
-    echo "  Removed $skill_name from $agent_label ($dest)"
-  else
-    echo "  $skill_name not installed for $agent_label (skipped)"
-  fi
 }
 
 uninstall_skill() {
   local agent="$1"
   local skill_name="$2"
+  local dest_base
+  dest_base="$(dest_for_agent "$agent")"
+  local dest="$dest_base/$skill_name"
+  local label
+  label="$(agent_label "$agent")"
 
-  case "$agent" in
-    claude) uninstall_claude "$skill_name" ;;
-    codex)  uninstall_symlink codex "$skill_name" ;;
-    gemini) uninstall_symlink gemini "$skill_name" ;;
-  esac
+  if [[ -L "$dest" ]]; then
+    rm "$dest"
+    echo "  Removed $skill_name from $label"
+  elif [[ -d "$dest" ]]; then
+    rm -rf "$dest"
+    echo "  Removed $skill_name from $label"
+  else
+    echo "  $skill_name not installed for $label (skipped)"
+  fi
 }
 
 uninstall_all_skills() {

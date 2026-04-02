@@ -17,93 +17,29 @@ usage() {
   exit 1
 }
 
-# Merge claude.yaml fields into SKILL.md frontmatter.
-# Reads SKILL.md, extracts frontmatter, appends claude.yaml fields,
-# writes combined file to destination.
-merge_claude_skill() {
-  local skill_dir="$1"
-  local dest_dir="$2"
-  local skill_md="$skill_dir/SKILL.md"
-  local claude_yaml="$skill_dir/claude.yaml"
-
-  mkdir -p "$dest_dir"
-
-  if [[ ! -f "$claude_yaml" ]]; then
-    # No Claude overrides — copy SKILL.md as-is
-    cp "$skill_md" "$dest_dir/SKILL.md"
-  else
-    # Extract frontmatter and body from SKILL.md
-    local in_frontmatter=false
-    local frontmatter_done=false
-    local frontmatter=""
-    local body=""
-
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      if [[ "$frontmatter_done" == true ]]; then
-        body+="$line"$'\n'
-      elif [[ "$in_frontmatter" == false && "$line" == "---" ]]; then
-        in_frontmatter=true
-      elif [[ "$in_frontmatter" == true && "$line" == "---" ]]; then
-        frontmatter_done=true
-      elif [[ "$in_frontmatter" == true ]]; then
-        frontmatter+="$line"$'\n'
-      fi
-    done < "$skill_md"
-
-    # Extract non-comment, non-empty lines from claude.yaml
-    local claude_fields=""
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      # Skip comments and empty lines
-      [[ "$line" =~ ^[[:space:]]*# ]] && continue
-      [[ -z "${line// /}" ]] && continue
-      claude_fields+="$line"$'\n'
-    done < "$claude_yaml"
-
-    # Write merged SKILL.md
-    {
-      echo "---"
-      printf '%s' "$frontmatter"
-      printf '%s' "$claude_fields"
-      echo "---"
-      printf '%s' "$body"
-    } > "$dest_dir/SKILL.md"
-  fi
-
-  # Copy supporting directories if they exist
-  for subdir in references scripts assets; do
-    if [[ -d "$skill_dir/$subdir" ]]; then
-      cp -r "$skill_dir/$subdir" "$dest_dir/"
-    fi
-  done
+agent_label() {
+  echo "$1" | awk '{print toupper(substr($0,1,1)) substr($0,2)}'
 }
 
-install_claude() {
-  local skill_name="$1"
-  local skill_dir="$SKILLS_DIR/$skill_name"
-  local dest_dir="$CLAUDE_SKILLS/$skill_name"
-
-  if [[ -d "$dest_dir" ]]; then
-    rm -rf "$dest_dir"
-  fi
-
-  merge_claude_skill "$skill_dir" "$dest_dir"
-  echo "  Installed $skill_name for Claude Code (copied to $dest_dir)"
+dest_for_agent() {
+  case "$1" in
+    claude) echo "$CLAUDE_SKILLS" ;;
+    codex)  echo "$CODEX_SKILLS" ;;
+    gemini) echo "$GEMINI_SKILLS" ;;
+  esac
 }
 
-install_symlink() {
+install_skill() {
   local agent="$1"
   local skill_name="$2"
   local skill_dir="$SKILLS_DIR/$skill_name"
   local dest_base
-
-  case "$agent" in
-    codex) dest_base="$CODEX_SKILLS" ;;
-    gemini) dest_base="$GEMINI_SKILLS" ;;
-  esac
+  dest_base="$(dest_for_agent "$agent")"
 
   mkdir -p "$dest_base"
   local dest="$dest_base/$skill_name"
 
+  # Remove existing install (symlink or directory)
   if [[ -L "$dest" ]]; then
     rm "$dest"
   elif [[ -d "$dest" ]]; then
@@ -111,20 +47,7 @@ install_symlink() {
   fi
 
   ln -s "$skill_dir" "$dest"
-  local agent_label
-  agent_label="$(echo "$agent" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
-  echo "  Installed $skill_name for $agent_label (symlinked to $dest)"
-}
-
-install_skill() {
-  local agent="$1"
-  local skill_name="$2"
-
-  case "$agent" in
-    claude) install_claude "$skill_name" ;;
-    codex)  install_symlink codex "$skill_name" ;;
-    gemini) install_symlink gemini "$skill_name" ;;
-  esac
+  echo "  Installed $skill_name for $(agent_label "$agent") (symlinked)"
 }
 
 install_all_skills() {

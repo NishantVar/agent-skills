@@ -3,6 +3,8 @@ name: hello-world
 description: >-
   A sample skill that demonstrates the cross-agent skill format.
   Use when the user asks for a greeting or to test that skills are working.
+user-invocable: true
+argument-hint: "[name]"
 ---
 
 # Hello World
