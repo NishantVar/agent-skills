@@ -10,7 +10,7 @@ All three agents use the same core format: `SKILL.md` with `name` + `description
 agent-skills/
 ├── install.sh
 ├── uninstall.sh
-├── test.sh
+├── validate.sh
 ├── README.md
 └── skills/
     └── <skill-name>/
@@ -43,10 +43,10 @@ All agents are installed via symlink. Agent-specific frontmatter fields (e.g. Cl
 ./uninstall.sh codex my-skill # Remove single skill
 ```
 
-## Test
+## Validate
 
 ```bash
-./test.sh   # Validates format, install, uninstall, idempotency
+./validate.sh   # Checks all skills follow the format rules
 ```
 
 ## Adding a Skill
