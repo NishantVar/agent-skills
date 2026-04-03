@@ -4,6 +4,15 @@ Write a skill once, use it in Claude Code, Codex CLI, and Gemini CLI.
 
 All three agents use the same core format: `SKILL.md` with `name` + `description` YAML frontmatter ([Agent Skills open standard](https://agentskills.io/specification)). Each agent reads what it understands and ignores the rest.
 
+## Skills
+
+| Skill | Description |
+|-------|-------------|
+| `find-session` | Search and resume previous sessions by keyword (Claude Code only) |
+| `fork-terminal` | Fork a new terminal pane running an agentic coding tool with a plan or summary |
+| `judgy` | Opinionated code reviewer that spawns a second agent to critique your staged changes |
+| `prompt-builder` | Interactive prompt crafting with iterative refinement and versioned saves |
+
 ## Install / Uninstall
 
 ```bash
