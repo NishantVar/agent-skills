@@ -1,0 +1,3 @@
+- **HIGH**: Bugs, crashes, data loss, security vulnerabilities, broken logic
+- **MEDIUM**: Performance problems, missing error handling, race conditions, bad patterns that will cause maintenance pain
+- **LOW**: Style nits, naming suggestions, minor readability improvements, documentation gaps
