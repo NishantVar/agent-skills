@@ -9,10 +9,10 @@ All three agents use the same core format: `SKILL.md` with `name` + `description
 | Skill | Description |
 |-------|-------------|
 | `find-session` | Search and resume previous sessions by keyword (Claude Code only) |
+| `prompt-builder` | Interactive prompt crafting with iterative refinement and versioned saves |
 | `first-principles` | Decompose any idea, problem, or decision down to its fundamental truths through collaborative iterative questioning |
 | `fork-terminal` | Fork a new terminal pane running an agentic coding tool with a plan or summary |
 | `judgy` | Opinionated code reviewer that spawns a second agent to critique your staged changes |
-| `prompt-builder` | Interactive prompt crafting with iterative refinement and versioned saves |
 
 ## Install / Uninstall
 
@@ -27,6 +27,17 @@ All three agents use the same core format: `SKILL.md` with `name` + `description
 ```bash
 ./validate.sh   # Checks all skills follow the format rules
 ```
+
+## Porting a Skill
+
+If a skill lives in a local agent directory (e.g. `~/.claude/skills/`) but not yet in this repo, use `port.sh` to bring it in:
+
+```bash
+./port.sh claude my-skill        # Copy from ~/.claude/skills/my-skill
+./port.sh claude my-skill --force  # Overwrite if it already exists
+```
+
+`port.sh` copies the skill, validates it, and automatically adds it to the README skills table.
 
 ## Adding a Skill
 
