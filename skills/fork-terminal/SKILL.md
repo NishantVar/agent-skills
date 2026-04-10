@@ -1,6 +1,9 @@
 ---
 name: fork-terminal
-description: Fork a terminal session to a new terminal window. Use this when the user requests 'fork terminal' or 'create a new terminal' or 'new terminal: <command>' or 'fork session: <command>'.
+description: >
+  Fork a terminal session to a new terminal window. Use this when the user requests
+  "fork terminal" or "create a new terminal" or "new terminal: <command>" or
+  "fork session: <command>".
 ---
 
 # Purpose
@@ -21,9 +24,13 @@ PLAN_SAVE_DIR: auto               # auto | explicit path. "auto" checks: ~/Docum
 
 ## Instructions
 
-- On the FIRST time this skill is triggered in a session, tell the user:
-  "Fork Terminal is using **auto** detection (cmux > tmux > native). You can override this by setting `TERMINAL_BACKEND` in this skill's SKILL.md file."
+- If you are Codex, default `TERMINAL_BACKEND` to `cmux` unless the user explicitly asks for a different backend or explicitly asks for auto detection. In Claude and other environments, keep the existing `auto` behavior.
+- On the FIRST time this skill is triggered in a session:
+  - If you are Codex and the user did not explicitly choose a backend, tell the user: "Fork Terminal is defaulting to **cmux** in Codex. You can override this by setting `TERMINAL_BACKEND` in this skill's SKILL.md file or by explicitly naming a backend in your request."
+  - Otherwise, tell the user: "Fork Terminal is using **auto** detection (cmux > tmux > native). You can override this by setting `TERMINAL_BACKEND` in this skill's SKILL.md file."
 - Based on the user's request, follow the `Cookbook` to determine which tool to use.
+- If the user gives an exact launcher command or shell alias, preserve it verbatim. Do not replace `cx` with `claude`, and do not expand aliases unless the user explicitly asks you to.
+- Assume user-defined aliases and functions live in their interactive shell startup files. When a command depends on shell initialization, run it through an interactive login shell, for example: `zsh -lic 'cx'`.
 
 ### Fork with Plan
 
@@ -65,8 +72,9 @@ PLAN_SAVE_DIR: auto               # auto | explicit path. "auto" checks: ~/Docum
 2. READ: `.claude/skills/fork-terminal/tools/fork_terminal.py` to understand our tooling.
 3. Follow the `Cookbook` to determine which tool to use.
 4. Execute via bash: `python3 .claude/skills/fork-terminal/tools/fork_terminal.py --backend TERMINAL_BACKEND --split SPLIT_DIRECTION <command>`
-   - Replace `TERMINAL_BACKEND` and `SPLIT_DIRECTION` with their values from the Variables section above.
+   - Replace `TERMINAL_BACKEND` and `SPLIT_DIRECTION` with their resolved values for the current environment. If you are Codex and the user did not explicitly choose a backend, use `cmux` for `TERMINAL_BACKEND`.
    - `<command>` is the full command string built from the Cookbook (e.g. `claude --model opus --dangerously-skip-permissions`).
+   - If the command is a shell alias or depends on shell startup files, wrap it in an interactive login shell (e.g. `zsh -lic 'cx'`) before passing it to `fork_terminal.py`.
 
 ### Sending prompts to agentic tools (delayed input)
 

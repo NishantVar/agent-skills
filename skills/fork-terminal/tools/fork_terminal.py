@@ -6,6 +6,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import inspect
 
 
 def resolve_direction(split_direction: str, backend: str) -> str:
@@ -131,7 +132,21 @@ def fork_terminal(command: str, backend: str = "auto", split_direction: str = "a
         except Exception as e:
             return f"Error reading delayed input file: {e}"
 
-    return module.fork(command, cwd, direction, delayed_input=input_text, delay_seconds=delay_seconds)
+    fork_signature = inspect.signature(module.fork)
+    fork_kwargs = {}
+
+    if "delayed_input" in fork_signature.parameters:
+        fork_kwargs["delayed_input"] = input_text
+    elif input_text:
+        return (
+            f"Error: backend '{backend}' does not support delayed input. "
+            "Use a backend that supports it, or pass the prompt directly in the command."
+        )
+
+    if "delay_seconds" in fork_signature.parameters:
+        fork_kwargs["delay_seconds"] = delay_seconds
+
+    return module.fork(command, cwd, direction, **fork_kwargs)
 
 
 if __name__ == "__main__":
