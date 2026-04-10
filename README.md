@@ -28,6 +28,19 @@ All three agents use the same core format: `SKILL.md` with `name` + `description
 ./validate.sh   # Checks all skills follow the format rules
 ```
 
+## Porting a Skill
+
+If a skill lives in a local agent directory (e.g. `~/.claude/skills/`) but not yet in this repo, use `port.sh` to bring it in:
+
+```bash
+./port.sh claude my-skill        # Copy from ~/.claude/skills/my-skill
+./port.sh codex  my-skill        # Copy from ~/.codex/skills/my-skill
+./port.sh gemini my-skill        # Copy from ~/.gemini/skills/my-skill
+./port.sh claude my-skill --force  # Overwrite if it already exists
+```
+
+`port.sh` copies the skill, validates it, and automatically adds it to the README skills table. It also prints the `git add` / `git commit` commands to finish the import.
+
 ## Adding a Skill
 
 1. Create `skills/<skill-name>/SKILL.md`:
