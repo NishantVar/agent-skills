@@ -9,13 +9,39 @@ CODEX_SKILLS="$HOME/.codex/skills"
 GEMINI_SKILLS="$HOME/.gemini/skills"
 
 usage() {
-  echo "Usage: $0 <claude|codex|gemini|all> [skill-name]"
+  echo "Usage: $0 <claude|codex|gemini|all> [skill-name] [--dir /path/to/skills]"
   echo ""
   echo "Install agent skills for the specified agent(s)."
   echo "If skill-name is provided, only that skill is installed."
   echo "Otherwise, all skills are installed."
+  echo ""
+  echo "Options:"
+  echo "  --dir <path>  Use an external skills directory instead of the built-in one"
   exit 1
 }
+
+# Parse --dir flag from arguments
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dir)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --dir requires a path argument" >&2
+        exit 1
+      fi
+      SKILLS_DIR="$(cd "$2" 2>/dev/null && pwd)" || {
+        echo "Error: Directory '$2' does not exist" >&2
+        exit 1
+      }
+      shift 2
+      ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${args[@]}"
 
 agent_label() {
   echo "$1" | awk '{print toupper(substr($0,1,1)) substr($0,2)}'
