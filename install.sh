@@ -9,7 +9,7 @@ CODEX_SKILLS="$HOME/.codex/skills"
 GEMINI_SKILLS="$HOME/.gemini/skills"
 
 usage() {
-  echo "Usage: $0 <claude|codex|gemini|all> [skill-name] [--dir /path/to/skills]"
+  echo "Usage: $0 <claude|codex|gemini|all> [skill-name] [--dir /path/to/skills] [--force]"
   echo ""
   echo "Install agent skills for the specified agent(s)."
   echo "If skill-name is provided, only that skill is installed."
@@ -17,10 +17,12 @@ usage() {
   echo ""
   echo "Options:"
   echo "  --dir <path>  Use an external skills directory instead of the built-in one"
+  echo "  --force       Overwrite existing non-symlinked skills without prompting"
   exit 1
 }
 
-# Parse --dir flag from arguments
+# Parse flags from arguments
+force=false
 args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,6 +36,10 @@ while [[ $# -gt 0 ]]; do
         exit 1
       }
       shift 2
+      ;;
+    --force)
+      force=true
+      shift
       ;;
     *)
       args+=("$1")
@@ -69,7 +75,15 @@ install_skill() {
   if [[ -L "$dest" ]]; then
     rm "$dest"
   elif [[ -d "$dest" ]]; then
-    rm -rf "$dest"
+    if [[ "$force" == true ]]; then
+      echo "  Warning: Overwriting existing '$skill_name' for $(agent_label "$agent") (--force)"
+      rm -rf "$dest"
+    else
+      echo "  Error: '$skill_name' already exists as a local directory for $(agent_label "$agent")" >&2
+      echo "    $dest" >&2
+      echo "    Use --force to overwrite, or remove it manually first." >&2
+      return 1
+    fi
   fi
 
   ln -s "$skill_dir" "$dest"
