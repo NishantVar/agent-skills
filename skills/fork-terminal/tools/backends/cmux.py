@@ -19,8 +19,18 @@ def _send_delayed_input(surface_ref: str | None, text: str, delay: float) -> Non
     send_cmd = ["cmux", "send"]
     if surface_ref:
         send_cmd += ["--surface", surface_ref]
-    send_cmd.append(text + "\n")
+    send_cmd.append(text)
     subprocess.run(send_cmd, capture_output=True, text=True)
+    
+    # Wait before hitting enter to avoid race conditions in interactive CLIs
+    time.sleep(0.5)
+    
+    # Press Enter explicitly via send-key (more reliable than trailing newline)
+    enter_cmd = ["cmux", "send-key"]
+    if surface_ref:
+        enter_cmd += ["--surface", surface_ref]
+    enter_cmd.append("enter")
+    subprocess.run(enter_cmd, capture_output=True, text=True)
 
 
 def fork(command: str, cwd: str, split_direction: str, delayed_input: str | None = None, delay_seconds: float = 5.0) -> str:
@@ -69,7 +79,7 @@ def fork(command: str, cwd: str, split_direction: str, delayed_input: str | None
                 args=(surface_ref, delayed_input, delay_seconds),
             )
             thread.start()
-            thread.join()  # Wait for delayed input to be sent before exiting
+            thread.join(timeout=delay_seconds + 10)
 
         ref_info = f" [ref={surface_ref}]" if surface_ref else ""
         delayed_info = f" [delayed input sent after {delay_seconds}s]" if delayed_input else ""

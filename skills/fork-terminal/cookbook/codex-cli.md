@@ -11,7 +11,9 @@ FAST_MODEL: gpt-5.1-codex-mini
 
 ## Instructions
 
-- Before executing the command, run `codex --help` to understand the command and its options.
+- If the user provides an exact Codex launcher command or alias, use it verbatim. Do not replace it with a hand-built `codex ...` command.
+- Before executing the command, run `codex --help` to understand the command and its options, but only when you are constructing a direct `codex` invocation yourself.
 - Always use interactive mode (so leave off -p and use positional prompt if needed)
 - For the -m (model) argument, use the DEFAULT_MODEL if not specified. If 'fast' is requested, use the FAST_MODEL. If 'heavy' is requested, use the HEAVY_MODEL.
 - Always run with `--dangerously-bypass-approvals-and-sandbox`
+- If the chosen launcher relies on aliases, shell functions, or shell startup files, wrap it in an interactive login shell.

@@ -15,10 +15,18 @@ disable-model-invocation: true
 ## Obsidian Vault
 
 Save every revision to:
-`$OBSIDIAN/Claude/<descriptive-name>.md`
+`$OBSIDIAN/prompts/<descriptive-name>.md`
 
 Do this silently after every meaningful change. Mention it once at the start,
 then just keep the file current without announcing it each time.
+
+The Obsidian file must contain only the prompt content that the user would want
+to copy, pipe, or send directly to an LLM. Do not save phase labels, working
+notes, scoping summaries, critique text, or other prompt-builder commentary in
+the Obsidian file.
+
+If you need a working draft with notes, keep that in scratch storage separately.
+Treat the Obsidian file as the clean exported prompt.
 
 After the first save, always use targeted edits (Edit tool) rather than full
 rewrites (Write tool) — this preserves any manual changes the user may have made.
