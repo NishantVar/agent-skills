@@ -1,44 +1,20 @@
 ---
 name: find-session
-description: >
-  Find Claude Code sessions by custom title or by searching session content across all projects.
-  Use when the user wants to search for a named session, find a session by title,
-  find a session by what was discussed in it, or list all named sessions.
-  Trigger on /find-session or phrases like "find my session", "search sessions by name",
-  "where is my dora session", "find the session where I worked on auth", etc.
-  This works even for sessions that were never renamed — it searches through conversation content.
+description: Find and resume Claude Code sessions by searching titles and conversation content. Use when the user wants to find a previous session, search session history, or resume a session by keyword. Triggers on phrases like "find session", "search sessions", "which session had", "resume the session where", "find the session about".
 ---
 
-# find-session — Search Sessions by Title or Content
+# Find Session
 
-Search for Claude Code sessions across all projects. Works two ways:
+Run the find-session script with the user's search terms and display the results.
 
-- **By title**: finds sessions renamed with `/rename` (matches the custom title)
-- **By content**: searches through user messages in session transcripts, so you can find sessions even if they were never named
+## Steps
 
-## Usage
-
-Search by title or content:
+1. Extract the search terms from the user's request
+2. Run the script:
 
 ```bash
-bash ~/.claude/skills/find-session/scripts/find-session.sh "<search_term>"
+python3 ~/.claude/skills/find-session/scripts/find-session.py <search terms>
 ```
 
-List all named sessions:
-
-```bash
-bash ~/.claude/skills/find-session/scripts/find-session.sh
-```
-
-## Instructions
-
-1. Parse the user's input to extract the search term (if any)
-2. Run the script above
-3. Show the output verbatim
-4. If results are found:
-   - For **named sessions**: remind the user they can resume with `claude --resume <title>`
-   - For **content-matched sessions**: the resume command uses the session ID since there's no title
-
-## Testing
-
-See `TESTING.md` in this skill's directory for instructions on how to generate and run test cases.
+3. Display the output to the user EXACTLY as produced by the script. Do NOT summarize, reformat into tables, or omit any information. Every single result MUST include its full `Resume:` command so the user can copy-paste it.
+4. If the user wants to resume a session, tell them to paste the `Resume:` command in a new terminal.

@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_DIR="$SCRIPT_DIR/skills"
 
+README="$SCRIPT_DIR/README.md"
+
 CLAUDE_SKILLS="$HOME/.claude/skills"
 CODEX_SKILLS="$HOME/.codex/skills"
 GEMINI_SKILLS="$HOME/.gemini/skills"
@@ -25,6 +27,80 @@ usage() {
 
 agent_label() {
   echo "$1" | awk '{print toupper(substr($0,1,1)) substr($0,2)}'
+}
+
+extract_first_sentence() {
+  local skill_md="$SKILLS_DIR/$1/SKILL.md"
+  python3 -c "
+import yaml, re, sys
+
+text = open('$skill_md').read()
+# Extract YAML frontmatter between --- markers
+m = re.match(r'^---\n(.*?)\n---', text, re.DOTALL)
+if not m:
+    sys.exit(1)
+fm = yaml.safe_load(m.group(1))
+desc = fm.get('description', '')
+# Collapse whitespace (multi-line YAML folds)
+desc = ' '.join(desc.split())
+# First sentence: up to the first period followed by a space or end-of-string
+first = re.match(r'([^.]*\.)', desc)
+print(first.group(1) if first else desc)
+"
+}
+
+update_readme() {
+  local name="$1"
+  local desc
+  desc="$(extract_first_sentence "$name")" || return 1
+
+  # Skip if skill already in table
+  if grep -q "| \`$name\` |" "$README"; then
+    echo "  README already has an entry for '$name', skipping."
+    return 0
+  fi
+
+  # Build the new row
+  local new_row="| \`$name\` | $desc |"
+
+  # Insert in alphabetical order within the table.
+  python3 - "$name" "$desc" "$README" <<'PYEOF'
+import sys
+
+name, desc, readme_path = sys.argv[1], sys.argv[2], sys.argv[3]
+new_row = f"| `{name}` | {desc} |\n"
+
+lines = open(readme_path).readlines()
+out = []
+inserted = False
+in_table = False
+
+for line in lines:
+    if line.startswith("| Skill "):
+        in_table = True
+        out.append(line)
+        continue
+    if in_table and line.startswith("|---"):
+        out.append(line)
+        continue
+    if in_table and line.startswith("| `"):
+        if not inserted:
+            existing = line.split("`")[1]
+            if name < existing:
+                out.append(new_row)
+                inserted = True
+        out.append(line)
+        continue
+    if in_table and not line.startswith("|"):
+        if not inserted:
+            out.append(new_row)
+            inserted = True
+        in_table = False
+    out.append(line)
+
+open(readme_path, "w").writelines(out)
+PYEOF
+  echo "  Added '$name' to README skills table."
 }
 
 source_for_agent() {
@@ -129,6 +205,9 @@ echo ""
 if "$SCRIPT_DIR/validate.sh" "$skill_name"; then
   echo ""
   echo "Skill '$skill_name' ported successfully to ./skills/$skill_name/"
+  echo ""
+  echo "Updating README..."
+  update_readme "$skill_name"
 else
   echo ""
   echo "Skill '$skill_name' was copied but has validation warnings."
@@ -139,6 +218,6 @@ fi
 
 echo ""
 echo "Next steps:"
-echo "  git add skills/$skill_name/"
+echo "  git add skills/$skill_name/ README.md"
 echo "  git commit -m 'Add $skill_name skill'"
 echo "  ./install.sh all $skill_name    # symlink it back for all agents"
