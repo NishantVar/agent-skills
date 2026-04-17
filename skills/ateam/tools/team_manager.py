@@ -104,6 +104,48 @@ def list_teams(team=None):
     return {"teams": teams}
 
 
+def update_status(team, name, status):
+    try:
+        data = _load(team)
+    except FileNotFoundError:
+        return {"error": f"Team '{team}' not found"}
+
+    for m in data["members"]:
+        if m["name"] == name:
+            m["status"] = status
+            _save(team, data)
+            return {"ok": True, "member": name, "status": status}
+
+    return {"error": f"Member '{name}' not found in team '{team}'"}
+
+
+def log_message(team, sender, to, sentinel=None, protocol="terminal"):
+    team_dir = _team_dir(team)
+    if not os.path.isdir(team_dir):
+        return {"error": f"Team '{team}' not found"}
+
+    entry = {
+        "from": sender,
+        "to": to,
+        "sentinelId": sentinel,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "protocol": protocol,
+    }
+
+    with open(_log_path(team), "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+    # Increment messageCount for target member
+    data = _load(team)
+    for m in data["members"]:
+        if m["name"] == to:
+            m["messageCount"] = m.get("messageCount", 0) + 1
+            break
+    _save(team, data)
+
+    return {"ok": True, "logged": entry}
+
+
 def _cmd_create(args):
     return create(args.name, description=args.description)
 
@@ -122,6 +164,15 @@ def _cmd_add_member(args):
 
 def _cmd_list(args):
     return list_teams(team=args.team)
+
+
+def _cmd_update_status(args):
+    return update_status(args.team, args.name, args.status)
+
+
+def _cmd_log_message(args):
+    return log_message(args.team, sender=args.sender, to=args.to,
+                       sentinel=args.sentinel, protocol=args.protocol)
 
 
 def main():
@@ -151,6 +202,21 @@ def main():
     p_list = sub.add_parser("list")
     p_list.add_argument("--team", default=None)
     p_list.set_defaults(func=_cmd_list)
+
+    p_status = sub.add_parser("update-status")
+    p_status.add_argument("--team", required=True)
+    p_status.add_argument("--name", required=True)
+    p_status.add_argument("--status", required=True,
+                          choices=["idle", "working", "blocked", "unresponsive"])
+    p_status.set_defaults(func=_cmd_update_status)
+
+    p_log = sub.add_parser("log-message")
+    p_log.add_argument("--team", required=True)
+    p_log.add_argument("--from", dest="sender", required=True)
+    p_log.add_argument("--to", required=True)
+    p_log.add_argument("--sentinel", default=None)
+    p_log.add_argument("--protocol", required=True, choices=["terminal", "native"])
+    p_log.set_defaults(func=_cmd_log_message)
 
     args = parser.parse_args()
     result = args.func(args)
