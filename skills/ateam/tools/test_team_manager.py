@@ -71,5 +71,86 @@ class TestDelete(unittest.TestCase):
         self.assertIn("error", result)
 
 
+class TestAddMember(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self._orig = tm.STATE_DIR
+        tm.STATE_DIR = self.tmpdir
+        tm.create("test-team")
+
+    def tearDown(self):
+        tm.STATE_DIR = self._orig
+        shutil.rmtree(self.tmpdir)
+
+    def test_adds_terminal_member(self):
+        result = tm.add_member(
+            "test-team", "backend-dev", llm="codex", protocol="terminal",
+            surface="surface:42", backend="cmux",
+        )
+        self.assertTrue(result["ok"])
+        data = tm._load("test-team")
+        self.assertEqual(len(data["members"]), 1)
+        m = data["members"][0]
+        self.assertEqual(m["name"], "backend-dev")
+        self.assertEqual(m["protocol"], "terminal")
+        self.assertEqual(m["surfaceRef"], "surface:42")
+        self.assertEqual(m["status"], "idle")
+        self.assertEqual(m["messageCount"], 0)
+
+    def test_adds_native_member(self):
+        result = tm.add_member(
+            "test-team", "infra-dev", llm="claude", protocol="native",
+            native_team="test-team-native",
+        )
+        self.assertTrue(result["ok"])
+        data = tm._load("test-team")
+        m = data["members"][0]
+        self.assertEqual(m["protocol"], "native")
+        self.assertEqual(m["nativeTeamName"], "test-team-native")
+
+    def test_duplicate_member_errors(self):
+        tm.add_member("test-team", "dev1", llm="codex", protocol="terminal")
+        result = tm.add_member("test-team", "dev1", llm="gemini", protocol="terminal")
+        self.assertIn("error", result)
+
+    def test_nonexistent_team_errors(self):
+        result = tm.add_member("no-team", "dev1", llm="codex", protocol="terminal")
+        self.assertIn("error", result)
+
+
+class TestList(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self._orig = tm.STATE_DIR
+        tm.STATE_DIR = self.tmpdir
+
+    def tearDown(self):
+        tm.STATE_DIR = self._orig
+        shutil.rmtree(self.tmpdir)
+
+    def test_list_all_teams(self):
+        tm.create("alpha")
+        tm.create("beta")
+        result = tm.list_teams()
+        self.assertEqual(result["teams"], ["alpha", "beta"])
+
+    def test_list_empty(self):
+        result = tm.list_teams()
+        self.assertEqual(result["teams"], [])
+
+    def test_list_specific_team(self):
+        tm.create("alpha")
+        tm.add_member("alpha", "dev1", llm="codex", protocol="terminal")
+        result = tm.list_teams(team="alpha")
+        self.assertEqual(result["name"], "alpha")
+        self.assertEqual(len(result["members"]), 1)
+
+    def test_list_nonexistent_team_errors(self):
+        result = tm.list_teams(team="no-team")
+        self.assertIn("error", result)
+
+
 if __name__ == "__main__":
     unittest.main()
