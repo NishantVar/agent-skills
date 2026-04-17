@@ -137,5 +137,62 @@ JUDGY_REPORT_END
         self.assertIn("sql injection", result["content"])
 
 
+from unittest.mock import patch
+
+
+class TestPollRead(unittest.TestCase):
+
+    def _make_kwargs(self):
+        return dict(
+            surface="surface:1", backend="cmux",
+            start_marker="TEAM_RESPONSE_START",
+            end_marker="TEAM_RESPONSE_END",
+            sentinel_id="TEAM_MSG_1",
+            interval=0.01,  # fast for tests
+            max_attempts=3,
+        )
+
+    @patch.object(rt, "read_screen")
+    def test_finds_response_on_first_attempt(self, mock_read):
+        mock_read.return_value = "TEAM_RESPONSE_START TEAM_MSG_1\nDone.\nTEAM_RESPONSE_END TEAM_MSG_1\n"
+        result = rt.poll_read(**self._make_kwargs())
+        self.assertEqual(result["status"], "response_found")
+        self.assertEqual(mock_read.call_count, 1)
+
+    @patch.object(rt, "read_screen")
+    def test_finds_response_on_later_attempt(self, mock_read):
+        mock_read.side_effect = [
+            "Still working...\n",
+            "Still working...\n",
+            "TEAM_RESPONSE_START TEAM_MSG_1\nDone.\nTEAM_RESPONSE_END TEAM_MSG_1\n",
+        ]
+        result = rt.poll_read(**self._make_kwargs())
+        self.assertEqual(result["status"], "response_found")
+        self.assertEqual(mock_read.call_count, 3)
+
+    @patch.object(rt, "read_screen")
+    def test_timeout_after_max_attempts(self, mock_read):
+        mock_read.return_value = "Still working...\n"
+        result = rt.poll_read(**self._make_kwargs())
+        self.assertEqual(result["status"], "timeout")
+        self.assertEqual(result["attempts"], 3)
+
+    @patch.object(rt, "read_screen")
+    def test_stops_on_blocked(self, mock_read):
+        mock_read.return_value = "TEAM_BLOCKED_START TEAM_MSG_1\nNeed creds\nTEAM_BLOCKED_END TEAM_MSG_1\n"
+        kwargs = self._make_kwargs()
+        kwargs["blocked_start"] = "TEAM_BLOCKED_START"
+        kwargs["blocked_end"] = "TEAM_BLOCKED_END"
+        result = rt.poll_read(**kwargs)
+        self.assertEqual(result["status"], "blocked")
+
+    @patch.object(rt, "read_screen")
+    def test_stops_on_error(self, mock_read):
+        mock_read.return_value = None
+        result = rt.poll_read(**self._make_kwargs())
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(mock_read.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
