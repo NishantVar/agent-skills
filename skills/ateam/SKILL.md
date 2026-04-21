@@ -170,8 +170,21 @@ If `read_teammate.py` returns `timeout` or `error`:
 User says: "Shut down the team"
 
 1. **Ask user for confirmation first** — do not proceed without it
-2. For terminal teammates: send "Please finish your current work and exit." via `send_to_surface.py`
-3. For Claude teammates: send shutdown request via `SendMessage`
+2. For terminal teammates, send the CLI-specific exit command, wait briefly, then kill the terminal:
+   - **Codex**: `/exit`
+   - **Gemini**: `/quit`
+   - **Claude Code**: `/exit`
+   ```bash
+   # Send the exit command
+   echo '<exit-command>' > /tmp/ateam-<team>-<name>-shutdown.txt
+   python3 ~/.claude/skills/fork-terminal/tools/send_to_surface.py \
+     --surface <ref> --file /tmp/ateam-<team>-<name>-shutdown.txt
+   sleep 3
+   # Kill the terminal (use member's backend field from team.json)
+   # cmux:  cmux close-surface --surface <ref>
+   # tmux:  tmux kill-pane -t <ref>
+   ```
+3. For Claude native teammates: send shutdown request via `SendMessage`
 4. Optionally `TeamDelete` for the native sub-team
 5. Clean up state files only with user permission
 

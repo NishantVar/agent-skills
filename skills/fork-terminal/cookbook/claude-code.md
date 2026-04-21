@@ -33,3 +33,7 @@ python3 fork_terminal.py --backend auto --split bottom --delayed-input-file ~/pa
 ```
 
 This launches Claude Code interactively, waits for it to load, then sends the prompt text automatically.
+
+## Exiting
+
+- To exit/shutdown a running Claude Code session, send `/exit`.
