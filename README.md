@@ -8,6 +8,8 @@ All three agents use the same core format: `SKILL.md` with `name` + `description
 
 | Skill | Description |
 |-------|-------------|
+| `ateam` | **(Experimental)** Multi-LLM agent team management — spawn Claude, Codex, and Gemini teammates and coordinate them via a hybrid native + sentinel-based protocol. |
+| `athena` | Research companion based on Andrej Karpathy's LLM wiki approach, organized into four tiers: unconfirmed → confirmed → consolidated → design (the one you actually use). |
 | `find-session` | Search and resume previous sessions by keyword (Claude Code only) |
 | `prompt-builder` | Interactive prompt crafting with iterative refinement and versioned saves |
 | `first-principles` | Decompose any idea, problem, or decision down to its fundamental truths through collaborative iterative questioning |
