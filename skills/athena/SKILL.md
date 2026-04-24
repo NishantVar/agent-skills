@@ -117,6 +117,11 @@ updates, and the audit log that keeps this structure coherent. Reading
 existing `confirmed/`, `consolidated/`, or `design/` content directly is fine;
 reading `unconfirmed/` content requires Athena (and a subagent when possible).
 
+When writing or modifying design files, be concise: include only material that
+matters for future decisions. Do not compress away essential structure. If the
+design defines an object, process, interface, memory type, or workflow, capture
+its schema/fields and boundaries explicitly.
+
 ## Research
 - [topic-one](research/topic-one/) — one-line description of the research question
 - [topic-two]($OBSIDIAN/research/topic-two/) — stored in Obsidian vault
@@ -357,7 +362,7 @@ Steps:
 1. Create `./design/<topic>/` (or use `./design/` directly for main design) with its own `AGENTS.md` + `CLAUDE.md` symlink.
 2. Restructure the source consolidated page into design files with clear decision-oriented framing (decision / rationale / alternatives / open questions). Link back to any `confirmed/` findings the design rests on, since those stay in place.
 3. **Delete the source page from `consolidated/`** and remove its entry from `consolidated/AGENTS.md`. If the consolidated folder is now empty, leave its AGENTS.md as the empty-case template.
-4. Update `./design/AGENTS.md` (and root `./AGENTS.md`) with pointers to the new design file.
+4. Update `./design/AGENTS.md` with the new design file. Ensure root `./AGENTS.md` points to `./design/` as the design entry; do not duplicate every design file in root `./AGENTS.md`.
 5. Append a `promote-design` entry to the topic research `log.md` noting the move (source path → destination path).
 
 Obsidian-mode topics still promote to the **local** `./design/` folder — the Obsidian vault never holds design. The source page is deleted from `$OBSIDIAN/research/<topic>/consolidated/` as part of the move.
@@ -430,7 +435,19 @@ Cross-reference liberally with wikilinks — that's what makes the wiki layer us
 
 ### Design file format
 
-Design files are decision docs. They should be opinionated and concrete. Include: the decision, the rationale, the alternatives considered, and links back to the consolidated/confirmed material that informed it.
+Design files are decision docs. They should be opinionated, concrete, and
+concise. Include only material that matters for future decisions; remove
+explanatory scaffolding that is easy to derive.
+
+Concision must not erase structure. If a design defines an object, process,
+interface, memory type, workflow, or other reusable concept, include the
+schema/fields, boundaries, and any ordering or completion conditions needed to
+make the design usable. Missing schema is a design bug, even if the prose is
+short.
+
+Include the decision, the rationale, the alternatives considered, and links
+back to the consolidated/confirmed material that informed it when those details
+are needed for the decision.
 
 ## Principles
 
