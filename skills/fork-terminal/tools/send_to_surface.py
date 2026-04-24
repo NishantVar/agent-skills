@@ -54,15 +54,30 @@ def detect_backend() -> str:
 
 
 def send_cmux(surface_ref: str, text: str) -> int:
-    """Send text to a cmux surface, then press Enter to submit."""
+    """Send text to a cmux surface using set-buffer/paste-buffer to avoid truncation.
+
+    cmux send passes text as a CLI arg which can truncate large messages.
+    set-buffer + paste-buffer handles arbitrary sizes reliably.
+    """
     result = subprocess.run(
-        ["cmux", "send", "--surface", surface_ref, text],
+        ["cmux", "set-buffer", "--name", "send_to_surface", "--", text],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        print(f"Error: cmux send failed: {result.stderr.strip()}", file=sys.stderr)
+        print(f"Error: cmux set-buffer failed: {result.stderr.strip()}", file=sys.stderr)
         return result.returncode
+
+    result = subprocess.run(
+        ["cmux", "paste-buffer", "--name", "send_to_surface",
+         "--surface", surface_ref],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"Error: cmux paste-buffer failed: {result.stderr.strip()}", file=sys.stderr)
+        return result.returncode
+
     # Press Enter to submit (pasted content doesn't auto-submit in interactive CLIs)
     enter_result = subprocess.run(
         ["cmux", "send-key", "--surface", surface_ref, "Enter"],
