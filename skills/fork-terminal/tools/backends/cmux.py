@@ -21,10 +21,10 @@ def _send_delayed_input(surface_ref: str | None, text: str, delay: float) -> Non
         send_cmd += ["--surface", surface_ref]
     send_cmd.append(text)
     subprocess.run(send_cmd, capture_output=True, text=True)
-    
+
     # Wait before hitting enter to avoid race conditions in interactive CLIs
     time.sleep(0.5)
-    
+
     # Press Enter explicitly via send-key (more reliable than trailing newline)
     enter_cmd = ["cmux", "send-key"]
     if surface_ref:

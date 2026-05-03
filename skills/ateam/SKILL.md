@@ -1,11 +1,12 @@
 ---
 name: ateam
 description: >-
-  Multi-LLM agent team management. Use when the user wants to create a team
-  of agents (Claude, Codex, Gemini), assign tasks, check status, broadcast
-  messages, or coordinate work across multiple LLM teammates. Triggers on:
-  "create a team", "add a teammate", "tell [name] to", "what has [name] done",
-  "check on [name]", "wait for [name]", "shut down the team", "team status".
+  Multi-LLM agent team management. Use ONLY when the user explicitly mentions
+  Codex or Gemini teammates, or a mixed-LLM team. Do NOT trigger for
+  Claude-only agent teams. Triggers on: "create a team with Codex/Gemini",
+  "add a Codex/Gemini teammate", "tell [name] to", "what has [name] done",
+  "check on [name]", "wait for [name]", "shut down the team", "team status"
+  — but only when a non-Claude LLM is involved.
 user-invocable: true
 ---
 
