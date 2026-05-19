@@ -1,0 +1,40 @@
+skill project_mover(source_path = <"Current project path (required)">, dest_path = <"Target path (required)">, dry_run = false <"Preview changes without modifying anything">, skip_move = false <"Skip moving the folder, only fix path references (use when the user already moved the folder themselves)">)
+    description: "Move a project folder and update all path-dependent metadata for Claude Code, Codex CLI, and Gemini CLI."
+
+    context:
+        what_it_updates
+
+    flow:
+        if "source or dest not yet provided"
+            "Ask the user for the source path (current location) and destination path (where to move it)."
+
+        run_dry_run(source_path, dest_path)
+
+        "Show the user the dry-run summary of what will change and ask for confirmation."
+
+        if "user confirmed"
+            run_move(source_path, dest_path, skip_move)
+
+        "Report the results to the user."
+
+const what_it_updates = """
+Updates path references across:
+- Claude Code (~/.claude/): project directories, session metadata, team configs
+- Codex CLI (~/.codex/): config.toml project keys, skill symlinks
+- Gemini CLI (~/.gemini/): projects.json, trustedFolders.json, history/tmp .project_root files, hashed tmp directories
+"""
+
+block run_dry_run(source, dest)
+    description: "Run the move script in dry-run mode to preview what will change."
+
+    flow:
+        "Run: python ~/.claude/skills/project-mover/scripts/move_project.py --source {source} --dest {dest} --dry-run"
+
+block run_move(source, dest, skip_move = false)
+    description: "Run the move script for real, applying all path updates."
+
+    flow:
+        if skip_move
+            "Run: python ~/.claude/skills/project-mover/scripts/move_project.py --source {source} --dest {dest} --skip-move"
+        else
+            "Run: python ~/.claude/skills/project-mover/scripts/move_project.py --source {source} --dest {dest}"
