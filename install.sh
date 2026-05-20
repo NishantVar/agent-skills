@@ -120,18 +120,21 @@ case "$target" in
   *)      usage ;;
 esac
 
-# If the filter contains a '/', treat it as a direct skill path rather than a name lookup.
+# Resolve skill_filter as a filesystem path first (absolute or relative to $PWD),
+# regardless of whether it contains '/'. This allows invocations from any working
+# directory. Falls back to SKILLS_DIR name lookup only when no local path matches.
 skill_path=""
-if [[ "$skill_filter" == */* ]]; then
-  skill_path="$(cd "$skill_filter" 2>/dev/null && pwd)" || {
-    echo "Error: Directory '$skill_filter' does not exist" >&2
-    exit 1
-  }
-  if [[ ! -f "$skill_path/SKILL.md" ]]; then
-    echo "Error: '$skill_path' does not contain a SKILL.md" >&2
-    exit 1
+skill_name=""
+if [[ -n "$skill_filter" ]]; then
+  _resolved="$(cd "$skill_filter" 2>/dev/null && pwd)" || true
+  if [[ -n "$_resolved" && -d "$_resolved" ]]; then
+    if [[ ! -f "$_resolved/SKILL.md" ]]; then
+      echo "Error: '$skill_filter' does not contain a SKILL.md" >&2
+      exit 1
+    fi
+    skill_path="$_resolved"
+    skill_name="$(basename "$skill_path")"
   fi
-  skill_name="$(basename "$skill_path")"
 fi
 
 for agent in "${agents[@]}"; do

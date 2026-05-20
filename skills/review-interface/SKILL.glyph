@@ -1,0 +1,121 @@
+skill review_interface(source_content = <"Raw AI-generated content to transform into a review interface. This can be pasted text, current conversation output, or a referenced local file.">, title = "" <"Optional document title. If blank, infer a concise title from the source without inventing facts.">, audience = "busy technical reviewer" <"Primary reader: founder, engineer, PM, designer, exec, or general.">, density = "balanced" <"Preferred density: concise, balanced, or detailed.">, output_path = "" <"Optional path for the generated self-contained HTML file. If blank, return the HTML directly.">)
+    description: "Convert long AI-generated plans, specs, research, or proposals into an ADHD-friendly self-contained HTML review workspace."
+
+    context:
+        review_workspace_goal
+        reader_model
+        source_audit_model
+
+    constraints:
+        must preserve_meaning
+        must self_contained_html
+        must label_uncertainty
+        require progressive_disclosure
+        require review_first_structure
+        avoid invented_facts
+        avoid walls_of_text
+        avoid external_dependencies
+        avoid decorative_noise
+
+    flow:
+        collect_inputs(source_content, title, audience, density, output_path)
+        extract_review_units(source_content)
+        normalize_for_review()
+        choose_interface_shape(audience, density)
+        render_html(title, audience, density)
+        verify_interface()
+        deliver_interface(output_path)
+
+
+block collect_inputs(source_content, title, audience, density, output_path)
+    description: "Input is incomplete or ambiguous enough that transformation would require guessing."
+
+    flow:
+        if "the source content is missing, empty, inaccessible, or only described indirectly"
+            "Ask the user for the raw content or the local file path to transform."
+        if "density is not one of concise, balanced, or detailed"
+            "Default density to balanced and continue."
+        if "audience is missing or vague"
+            "Default audience to busy technical reviewer and continue."
+        if "title is missing or blank"
+            "Infer a short factual title from the source. If no safe title can be inferred, use `Review Document`."
+        if "output_path is provided"
+            "Plan to write the final HTML file to {output_path}."
+        else
+            "Plan to return the HTML directly."
+
+
+block extract_review_units(source_content)
+    flow:
+        "Read the source content closely and identify the document type: technical spec, product plan, implementation plan, research, proposal, brainstorm, review, or other."
+        "Extract only supported information from the source: TL;DR, goals, non-goals, decisions, action items, risks, open questions, assumptions, constraints, dependencies, milestones, owners, stakeholders, architecture, APIs, services, metrics, success criteria, contradictions, and unresolved ambiguities."
+        "For every extracted item, decide whether it is confirmed by the source, inferred from surrounding context, or unclear."
+        "Preserve important technical details, names, dates, owners, dependencies, and decision language exactly enough that the transformed document stays faithful."
+        "Carry the structured review units forward for the remaining procedures."
+
+
+block normalize_for_review()
+    flow:
+        "De-duplicate repeated ideas and merge scattered TODOs into one action section."
+        "Convert long prose into short bullets, tables, cards, timelines, checklists, and collapsible detail panels."
+        "Convert comparisons into tables, procedures into numbered steps, scattered risks into risk cards, and scattered unknowns into one open-questions area."
+        "Cluster brainstorm content into themes and identify the most supported direction only when the source supports one."
+        "Flag contradictions clearly instead of smoothing them over."
+        "Omit categories that are absent from the source. Do not fabricate missing owners, dates, metrics, or recommendations."
+        "Carry the deduplicated review-ready units forward for interface selection and rendering."
+
+
+block choose_interface_shape(audience, density)
+    flow:
+        "Choose the smallest interface structure that lets the reader understand the document quickly."
+        "Use a dashboard-style overview when the source is long, decision-heavy, risk-heavy, or contains many action items."
+        "Include sections only when applicable: top review bar, TL;DR, review dashboard, key decisions, action plan, risks and open questions, architecture or flow, details on demand, contradictions, and source view."
+        "Tune density for {density}: concise keeps defaults very short, balanced includes essential context, detailed exposes more accordions without turning the default view into long prose."
+        "Tune labels and section ordering for {audience}, while preserving the same facts and uncertainty labels."
+        "Carry the selected information architecture forward into HTML rendering."
+
+
+block render_html(title, audience, density)
+    flow:
+        "Produce one complete self-contained HTML document using semantic HTML, inline CSS, and inline JavaScript only."
+        "Render the top area with title, document type, audience, density, counts for decisions, actions, risks, and open questions, a light/dark toggle, expand all and collapse all controls, and a reading-progress indicator."
+        "Put a TL;DR near the top with 5 to 8 short bullets covering what this is, why it matters, what is proposed or changed, what decisions are needed, and what happens next."
+        "Render key decisions as compact cards or a responsive table with decision, status, owner when present, impact, confidence, and deadline when present. Make unresolved decisions obvious."
+        "Render the action plan as Now, Next, Later or source-provided phases. Preserve dependencies, blockers, owners, dates, and verification steps when present."
+        "Render risks and open questions as collapsible cards labeled by severity and confidence. Include mitigations or next steps when present."
+        "Render architecture, flows, components, APIs, services, and system structure only when the source contains them. Prefer component cards, sequence steps, dependency lists, and simple inline SVG or CSS diagrams when they improve comprehension."
+        "Put dense notes, edge cases, alternatives, implementation details, and lower-priority context behind accordions, tabs, or show-more regions."
+        "Include the original source in a collapsed source-view panel so the reader can audit the transformation."
+        "Keep the visual design neutral, high contrast, uncluttered, and optimized for reading instead of marketing."
+        "Avoid external scripts, external stylesheets, external fonts, CDNs, generated gradients, decorative blobs, and flashy effects."
+        "Carry the complete self-contained HTML document forward for verification and delivery."
+
+
+block verify_interface()
+    flow:
+        "Check the HTML for the main failure modes: walls of text, missing raw source view, invented facts, unmarked uncertainty, inaccessible controls, weak contrast, broken keyboard interaction, mobile overflow, and print-hostile layout."
+        "Ensure paragraphs are short, important items appear before details, unresolved decisions and high risks are easy to find, and every collapsible control has clear text."
+        "Ensure the document remains readable if JavaScript fails, respects reduced-motion preferences, and includes print-friendly CSS."
+        "Revise the HTML before delivery if any check fails."
+
+
+block deliver_interface(output_path)
+    flow:
+        if "output_path is provided"
+            "Write the HTML document to {output_path}. Report the saved path and a concise summary of what was generated."
+        else
+            "Return only the final HTML document. Do not wrap it in Markdown fences and do not add explanatory commentary before or after it."
+
+
+const review_workspace_goal = "This skill turns dense AI-generated plans, specs, research notes, proposals, PRDs, implementation plans, architecture docs, and brainstorms into review interfaces that speed up human comprehension and decision-making."
+const reader_model = "Assume the reader may be distractible, time-limited, or overwhelmed by long prose. The default experience should be skimmable, chunked, labeled, and progressively disclosed."
+const source_audit_model = "The transformed interface should preserve a collapsed raw source view so readers can inspect original wording when they need to verify a summary, decision, risk, or ambiguity."
+const preserve_meaning = "Preserve the important meaning, decisions, risks, action items, assumptions, constraints, open questions, and technical details from the source."
+const self_contained_html = "Output exactly one complete self-contained HTML document with inline CSS and inline JavaScript only."
+const label_uncertainty = "Mark each uncertain or inferred item explicitly as confirmed, inferred, unclear, or contradictory."
+const progressive_disclosure = "Keep the default view concise and put dense details behind accordions, tabs, or show-more sections."
+const review_first_structure = "Make the document feel like a review workspace with summaries, status badges, dashboards, tables, checklists, and clear navigation."
+const invented_facts = "Adding facts, owners, dates, metrics, recommendations, or decisions that are not supported by the source."
+const walls_of_text = "Presenting long continuous prose or unlabeled sections that force the reader to parse everything sequentially."
+const external_dependencies = "Depending on external scripts, stylesheets, fonts, CDNs, Mermaid libraries, image URLs, or network access for the HTML to work."
+const decorative_noise = "Using generic AI-looking gradients, oversized hero sections, decorative blobs, flashy animation, or marketing-style layout that distracts from review."
