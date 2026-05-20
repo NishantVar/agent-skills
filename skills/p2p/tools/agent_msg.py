@@ -3,10 +3,15 @@
 
 Routing: per-surface manifest at ~/.cmux/agents/by-surface/<surface>.json.
 Transport: cmux set-buffer + paste-buffer (handles large payloads).
+
+If you change surface-resolution logic (my_surface, _ancestor_ttys,
+_surface_from_tty_walk), re-run the multi-runtime test described in
+../references/test.md from inside every agent runtime you support.
 """
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -21,16 +26,106 @@ def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
-def my_surface():
-    r = run(["cmux", "identify", "--json"])
+def _ancestor_ttys():
+    """Yield (pid, tty) for self and each ancestor with a controlling tty.
+
+    Different agent runtimes vary:
+      - Claude Code: bash subprocess has no tty (stdin from /dev/null);
+        walk up to Claude Code itself, which has the cmux pane's tty.
+      - Gemini: bash subprocess has its OWN pty (not a cmux pane);
+        must walk past it to the node process, which has the pane's tty.
+      - Codex: similar — depends on its shell-execution strategy.
+    So we yield every tty up the chain and let the caller match against
+    cmux's known set, instead of trusting the first one we find.
+    """
+    pid = os.getpid()
+    seen: set[int] = set()
+    for _ in range(30):
+        if pid <= 1 or pid in seen:
+            return
+        seen.add(pid)
+        r = run(["ps", "-o", "tty=,ppid=", "-p", str(pid)])
+        if r.returncode != 0 or not r.stdout.strip():
+            return
+        parts = r.stdout.strip().split()
+        if len(parts) < 2:
+            return
+        tty, ppid = parts[0], parts[1]
+        if tty and tty not in ("?", "??"):
+            yield pid, tty
+        try:
+            pid = int(ppid)
+        except ValueError:
+            return
+
+
+def _cmux_tty_to_surface():
+    """Return {tty: surface_ref} for all live cmux surfaces."""
+    r = run(["cmux", "--json", "tree", "--all"])
     if r.returncode != 0:
-        sys.exit("error: cmux identify failed (not running inside cmux?)")
-    data = json.loads(r.stdout)
-    caller = data.get("caller") or data.get("focused") or {}
-    surf = caller.get("surface_ref")
-    if not surf:
-        sys.exit("error: could not resolve own surface_ref from cmux identify")
-    return surf
+        return {}
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return {}
+    out: dict[str, str] = {}
+    for w in data.get("windows", []):
+        for ws in w.get("workspaces", []):
+            for pane in ws.get("panes", []):
+                for s in pane.get("surfaces", []):
+                    if s.get("tty") and s.get("ref"):
+                        out[s["tty"]] = s["ref"]
+    return out
+
+
+def _surface_from_tty_walk():
+    """Recover own surface_ref by matching any ancestor's tty to cmux's set.
+
+    The first ancestor whose tty cmux knows about wins. This skips over
+    runtime-internal ptys (e.g. Gemini's bash pty) and lands on the cmux
+    pane shell.
+    """
+    known = _cmux_tty_to_surface()
+    if not known:
+        return None
+    for _, tty in _ancestor_ttys():
+        if tty in known:
+            return known[tty]
+    return None
+
+
+def my_surface():
+    # Explicit override wins. Useful when the agent isn't a child of a
+    # cmux-launched shell but the human knows where to route.
+    override = os.environ.get("AGENT_MSG_SURFACE_ID")
+    if override:
+        return override
+
+    # Primary: cmux identify (uses $CMUX_SURFACE_ID inherited from the pane).
+    r = run(["cmux", "identify", "--json"])
+    if r.returncode == 0:
+        try:
+            data = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        caller = data.get("caller") or {}
+        surf = caller.get("surface_ref")
+        if surf:
+            return surf
+
+    # Fallback: walk ppid chain to a tty, then match against cmux tree.
+    # Do NOT fall back to data['focused'] — that's wherever the human is
+    # clicking right now and would silently mis-register this agent.
+    surf = _surface_from_tty_walk()
+    if surf:
+        return surf
+
+    sys.exit(
+        "error: could not resolve own cmux surface.\n"
+        "       tried: cmux identify (needs $CMUX_SURFACE_ID in env),\n"
+        "              ppid -> tty -> cmux tree walk.\n"
+        "       override with AGENT_MSG_SURFACE_ID=surface:<N>."
+    )
 
 
 def manifest_path(surface_ref):
