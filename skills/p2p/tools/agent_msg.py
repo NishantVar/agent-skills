@@ -189,8 +189,25 @@ def load_manifests(sweep=True):
     return out
 
 
+def is_command(text):
+    """True if `text` would be read as a slash command / Codex plugin
+    trigger (not prose) by a coding-agent CLI — i.e. it starts the line
+    with `/` or `$`."""
+    return text.startswith(("/", "$"))
+
+
 def send_buffer(surface_ref, text):
-    """Send text to a surface via set-buffer + paste-buffer + Enter."""
+    """Send text to a surface via set-buffer + paste-buffer + Enter.
+
+    When `text` is a command (see `is_command`), a real space keystroke is
+    sent after the paste and before Enter. A leading `/` or `$` opens a
+    slash-command / plugin autocomplete dropdown in coding-agent CLIs
+    (Codex, Claude Code); that dropdown would otherwise consume the Enter
+    as a list selection instead of submitting the input. The space takes
+    the CLI out of command-completion mode and closes the dropdown. Note:
+    a space *inside* the pasted buffer does NOT do this — the CLI only
+    re-evaluates command mode on real key events, not on pasted content.
+    """
     r = run(["cmux", "set-buffer", "--name", "agent_msg", "--", text])
     if r.returncode != 0:
         sys.exit(f"error: cmux set-buffer failed: {r.stderr.strip()}")
@@ -198,9 +215,14 @@ def send_buffer(surface_ref, text):
              "--surface", surface_ref])
     if r.returncode != 0:
         sys.exit(f"error: cmux paste-buffer failed: {r.stderr.strip()}")
-    # Give the target terminal a moment to ingest the paste before Enter,
-    # otherwise the keypress can race the paste and the message sits unsent.
+    # Give the target terminal a moment to ingest the paste before the next
+    # keystroke, otherwise it can race the paste and the message sits unsent.
     time.sleep(0.3)
+    if is_command(text):
+        r = run(["cmux", "send", "--surface", surface_ref, " "])
+        if r.returncode != 0:
+            sys.exit(f"error: cmux send space failed: {r.stderr.strip()}")
+        time.sleep(0.3)
     r = run(["cmux", "send-key", "--surface", surface_ref, "enter"])
     if r.returncode != 0:
         sys.exit(f"error: cmux send-key enter failed: {r.stderr.strip()}")
@@ -281,8 +303,17 @@ def cmd_send(args):
     body = read_message_arg(args)
     if not body.strip():
         sys.exit("error: empty message")
-    tagged = f"[from: {me['name']}] {body}"
-    send_buffer(matches[0]["surface_ref"], tagged)
+    surf = matches[0]["surface_ref"]
+    # A message that begins with `/` or `$` is a slash command / Codex plugin
+    # trigger (see `is_command`), not prose: it is sent verbatim, without the
+    # `[from:]` prefix — a command must start the line to be recognized.
+    # `send_buffer` independently re-derives command-ness from the text to
+    # dismiss the peer CLI's autocomplete dropdown. Prose that genuinely
+    # begins with `/` or `$` is rare and not distinguishable from a command.
+    if is_command(body.strip()):
+        send_buffer(surf, body.strip())
+    else:
+        send_buffer(surf, f"[from: {me['name']}] {body}")
 
 
 def cmd_bootstrap(args):
