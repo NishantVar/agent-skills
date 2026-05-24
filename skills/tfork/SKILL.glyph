@@ -1,0 +1,45 @@
+// tfork — deterministic terminal-fork skill.
+// Thin front-door: extract parameters, map them onto the fork_terminal.py
+// binary, call it, and surface the structured JSON result. Carries no
+// runtime-judgement logic of its own.
+
+skill tfork(command = <"The coding-agent alias or literal command to fork, extracted verbatim from the user's request; its first word is the registry key.">, placement = "right" <"Where the new pane opens relative to the anchor: right, left, top, or bottom for a split, or new-workspace for a fresh tab.">, anchor = none <"Optional cmux surface ref (surface:N) or tab title the new pane attaches next to; omit to anchor on the caller's own pane. Ignored when placement is new-workspace.">, type_override = none <"Optional classification override: agent or command. Omit to let the binary classify by what it observed after the fork.">)
+    description: "Fork a coding agent or command into a new cmux pane via the deterministic fork_terminal.py binary."
+
+    context:
+        binary_contract
+
+    constraints:
+        must no_runtime_judgement
+        require fork_only
+
+    flow:
+        "Extract the parameters from the user's request — {command}, {placement}, {anchor}, and {type_override} — and forward them as-is. Do not invent values; if the user did not name a placement or an anchor, use the defaults."
+        "Begin the invocation as: python3 <skill-dir>/fork_terminal.py --placement {placement} -- {command}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — fork_terminal.py sits in that same directory, and the working directory is the user's project, not the skill directory, so a bare fork_terminal.py will not resolve. Everything after the -- separator is the command."
+
+        if "the user named an anchor (a surface ref like surface:42 or a cmux tab title)"
+            "Insert --anchor {anchor} into the invocation, before the -- separator."
+
+        if "the user explicitly specified agent or command as the type"
+            "Insert --type {type_override} into the invocation, before the -- separator."
+
+        "Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object."
+
+        if "the JSON result has ok set to true"
+            report_success(result)
+        else
+            "Treat the JSON as a handoff object: carry out its agent_instruction exactly, relay its human_message to the user, and offer suggested_next_command when retryable is true."
+
+const no_runtime_judgement = "Infer only the front-door parameters from the user's request — command, placement, anchor, and type_override — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns."
+const fork_only = "tfork only forks. Never message or brief the forked agent from this skill; return the surface ref and let the p2p skill own agent-to-agent messaging."
+const binary_contract = """fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named), opens the new pane or workspace, runs the command in the caller's current directory through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel). A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf."""
+
+generated block report_success(result)
+    flow:
+        "Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed."
+        if "the result's type is agent"
+            "Hand the session field — the new cmux surface ref — to the p2p skill for messaging the forked agent."
+        if "the result's verified field is false"
+            "tfork could not confirm the command ran cleanly. Point the user at the session surface so they can inspect the pane themselves, and do not re-run the command."
+        if "the result's note mentions 'correct if intended'"
+            "The label tfork is returning disagrees with what it observed (the registry or --type override is winning over a contradictory observation). Tell the user they can pass --type agent or --type command on the next run if the registry has it wrong."
