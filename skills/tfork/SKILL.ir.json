@@ -1,0 +1,218 @@
+{
+  "compiler": "glyph 0.1.0",
+  "ir_version": 2,
+  "skill": {
+    "constraints": [
+      {
+        "kind": "constraint",
+        "node_id": "n18",
+        "polarity": "require",
+        "strength": "hard",
+        "text": "Forward the user's parameters to the binary verbatim — never construct shell commands by hand, infer intent, or make a runtime decision the binary should own."
+      },
+      {
+        "kind": "constraint",
+        "node_id": "n19",
+        "polarity": "require",
+        "strength": "soft",
+        "text": "tfork only forks. Never message or brief the forked agent from this skill; return the surface ref and let the p2p skill own agent-to-agent messaging."
+      }
+    ],
+    "context": [
+      {
+        "kind": "context",
+        "name": "binary_contract",
+        "node_id": "n20",
+        "text": "fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named), opens the new pane or workspace, runs the command in the caller's current directory through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel). A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf."
+      }
+    ],
+    "description": "Fork a coding agent or command into a new cmux pane via the deterministic fork_terminal.py binary.",
+    "effects": [],
+    "flow": [
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n8",
+        "role": "step",
+        "text": "Extract the parameters from the user's request — {command}, {placement}, {anchor}, and {type_override} — and forward them as-is. Do not invent values; if the user did not name a placement or an anchor, use the defaults."
+      },
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n9",
+        "role": "step",
+        "text": "Begin the invocation as: python3 <skill-dir>/fork_terminal.py --placement {placement} -- {command}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — fork_terminal.py sits in that same directory, and the working directory is the user's project, not the skill directory, so a bare fork_terminal.py will not resolve. Everything after the -- separator is the command."
+      },
+      {
+        "condition": "\"the user named an anchor (a surface ref like surface:42 or a cmux tab title)\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n10",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n11",
+            "role": "step",
+            "text": "Insert --anchor {anchor} into the invocation, before the -- separator."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user explicitly specified agent or command as the type\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n12",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n13",
+            "role": "step",
+            "text": "Insert --type {type_override} into the invocation, before the -- separator."
+          }
+        ]
+      },
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n14",
+        "role": "step",
+        "text": "Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object."
+      },
+      {
+        "condition": "\"the JSON result has ok set to true\"",
+        "elif_branches": [],
+        "else_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n17",
+            "role": "step",
+            "text": "Treat the JSON as a handoff object: carry out its agent_instruction exactly, relay its human_message to the user, and offer suggested_next_command when retryable is true."
+          }
+        ],
+        "kind": "branch",
+        "node_id": "n15",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "args": {
+              "result": {
+                "kind": "binding_ref",
+                "name": "result",
+                "node_id": "n16_0"
+              }
+            },
+            "bound_name": null,
+            "callee_constraints": [],
+            "callee_context": [],
+            "callee_flow": [
+              {
+                "kind": "inline_instruction",
+                "node_id": "n7_0",
+                "role": "step",
+                "text": "Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed."
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n7_1",
+                "role": "step",
+                "text": "if \"the result's type is agent\""
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n7_2",
+                "role": "step",
+                "text": "if \"the result's verified field is false\""
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n7_3",
+                "role": "step",
+                "text": "if \"the result's note mentions 'correct if intended'\""
+              }
+            ],
+            "callee_output_contract": null,
+            "effects": [],
+            "is_agent": false,
+            "kind": "call",
+            "local_refs": [],
+            "node_id": "n16",
+            "output": null,
+            "procedure_path": null,
+            "projection_mode": "same_file_procedure",
+            "resolved_body_text": "Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed.",
+            "return_type": null,
+            "role": "step",
+            "scoped_constraints": [],
+            "site_modifier": null,
+            "target": "report_success"
+          }
+        ]
+      }
+    ],
+    "freeform_section_headings": [],
+    "freeform_sections": [],
+    "kind": "skill",
+    "name": "tfork",
+    "node_id": "n0",
+    "output_contract": null,
+    "params": [
+      {
+        "kind": "param",
+        "name": "command",
+        "node_id": "n0_0"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "right"
+        },
+        "kind": "param",
+        "name": "placement",
+        "node_id": "n0_1"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "anchor",
+        "node_id": "n0_2"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "type_override",
+        "node_id": "n0_3"
+      }
+    ],
+    "return_local_ref": null,
+    "return_type": null
+  },
+  "source_file": "SKILL.glyph"
+}
