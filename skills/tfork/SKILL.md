@@ -24,7 +24,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 
 ## Constraints
 
-- **Must:** Forward the user's parameters to the binary verbatim — never construct shell commands by hand, infer intent, or make a runtime decision the binary should own.
+- **Must:** Infer only the front-door parameters from the user's request — command, placement, anchor, and type_override — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns.
 - **Require:** tfork only forks. Never message or brief the forked agent from this skill; return the surface ref and let the p2p skill own agent-to-agent messaging.
 
 ## Steps
