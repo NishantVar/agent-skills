@@ -81,24 +81,84 @@ def _ensure_self(my_surface: str | None, my_name: str | None,
     return m, None
 
 
-def send(peer: str, body: str, my_name: str | None,
+def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
+                              peer_surface: str,
+                              surfaces: dict[str, dict],
+                              manifests: list[dict],
+                              rerun_argv: list[str]) -> dict:
+    """Reply path: caller supplied --peer-surface (typically from an
+    inline bootstrap). Skip resolution; route directly. Plain message
+    framing — the peer already initiated contact, so no re-bootstrap."""
+    s = surfaces.get(peer_surface)
+    if s is None:
+        # Surface no longer in cmux tree; fall back to spawn-bootstrap.
+        payload_text = _bootstrap.build_spawn_bootstrap(
+            peer_name=me["name"],
+            peer_surface=me["surface_ref"],
+            suggested_name=peer,
+            first_message=body,
+        )
+        payload_file = _bootstrap.write_spawn_payload(peer, payload_text)
+        return errors.peer_unknown(peer, payload_file, rerun_argv)
+
+    by_surface = {m.get("surface_ref"): m for m in manifests}
+    m = by_surface.get(peer_surface)
+    canonical = m.get("name") if m else None
+    is_stale = bool(m) and m.get("status") == "stale"
+
+    if transport.is_command(body.strip()):
+        text = body.strip()
+    else:
+        text = f"[from: {me['name']}] {body}"
+    transport.send_buffer(peer_surface, s.get("workspace_ref"), text)
+
+    return _success(
+        addressed=peer,
+        canonical=canonical,
+        surf=peer_surface,
+        resolved_by="explicit_surface",
+        peer_status=("stale" if is_stale else "live"),
+        kind="message",
+    )
+
+
+def send(peer: str | None, body: str, my_name: str | None,
          fallback_self_name: str | None,
-         rerun_argv: list[str]) -> dict:
+         rerun_argv: list[str],
+         peer_surface: str | None = None,
+         bootstrap_suggested_name: str | None = None) -> dict:
+    """Orchestrator. `peer_surface` skips name/tab resolution and routes
+    directly — used when the caller already knows the peer's surface
+    (e.g. from an inline [p2p-bootstrap] block). `bootstrap_suggested_name`
+    takes registration precedence over the scrollback-derived
+    `fallback_self_name`."""
     if not body.strip():
         return errors.empty_message()
+    if not peer:
+        return errors.info_needed(["peer"], rerun_argv)
 
     my_surf = surface.my_surface()
     tree = surface.cmux_tree()
     live = surface.live_surfaces(tree)
     surfaces = surface.surface_index(tree)
 
-    me, handoff = _ensure_self(my_surf, my_name, fallback_self_name,
+    # Registration precedence: explicit --my-name beats the bootstrap's
+    # suggested name, which beats whatever the scrollback fallback found.
+    chosen_self = my_name or bootstrap_suggested_name or fallback_self_name
+    me, handoff = _ensure_self(my_surf, chosen_self, None,
                                live, rerun_argv)
     if handoff is not None:
         return handoff
     assert me is not None
 
     manifests = registry.all_manifests(live)
+
+    if peer_surface:
+        return _send_to_explicit_surface(
+            peer=peer, body=body, me=me,
+            peer_surface=peer_surface, surfaces=surfaces,
+            manifests=manifests, rerun_argv=rerun_argv)
+
     r = resolve.resolve_peer(peer, manifests, surfaces)
 
     if r.kind == "ambiguous":

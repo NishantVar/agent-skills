@@ -26,7 +26,8 @@ description: >-
      - `info_needed` with `missing: ["self_name"]` → rerun with `--my-name`.
      - `name_collision` / `name_collision_stale` → pick a different name and rerun.
 3. **See who you can talk to:** `python3 ~/.claude/skills/p2p/agent_msg.py list`. Returns `{me, peers}` JSON with workspace info and `status` (`live`/`stale`) per agent.
-4. **Receiving a bootstrap inline:** when a `[p2p-bootstrap]` block appears in this agent's user-turn prompt, read `peer_name=` / `peer_surface=` / `suggested_name=` from the prompt directly, register yourself (`agent_msg.py register --name <name>` — use `suggested_name` unless it collides), then reply with `send`. The fallback `agent_msg.py parse-incoming` scrapes scrollback only when the values cannot be read inline.
+4. **Receiving a bootstrap inline (one call):** when a `[p2p-bootstrap]` block appears in this agent's user-turn prompt, do NOT register-then-send. Pass the inline values straight to `send` in a single invocation:
+   `python3 ~/.claude/skills/p2p/agent_msg.py send --peer <peer_name> --peer-surface <peer_surface> --bootstrap-suggested-name <suggested_name> --message-file <reply.txt>`. The helper registers this agent under `suggested_name` on the fly, skips name/tab resolution because `--peer-surface` is explicit, and routes the reply with plain `[from: <me>]` framing. If you have the raw bootstrap block in a file, pass `--bootstrap-file <path>` instead — it fills `--peer`, `--peer-surface`, and `--bootstrap-suggested-name` from the parsed text. Use `agent_msg.py parse-incoming` (scrollback scraper) only when the values cannot be read inline.
 
 ### Constraints
 

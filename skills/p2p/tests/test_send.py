@@ -217,6 +217,102 @@ def test_workspace_flag_is_passed_through(tmp_registry, fc):
     assert ws == "workspace:99"
 
 
+def test_explicit_peer_surface_skips_resolution_and_sends_plain(
+        tmp_registry, fc):
+    """Inline-bootstrap reply path: caller passes --peer-surface directly,
+    so we skip name/tab resolution and route. No re-bootstrap — the peer
+    already initiated contact."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
+           surface_ref="surface:777", title="whatever")
+    out = send.send("inbound_peer", "thanks for the ping",
+                    my_name=None, fallback_self_name=None,
+                    rerun_argv=[], peer_surface="surface:777")
+    assert out["ok"]
+    assert out["kind"] == "message"
+    assert out["resolved_by"] == "explicit_surface"
+    assert out["surface"] == "surface:777"
+    surf, ws, text = fc.sent[0]
+    assert surf == "surface:777"
+    assert ws == "workspace:7"
+    assert text == "[from: me] thanks for the ping"
+    assert "[p2p-bootstrap]" not in text
+
+
+def test_explicit_peer_surface_unknown_falls_back_to_spawn(
+        tmp_registry, fc):
+    """If the supplied surface is no longer in the cmux tree, fall back to
+    the standard spawn handoff so the caller can invoke tfork."""
+    _seed_self(tmp_registry)
+    out = send.send("ghost_peer", "hi", my_name=None,
+                    fallback_self_name=None, rerun_argv=["rerun"],
+                    peer_surface="surface:404")
+    assert out["ok"] is False
+    assert out["code"] == "peer_unknown"
+    assert out["handoff_skill"] == "tfork"
+    payload = out["payload_file"]
+    assert os.path.exists(payload)
+    body = open(payload).read()
+    assert "suggested_name=ghost_peer" in body
+    os.unlink(payload)
+
+
+def test_explicit_peer_surface_with_stale_manifest_still_plain(
+        tmp_registry, fc):
+    """Explicit surface skips the stale-triggers-bootstrap branch — the
+    inbound bootstrap already established the channel."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:8", workspace_title="Old",
+           surface_ref="surface:800", title="t")
+    old = int(time.time()) - registry.TTL_SECONDS - 60
+    p = registry.manifest_path("surface:800")
+    p.write_text(json.dumps({
+        "name": "stale_one", "surface_ref": "surface:800",
+        "started_at": old, "last_seen": old,
+    }))
+    out = send.send("whatever_alias", "yo", my_name=None,
+                    fallback_self_name=None, rerun_argv=[],
+                    peer_surface="surface:800")
+    assert out["ok"]
+    assert out["kind"] == "message"
+    assert out["canonical_name"] == "stale_one"
+    assert out["peer_status"] == "stale"
+    text = fc.sent[0][2]
+    assert text == "[from: me] yo"
+
+
+def test_bootstrap_suggested_name_takes_precedence_over_fallback(
+        tmp_registry, fc):
+    """Registration order: --my-name > --bootstrap-suggested-name >
+    scrollback fallback. With no --my-name, the inline suggested_name
+    should win over the scrollback-derived fallback."""
+    fc.add(workspace_ref="workspace:2", workspace_title="O",
+           surface_ref="surface:200", title="peer")
+    registry.register("peer", "surface:200",
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("peer", "hi", my_name=None,
+                    fallback_self_name="from_scrollback",
+                    rerun_argv=[],
+                    bootstrap_suggested_name="from_bootstrap")
+    assert out["ok"]
+    me = registry.get_self(MY_SURFACE)
+    assert me["name"] == "from_bootstrap"
+
+
+def test_my_name_beats_bootstrap_suggested_name(tmp_registry, fc):
+    fc.add(workspace_ref="workspace:2", workspace_title="O",
+           surface_ref="surface:200", title="peer")
+    registry.register("peer", "surface:200",
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("peer", "hi", my_name="explicit_name",
+                    fallback_self_name="from_scrollback",
+                    rerun_argv=[],
+                    bootstrap_suggested_name="from_bootstrap")
+    assert out["ok"]
+    me = registry.get_self(MY_SURFACE)
+    assert me["name"] == "explicit_name"
+
+
 def test_slash_command_skips_prefix(tmp_registry, fc):
     _seed_self(tmp_registry)
     fc.add(workspace_ref="workspace:2", workspace_title="O",

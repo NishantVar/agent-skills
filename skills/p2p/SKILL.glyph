@@ -7,7 +7,10 @@ skill p2p(my_name = "" <"Stable short name this agent registers under on first u
     avoid skill_calls_skill
 
     flow:
-        send_via_helper()
+        if inline_bootstrap_present.applies()
+            reply_to_inline_bootstrap()
+        else
+            send_via_helper()
 
         if handoff_received.applies()
             follow_handoff_instruction()
@@ -19,6 +22,15 @@ block send_via_helper()
         "Write {message} to a temp file like `/tmp/p2p-out-{peer}.txt`."
         "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --message-file <path>`. Include `--my-name {my_name}` only on the first invocation in this agent's lifetime; the helper ignores it once a manifest exists."
         "Parse the JSON on stdout. `{ok: true}` is done. `{ok: false}` carries `code`, `agent_instruction`, and (per code) extra fields like `payload_file` or `candidates`."
+
+
+block reply_to_inline_bootstrap()
+    description: "An inbound `[p2p-bootstrap]` block is in this agent's prompt. Do one `send` call — register + reply in the same invocation."
+    flow:
+        "Read `peer_name=` / `peer_surface=` / `suggested_name=` from the inline `[p2p-bootstrap]` block in the user-turn prompt."
+        "Write the reply body to a temp file like `/tmp/p2p-out-{peer}.txt`."
+        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer <peer_name> --peer-surface <peer_surface> --bootstrap-suggested-name <suggested_name> --message-file <path>`. The helper registers this agent under `suggested_name` on the fly and routes directly without name/tab resolution."
+        "If the bootstrap text is in a file rather than inline, pass `--bootstrap-file <path>` instead — it fills --peer, --peer-surface, and --bootstrap-suggested-name from the parsed text."
 
 
 block follow_handoff_instruction()
