@@ -15,7 +15,6 @@ def _base(code: str, human: str, instruction: str, *,
           action: str = "none", retryable: bool = False,
           handoff_skill: str | None = None,
           rerun_argv: list[str] | None = None,
-          suggested_next_command: str | None = None,
           **extra: Any) -> dict:
     out: dict[str, Any] = {
         "ok": False,
@@ -27,8 +26,6 @@ def _base(code: str, human: str, instruction: str, *,
         "rerun_argv": rerun_argv or [],
         "retryable": retryable,
     }
-    if suggested_next_command:
-        out["suggested_next_command"] = suggested_next_command
     out.update(extra)
     return out
 
@@ -53,46 +50,46 @@ def empty_message() -> dict:
     )
 
 
-def bad_name_format(name: str) -> dict:
+def title_collision(title: str, workspace_ref: str,
+                    holder_surface: str) -> dict:
     return _base(
-        "bad_name_format",
-        f"Name {name!r} is not lowercase snake_case.",
-        "Pick a name matching [a-z][a-z0-9_]* and rerun with the new "
-        "--my-name (or --name for register).",
-        action="pick_self_name",
-    )
-
-
-def name_collision(name: str, holder_surface: str) -> dict:
-    return _base(
-        "name_collision",
-        f"Name {name!r} is already held by a live agent at "
-        f"{holder_surface}.",
-        "Pick a different name and rerun.",
-        action="pick_self_name",
+        "title_collision",
+        f"Tab title {title!r} is already held by another live tab at "
+        f"{holder_surface} in workspace {workspace_ref}.",
+        "Pick a different --my-title and rerun. Titles must be unique "
+        "within a workspace; routing is by (workspace, title).",
+        action="pick_self_title",
         holder_surface=holder_surface,
-    )
-
-
-def name_collision_stale(name: str, holder_surface: str) -> dict:
-    return _base(
-        "name_collision_stale",
-        f"Name {name!r} is held by a stale agent at {holder_surface}; "
-        "the surface is alive but the agent has been idle past the "
-        "TTL.",
-        "Pick a different name to avoid claim ambiguity, or address the "
-        "stale agent and have it re-touch its manifest first.",
-        action="pick_self_name",
-        holder_surface=holder_surface,
+        workspace_ref=workspace_ref,
     )
 
 
 def info_needed(missing: list[str], rerun_argv: list[str]) -> dict:
+    needs_self_title = "self_title" in missing
+    if needs_self_title:
+        # Target the calling AGENT, not the human. The agent has role
+        # context (what it's doing, who spawned it, the conversation) and
+        # is entirely capable of choosing a meaningful title like
+        # `qa_lead` or `reviewer`. `agent_<surface_num>` is opaque
+        # garbage for every downstream reader; do not paper over the
+        # question with a meaningless default.
+        instruction = (
+            "Pick a stable snake_case title that reflects your role "
+            "(e.g., `qa_lead`, `reviewer`, `builder`, `p2p_tester`) "
+            "and rerun with --my-title <t>. Do NOT ask the human — "
+            "choose yourself from your own role context. Once chosen, "
+            "the title is sticky for this agent's lifetime."
+        )
+        action = "pick_self_title"
+    else:
+        instruction = ("Supply the missing flags and rerun the same "
+                       "subcommand.")
+        action = "none"
     return _base(
         "info_needed",
         "Missing required input: " + ", ".join(missing),
-        "Supply the missing flags and rerun the same subcommand.",
-        action="register" if "self_name" in missing else "none",
+        instruction,
+        action=action,
         rerun_argv=rerun_argv,
         missing=missing,
     )
@@ -119,12 +116,12 @@ def peer_unknown(peer: str, payload_file: str, rerun_argv: list[str]) -> dict:
 def peer_ambiguous(peer: str, candidates: list[dict]) -> dict:
     return _base(
         "peer_ambiguous",
-        f"Tab title {peer!r} matches more than one surface across "
-        "workspaces.",
-        "Re-address the peer using its registered manifest name "
-        "(which is unique), or rerun with --peer <original-or-label> "
-        "--peer-surface <candidates[i].ref> to route by surface "
-        "directly. Bare `surface:N` strings are NOT accepted as --peer.",
+        f"Tab title {peer!r} matches more than one live surface "
+        "(across workspaces, or within one if cmux allowed duplicates).",
+        "Rerun with --peer <title> --peer-surface <candidates[i].ref> "
+        "to route by surface directly, or with --workspace <ref> to "
+        "scope the title match to a specific workspace. Bare "
+        "`surface:N` strings are NOT accepted as --peer.",
         action="none",
         candidates=candidates,
     )

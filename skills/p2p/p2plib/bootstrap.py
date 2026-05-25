@@ -10,45 +10,50 @@ import secrets
 
 BOOTSTRAP_TAG = "[p2p-bootstrap]"
 
-_KV_RE = re.compile(r"^(peer_name|peer_surface|suggested_name)\s*=\s*(.+)$")
+# Accept both the new keys (peer_title, suggested_title) and the legacy
+# keys (peer_name, suggested_name). New writes only emit the title
+# form; parsing tolerates the old form for one release.
+_KV_RE = re.compile(
+    r"^(peer_title|peer_name|peer_surface|suggested_title|suggested_name)"
+    r"\s*=\s*(.+)$")
 
 
-def build_bootstrap(peer_name: str, peer_surface: str,
-                    suggested_name: str | None,
+def build_bootstrap(peer_title: str, peer_surface: str,
+                    suggested_title: str | None,
                     first_message: str | None,
                     one_way: bool = False) -> str:
-    suggest_line = (f"suggested_name={suggested_name}\n"
-                    if suggested_name else "")
+    suggest_line = (f"suggested_title={suggested_title}\n"
+                    if suggested_title else "")
     if one_way:
         trailer = (
             f"Please load the p2p skill and register yourself with a "
-            f"stable short name (use the suggested name above, or your "
-            f"cmux tab title, when you do not already have one). This "
-            f"is a one-way notification — no reply is expected."
+            f"stable short title (use the suggested title above, or "
+            f"your cmux tab title, when you do not already have one). "
+            f"This is a one-way notification — no reply is expected."
         )
     else:
         trailer = (
             f"Please load the p2p skill, register yourself with a "
-            f"stable short name (use the suggested name above, or your "
-            f"cmux tab title, when you do not already have one), and "
-            f"reply when ready."
+            f"stable short title (use the suggested title above, or "
+            f"your cmux tab title, when you do not already have one), "
+            f"and reply when ready."
         )
     body = (
         f"{BOOTSTRAP_TAG} You have an incoming peer-messaging connection.\n"
-        f"peer_name={peer_name}\n"
+        f"peer_title={peer_title}\n"
         f"peer_surface={peer_surface}\n"
         f"{suggest_line}"
         f"{trailer}"
     )
     if first_message and first_message.strip():
         marker = " (one-way, no reply expected)" if one_way else ""
-        body += (f"\n\nFirst message from {peer_name}{marker}: "
+        body += (f"\n\nFirst message from {peer_title}{marker}: "
                  f"{first_message}")
     return body
 
 
-def build_spawn_bootstrap(peer_name: str, peer_surface: str,
-                          suggested_name: str | None,
+def build_spawn_bootstrap(peer_title: str, peer_surface: str,
+                          suggested_title: str | None,
                           first_message: str | None,
                           one_way: bool = False) -> str:
     """Same as build_bootstrap but phrased for a freshly-spawned agent
@@ -56,38 +61,38 @@ def build_spawn_bootstrap(peer_name: str, peer_surface: str,
     this as the new agent's first user-turn prompt via whatever
     delayed-input mechanism it currently exposes — p2p does not
     prescribe a flag."""
-    suggest_line = (f"suggested_name={suggested_name}\n"
-                    if suggested_name else "")
+    suggest_line = (f"suggested_title={suggested_title}\n"
+                    if suggested_title else "")
     if one_way:
         trailer = (
-            f"Pick a short snake_case name for yourself (or accept the "
-            f"suggested_name if provided), load the p2p skill, and "
-            f"register. This is a one-way notification — no reply is "
-            f"expected."
+            f"Pick a short snake_case title for yourself (or accept "
+            f"the suggested_title if provided), load the p2p skill, "
+            f"and register. This is a one-way notification — no reply "
+            f"is expected."
         )
     else:
         trailer = (
-            f"Pick a short snake_case name for yourself (or accept the "
-            f"suggested_name if provided), load the p2p skill, register, "
-            f"and reply."
+            f"Pick a short snake_case title for yourself (or accept "
+            f"the suggested_title if provided), load the p2p skill, "
+            f"register, and reply."
         )
     body = (
         f"{BOOTSTRAP_TAG} You were spawned by peer-messaging.\n"
-        f"peer_name={peer_name}\n"
+        f"peer_title={peer_title}\n"
         f"peer_surface={peer_surface}\n"
         f"{suggest_line}"
         f"{trailer}"
     )
     if first_message and first_message.strip():
         marker = " (one-way, no reply expected)" if one_way else ""
-        body += (f"\n\nFirst message from {peer_name}{marker}: "
+        body += (f"\n\nFirst message from {peer_title}{marker}: "
                  f"{first_message}")
     return body
 
 
-def write_spawn_payload(peer_name: str, payload: str) -> str:
+def write_spawn_payload(peer_title: str, payload: str) -> str:
     """Write spawn payload to /tmp with O_EXCL 0600. Returns the path."""
-    path = (f"/tmp/p2p-spawn-{peer_name}-{os.getpid()}-"
+    path = (f"/tmp/p2p-spawn-{peer_title}-{os.getpid()}-"
             f"{secrets.token_hex(4)}.txt")
     fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
@@ -99,8 +104,10 @@ def write_spawn_payload(peer_name: str, payload: str) -> str:
 
 def parse_bootstrap_text(text: str) -> dict | None:
     """Find the most recent [p2p-bootstrap] block in `text` and extract
-    peer_name / peer_surface / suggested_name. Returns None when no
-    block is found or required fields are missing."""
+    peer_title (or legacy peer_name) / peer_surface / suggested_title
+    (or legacy suggested_name). Returns a dict with normalized keys
+    (peer_title, peer_surface, suggested_title) or None when no block
+    is found or required fields are missing."""
     lines = text.splitlines()
     idx = None
     for i in range(len(lines) - 1, -1, -1):
@@ -109,11 +116,17 @@ def parse_bootstrap_text(text: str) -> dict | None:
             break
     if idx is None:
         return None
-    out: dict[str, str] = {}
+    raw: dict[str, str] = {}
     for ln in lines[idx:idx + 20]:
         m = _KV_RE.match(ln.strip())
         if m:
-            out[m.group(1)] = m.group(2).strip()
-    if not out.get("peer_name") or not out.get("peer_surface"):
+            raw[m.group(1)] = m.group(2).strip()
+    out: dict[str, str] = {}
+    out["peer_title"] = raw.get("peer_title") or raw.get("peer_name") or ""
+    out["peer_surface"] = raw.get("peer_surface", "")
+    suggested = raw.get("suggested_title") or raw.get("suggested_name")
+    if suggested:
+        out["suggested_title"] = suggested
+    if not out["peer_title"] or not out["peer_surface"]:
         return None
     return out

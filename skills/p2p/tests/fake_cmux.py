@@ -67,7 +67,15 @@ class FakeCmux:
             self.reads.append((surf, ws))
             return self.screen_text.get(surf, "")
 
-        def fake_rename(*_args, **_kw):
+        def fake_rename(surf, _ws, new_title):
+            # Mirror cmux: update the in-memory surface title so the next
+            # tree read reflects the rename. Without this, subsequent
+            # sweeps that compare manifest.title vs current cmux title
+            # would reap a just-renamed agent's own manifest.
+            for s in self.surfaces:
+                if s.surface_ref == surf:
+                    s.title = new_title
+                    return None
             return None
 
         monkeypatch.setattr(transport, "send_buffer", fake_send)

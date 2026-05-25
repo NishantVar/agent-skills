@@ -4,14 +4,25 @@ One JSON file per surface at REGISTRY/<safe_surface_ref>.json. All
 mutating operations run under an fcntl exclusive lock on REGISTRY/.lock
 so concurrent agents serialize.
 
+Manifest shape:
+    {surface_ref, workspace_ref, title, started_at, last_seen, status?}
+
+`title` is the cmux tab title at registration time and the single
+routing identifier. (workspace_ref, title) is the unique routing key;
+collisions are rejected at register-time via title_collision.
+
 Two-tier staleness:
   - surface_ref absent from `cmux tree --all` -> delete file (eager).
   - surface live but `last_seen` older than TTL -> mark status="stale",
-    keep file (name stays held; agent can revive by touching).
+    keep file (title stays held; agent can revive by touching).
+  - surface live but the surface's CURRENT cmux title no longer matches
+    manifest.title (user renamed the tab outside of p2p) -> the
+    manifest is dead; delete file. The visible title is the routing
+    truth — a renamed tab cannot keep claiming its old identity.
 
-`touch_self` is the heartbeat: any CLI invocation calls it once at
-startup. It writes `last_seen=now`, clears `status: stale` if present,
-and is a no-op when the agent isn't registered yet.
+Legacy compatibility: manifests written by the old `name`-based code
+are read transparently — a missing `title` field falls back to `name`.
+New writes never emit `name`.
 """
 
 from __future__ import annotations
@@ -20,7 +31,6 @@ import contextlib
 import fcntl
 import json
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -28,7 +38,6 @@ from pathlib import Path
 REGISTRY = Path.home() / ".cmux" / "agents" / "by-surface"
 LOCK_PATH = REGISTRY / ".lock"
 TTL_SECONDS = 30 * 60
-NAME_RE = re.compile(r"[a-z][a-z0-9_]*")
 
 
 def _ensure_registry() -> None:
@@ -68,7 +77,10 @@ def _atomic_write(path: Path, data: dict) -> None:
 def _read_manifest(path: Path) -> dict | None:
     """Read one manifest file. Returns None on missing/corrupt — does
     NOT unlink corrupt files (that's an atomic-write violation signal,
-    not a stale signal). Logs to stderr and skips."""
+    not a stale signal). Logs to stderr and skips.
+
+    Legacy `name` field is promoted to `title` in the returned dict
+    (does not rewrite the file)."""
     try:
         text = path.read_text()
     except FileNotFoundError:
@@ -77,11 +89,14 @@ def _read_manifest(path: Path) -> dict | None:
         print(f"warning: cannot read {path}: {exc}", file=sys.stderr)
         return None
     try:
-        return json.loads(text)
+        m = json.loads(text)
     except json.JSONDecodeError as exc:
         print(f"warning: skipping corrupt manifest {path}: {exc}",
               file=sys.stderr)
         return None
+    if "title" not in m and "name" in m:
+        m["title"] = m["name"]
+    return m
 
 
 def _iter_manifest_files():
@@ -91,8 +106,15 @@ def _iter_manifest_files():
         yield path
 
 
-def sweep_locked(live_set: set[str], now: float | None = None) -> list[dict]:
-    """Two-tier sweep inside the lock. Returns the post-sweep manifest list."""
+def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
+                 now: float | None = None) -> list[dict]:
+    """Two-tier sweep inside the lock. Returns the post-sweep manifest list.
+
+    When `surfaces` is supplied (surface_index map), an additional stale
+    trigger fires: if the surface's current cmux title differs from
+    `manifest.title`, the manifest is dead (user renamed the tab
+    outside of p2p) and the file is unlinked.
+    """
     now = time.time() if now is None else now
     survivors: list[dict] = []
     for path in list(_iter_manifest_files()):
@@ -106,6 +128,15 @@ def sweep_locked(live_set: set[str], now: float | None = None) -> list[dict]:
             except FileNotFoundError:
                 pass
             continue
+        if surfaces is not None:
+            current_title = (surfaces.get(ref) or {}).get("title", "")
+            if current_title != m.get("title"):
+                # Tab was renamed outside p2p. Old identity is dead.
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+                continue
         last_seen = m.get("last_seen") or m.get("started_at") or 0
         if now - last_seen > TTL_SECONDS:
             if m.get("status") != "stale":
@@ -149,24 +180,31 @@ def get_self(surface_ref: str | None) -> dict | None:
     return _read_manifest(path)
 
 
-def register(name: str, surface_ref: str,
-             live_set: set[str]) -> tuple[dict | None, dict | None]:
-    """Register `name` for `surface_ref`. Returns (manifest, error).
+def register(title: str, surface_ref: str, workspace_ref: str | None,
+             live_set: set[str],
+             surfaces: dict[str, dict] | None = None
+             ) -> tuple[dict | None, dict | None]:
+    """Register `title` for `surface_ref`. Returns (manifest, error).
 
-    Error is a dict with kind="bad_name_format" | "name_collision" |
-    "name_collision_stale" | "not_in_cmux", or None on success. The
-    caller wraps it into the handoff JSON.
+    Error is a dict with kind="title_collision" | "not_in_cmux", or
+    None on success. The caller wraps it into the handoff JSON.
+
+    Collision is scoped to (workspace_ref, title): two tabs in
+    different workspaces can share a title.
     """
-    if not NAME_RE.fullmatch(name):
-        return None, {"kind": "bad_name_format", "name": name}
     if surface_ref not in live_set:
         return None, {"kind": "not_in_cmux", "surface": surface_ref}
 
     with registry_lock():
-        # Sweep first so we make decisions against fresh state.
-        manifests = sweep_locked(live_set)
+        # Sweep first so we make decisions against fresh state. Pass
+        # surfaces so renamed-outside-p2p manifests get reaped before
+        # we collision-check.
+        manifests = sweep_locked(live_set, surfaces=surfaces)
         for m in manifests:
-            if m.get("name") != name:
+            if m.get("title") != title:
+                continue
+            if m.get("workspace_ref") != workspace_ref:
+                # Same title in a different workspace is fine.
                 continue
             if m.get("surface_ref") == surface_ref:
                 # Already ours — refresh in place.
@@ -174,14 +212,14 @@ def register(name: str, surface_ref: str,
                 m.pop("status", None)
                 _atomic_write(manifest_path(surface_ref), m)
                 return m, None
-            kind = ("name_collision_stale"
-                    if m.get("status") == "stale" else "name_collision")
-            return None, {"kind": kind, "name": name,
+            return None, {"kind": "title_collision", "title": title,
+                          "workspace_ref": workspace_ref,
                           "holder_surface": m.get("surface_ref")}
         now = int(time.time())
         data = {
-            "name": name,
+            "title": title,
             "surface_ref": surface_ref,
+            "workspace_ref": workspace_ref,
             "started_at": now,
             "last_seen": now,
         }
@@ -189,7 +227,8 @@ def register(name: str, surface_ref: str,
         return data, None
 
 
-def all_manifests(live_set: set[str]) -> list[dict]:
+def all_manifests(live_set: set[str],
+                  surfaces: dict[str, dict] | None = None) -> list[dict]:
     """Convenience: take the lock, sweep, return post-sweep manifests."""
     with registry_lock():
-        return sweep_locked(live_set)
+        return sweep_locked(live_set, surfaces=surfaces)

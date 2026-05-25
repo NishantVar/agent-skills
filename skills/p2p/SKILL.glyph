@@ -1,7 +1,7 @@
-skill p2p(my_name = "" <"Optional snake_case name to register under on first use. If empty, the helper auto-derives `agent_<surface_num>` (e.g., agent_556). Ignored on subsequent calls. Do NOT prompt the user to pick a name — auto-default is fine for plumbing.">, peer = "" <"Manifest name or cmux tab title of the destination peer. Manifest name beats tab title; tab title is fallback for first contact.">, message = "" <"Message body. Always passed via --message-file to side-step shell quoting.">)
-    description: "P2P messaging between cmux agents: one verb (`send`) handles first contact, follow-up, and reply. Routes by per-surface manifest; returns a handoff JSON object when a peer must be spawned or another skill must run."
+skill p2p(my_title = "" <"Optional snake_case title to register under on first use. If empty AND the current cmux tab title is generic (`claude`, `codex`, etc.), the helper returns info_needed; pick a title that reflects this agent's role and rerun. Do NOT ask the human — choose from your own role context. Title is sticky for the agent's lifetime.">, peer = "" <"Cmux tab title of the destination peer. Single routing key, scoped to the caller's workspace by default.">, message = "" <"Message body. Always passed via --message-file to side-step shell quoting.">)
+    description: "P2P messaging between cmux agents: one verb (`send`) handles first contact, follow-up, and reply. Routes by cmux tab title scoped to the caller's workspace; returns a handoff JSON object when a peer must be spawned or another skill must run."
 
-    require single_stable_name
+    require single_stable_title
     require always_use_send_verb
     require honor_handoff_json
     avoid skill_calls_skill
@@ -17,33 +17,33 @@ skill p2p(my_name = "" <"Optional snake_case name to register under on first use
 
 
 block send_via_helper()
-    description: "Issue one `send` call. The helper handles registration, peer resolution, plain-vs-bootstrap framing, cross-workspace routing, and payload-file generation."
+    description: "Issue one `send` call. The helper handles registration, title resolution, plain-vs-bootstrap framing, cross-workspace routing, and payload-file generation."
     flow:
         "Write {message} to a temp file like `/tmp/p2p-out-{peer}.txt`."
-        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --message-file <path>`. Include `--my-name {my_name}` only on the first invocation in this agent's lifetime; the helper ignores it once a manifest exists. Add `--one-way` for fire-and-forget delivery — the wire frame becomes `[from: <me> | one-way] <body>` and any first-contact bootstrap drops the reply request."
+        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --message-file <path>`. Include `--my-title {my_title}` only on the first invocation in this agent's lifetime; the helper ignores it once a manifest exists. Add `--one-way` for fire-and-forget delivery — the wire frame becomes `[from: <me> | one-way] <body>` and any first-contact bootstrap drops the reply request. Add `--workspace <ref>` to scope the title match to a different workspace, or `--workspace all` for global scope."
         "Parse the JSON on stdout. `{ok: true}` is done. `{ok: false}` carries `code`, `agent_instruction`, and (per code) extra fields like `payload_file` or `candidates`."
 
 
 block reply_to_inline_bootstrap()
     description: "An inbound `[p2p-bootstrap]` block is in this agent's prompt. Do one `send` call — register + reply in the same invocation."
     flow:
-        "Read `peer_name=` / `peer_surface=` / `suggested_name=` from the inline `[p2p-bootstrap]` block in the user-turn prompt."
+        "Read `peer_title=` / `peer_surface=` / `suggested_title=` from the inline `[p2p-bootstrap]` block in the user-turn prompt."
         "Write the reply body to a temp file like `/tmp/p2p-out-{peer}.txt`."
-        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer <peer_name> --peer-surface <peer_surface> --bootstrap-suggested-name <suggested_name> --message-file <path>`. The helper registers this agent under `suggested_name` on the fly and routes directly without name/tab resolution."
-        "If the bootstrap text is in a file rather than inline, pass `--bootstrap-file <path>` instead — it fills --peer, --peer-surface, and --bootstrap-suggested-name from the parsed text."
+        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer <peer_title> --peer-surface <peer_surface> --bootstrap-suggested-title <suggested_title> --message-file <path>`. The helper registers this agent under `suggested_title` on the fly and routes directly without title resolution."
+        "If the bootstrap text is in a file rather than inline, pass `--bootstrap-file <path>` instead — it fills --peer, --peer-surface, and --bootstrap-suggested-title from the parsed text."
 
 
 block follow_handoff_instruction()
     description: "The helper returned ok:false. Read `agent_instruction` and act."
     flow:
         "`peer_unknown` → invoke the tfork skill and have it spawn an agent whose first user-turn input is the contents of `payload_file`. Use whatever delayed-input mechanism tfork currently exposes — p2p does not prescribe a flag. The payload file is already written 0600; do not re-create it."
-        "`peer_ambiguous` → either rerun with --peer set to the canonical manifest name (unique), or rerun with --peer <original-or-label> --peer-surface <candidates[i].ref>. A bare `surface:N` string is not a valid --peer."
-        "`info_needed` with `missing: [\"self_name\"]` → rerun with `--my-name <name>`."
-        "`name_collision` / `name_collision_stale` → pick a different name and rerun."
+        "`peer_ambiguous` → rerun with --peer set + --peer-surface <candidates[i].ref> to route by surface directly, or with --workspace <ref> to scope the title match. A bare `surface:N` string is not a valid --peer."
+        "`info_needed` with `missing: [\"self_title\"]` → choose a snake_case title that reflects this agent's role (e.g., `reviewer`, `qa_lead`, `builder`) from your own context, then rerun with `--my-title <t>`. Do NOT ask the human."
+        "`title_collision` → another live agent in the workspace already holds that title. Pick a different --my-title and rerun."
         "`empty_message` → write a non-empty body and rerun."
 
 
-const single_stable_name = """Pick one short, lowercase, snake_case name on the first call and keep it for life. Peers route by the manifest's `name` field; renaming mid-session makes this agent unreachable under the prior name."""
+const single_stable_title = """Pick one short, lowercase, snake_case title on the first call and keep it for life. Peers route by `(workspace, title)`; renaming mid-session makes this agent unreachable under the prior title. The helper renames the cmux tab cosmetically to match the registered title."""
 
 const always_use_send_verb = """All outgoing messages go through `agent_msg.py send`. Never call `cmux set-buffer`, `cmux paste-buffer`, or `cmux send-key` directly — the helper alone passes `--workspace` (without it cross-workspace delivery fails as `Surface is not a terminal`), applies the `[from: <me>]` prefix, and uses a per-op buffer name to avoid concurrent-sender interleaving."""
 

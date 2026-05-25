@@ -25,7 +25,7 @@ def _decorate_me(m: dict, surfaces: dict[str, dict]) -> dict:
     ref = m.get("surface_ref") or ""
     s = surfaces.get(ref, {})
     return {
-        "name": m.get("name"),
+        "title": m.get("title"),
         "surface_ref": ref,
         "workspace_ref": s.get("workspace_ref"),
         "workspace_title": s.get("workspace_title", ""),
@@ -41,41 +41,15 @@ def _decorate_peer(m: dict, surfaces: dict[str, dict]) -> dict:
 
 # ---------------- subcommands ----------------
 
-def cmd_register(args) -> int:
-    surf = surface.my_surface()
-    if surf is None:
-        _print_json(errors.not_in_cmux())
-        return EXIT_HANDOFF
-    tree = surface.cmux_tree()
-    live = surface.live_surfaces(tree)
-    surfaces = surface.surface_index(tree)
-    m, err = registry.register(args.name, surf, live)
-    if err:
-        kind = err["kind"]
-        if kind == "bad_name_format":
-            _print_json(errors.bad_name_format(args.name))
-        elif kind == "name_collision":
-            _print_json(errors.name_collision(args.name,
-                                              err["holder_surface"]))
-        elif kind == "name_collision_stale":
-            _print_json(errors.name_collision_stale(args.name,
-                                                    err["holder_surface"]))
-        elif kind == "not_in_cmux":
-            _print_json(errors.not_in_cmux())
-        return EXIT_HANDOFF
-    assert m is not None
-    ws = surfaces.get(surf, {}).get("workspace_ref")
-    transport.rename_tab(surf, ws, args.name)
-    _print_json(m)
-    return EXIT_OK
-
-
 def cmd_list(_args) -> int:
+    """Human-debug only. NOT part of the agent-facing skill contract —
+    SKILL.md teaches `send` as the single verb. This subcommand stays
+    so a human can inspect registry state at the shell."""
     surf = surface.my_surface()
     tree = surface.cmux_tree()
     live = surface.live_surfaces(tree)
     surfaces = surface.surface_index(tree)
-    manifests = registry.all_manifests(live)
+    manifests = registry.all_manifests(live, surfaces=surfaces)
     me = None
     peers = []
     for m in manifests:
@@ -95,17 +69,35 @@ def _read_body(args) -> str:
     return ""
 
 
+def _resolve_title_aliases(args) -> None:
+    """One-release deprecation aliases. --my-name → --my-title and
+    --bootstrap-suggested-name → --bootstrap-suggested-title. Emits a
+    single-line warning to stderr so callers update."""
+    if getattr(args, "my_name", None) and not args.my_title:
+        print("warning: --my-name is deprecated; use --my-title",
+              file=sys.stderr)
+        args.my_title = args.my_name
+    if (getattr(args, "bootstrap_suggested_name", None)
+            and not args.bootstrap_suggested_title):
+        print("warning: --bootstrap-suggested-name is deprecated; "
+              "use --bootstrap-suggested-title", file=sys.stderr)
+        args.bootstrap_suggested_title = args.bootstrap_suggested_name
+
+
 def cmd_send(args) -> int:
+    _resolve_title_aliases(args)
+
     # --bootstrap-file fills defaults for --peer / --peer-surface /
-    # --bootstrap-suggested-name when the agent has the bootstrap text
+    # --bootstrap-suggested-title when the agent has the bootstrap text
     # in a file rather than as individual flags.
     if args.bootstrap_file:
         text = Path(args.bootstrap_file).read_text()
         parsed = bootstrap.parse_bootstrap_text(text) or {}
-        args.peer = args.peer or parsed.get("peer_name")
+        args.peer = args.peer or parsed.get("peer_title")
         args.peer_surface = args.peer_surface or parsed.get("peer_surface")
-        args.bootstrap_suggested_name = (
-            args.bootstrap_suggested_name or parsed.get("suggested_name"))
+        args.bootstrap_suggested_title = (
+            args.bootstrap_suggested_title
+            or parsed.get("suggested_title"))
 
     body = _read_body(args)
     rerun: list[str] = ["agent_msg.py", "send"]
@@ -113,20 +105,23 @@ def cmd_send(args) -> int:
         rerun += ["--peer", args.peer]
     if args.peer_surface:
         rerun += ["--peer-surface", args.peer_surface]
-    if args.my_name:
-        rerun += ["--my-name", args.my_name]
-    if args.bootstrap_suggested_name:
-        rerun += ["--bootstrap-suggested-name", args.bootstrap_suggested_name]
+    if args.my_title:
+        rerun += ["--my-title", args.my_title]
+    if args.bootstrap_suggested_title:
+        rerun += ["--bootstrap-suggested-title",
+                  args.bootstrap_suggested_title]
+    if args.workspace:
+        rerun += ["--workspace", args.workspace]
     if args.one_way:
         rerun += ["--one-way"]
     if args.message_file:
         rerun += ["--message-file", args.message_file]
 
-    # Scrollback fallback only runs when neither --my-name nor
-    # --bootstrap-suggested-name was supplied and the agent isn't
+    # Scrollback fallback only runs when neither --my-title nor
+    # --bootstrap-suggested-title was supplied and the agent isn't
     # already registered. It's the deepest of three fallbacks.
-    fallback_self_name = None
-    if (not args.my_name and not args.bootstrap_suggested_name
+    fallback_self_title = None
+    if (not args.my_title and not args.bootstrap_suggested_title
             and registry.get_self(surface.my_surface()) is None):
         try:
             my_surf = surface.my_surface()
@@ -140,19 +135,33 @@ def cmd_send(args) -> int:
                 parsed = (bootstrap.parse_bootstrap_text(text)
                           if text else None)
                 if parsed:
-                    fallback_self_name = parsed.get("suggested_name") or None
+                    fallback_self_title = (parsed.get("suggested_title")
+                                           or None)
         except transport.TransportError:
             pass
+
+    # --workspace handling: bare flag means scope to current workspace
+    # (the default). --workspace all means global. --workspace <ref>
+    # scopes to that specific workspace.
+    scope_workspace_ref: str | None
+    if args.workspace == "all":
+        scope_workspace_ref = ""  # sentinel: global scope
+    elif args.workspace:
+        scope_workspace_ref = args.workspace
+    else:
+        scope_workspace_ref = None  # default: caller's own workspace
 
     try:
         result = send.send(
             peer=args.peer,
             body=body,
-            my_name=args.my_name,
-            fallback_self_name=fallback_self_name,
+            my_title=args.my_title,
+            fallback_self_title=fallback_self_title,
             rerun_argv=rerun,
             peer_surface=args.peer_surface,
-            bootstrap_suggested_name=args.bootstrap_suggested_name,
+            bootstrap_suggested_title=args.bootstrap_suggested_title,
+            scope_workspace_ref=(None if scope_workspace_ref == ""
+                                 else scope_workspace_ref),
             one_way=args.one_way,
         )
     except transport.TransportError as exc:
@@ -170,7 +179,7 @@ def cmd_send(args) -> int:
 
 def cmd_parse_incoming(_args) -> int:
     """Scrollback-only fallback. The primary inline-bootstrap path is
-    on `send` via --peer-surface / --bootstrap-suggested-name /
+    on `send` via --peer-surface / --bootstrap-suggested-title /
     --bootstrap-file; this verb stays as a debug tool for the rare case
     where the agent can't read its own user prompt directly and needs
     to scrape scrollback."""
@@ -200,29 +209,37 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agent_msg")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("register")
-    s.add_argument("--name", required=True)
-    s.set_defaults(func=cmd_register)
-
     sub.add_parser("list").set_defaults(func=cmd_list)
 
     s = sub.add_parser("send")
     # --peer is not argparse-required because --bootstrap-file can
     # supply it. cmd_send validates manually.
-    s.add_argument("--peer", default=None)
+    s.add_argument("--peer", default=None,
+                   help="Tab title of the destination peer in your "
+                        "workspace. Title is the single routing key.")
     s.add_argument("--peer-surface", default=None,
-                   help="Skip name/tab resolution and route directly. "
+                   help="Skip title resolution and route directly. "
                         "Used when an inline bootstrap already gave "
-                        "you the peer's surface.")
-    s.add_argument("--my-name", default=None,
-                   help="Self name to register under on first call. "
+                        "you the peer's surface, or to disambiguate "
+                        "a peer_ambiguous handoff.")
+    s.add_argument("--my-title", default=None,
+                   help="Self title to register under on first call. "
+                        "Cosmetically renames the cmux tab to match. "
                         "Ignored if already registered.")
-    s.add_argument("--bootstrap-suggested-name", default=None,
-                   help="Self name precedence when --my-name is "
+    s.add_argument("--my-name", default=None,
+                   help=argparse.SUPPRESS)  # deprecated alias
+    s.add_argument("--bootstrap-suggested-title", default=None,
+                   help="Self title precedence when --my-title is "
                         "absent and you have an inline bootstrap.")
+    s.add_argument("--bootstrap-suggested-name", default=None,
+                   help=argparse.SUPPRESS)  # deprecated alias
     s.add_argument("--bootstrap-file", default=None,
                    help="Read --peer / --peer-surface / "
-                        "--bootstrap-suggested-name from this file.")
+                        "--bootstrap-suggested-title from this file.")
+    s.add_argument("--workspace", default=None,
+                   help="Scope title resolution. Default: caller's own "
+                        "workspace. Pass `all` for global scope, or a "
+                        "specific workspace_ref.")
     s.add_argument("--one-way", action="store_true",
                    help="Fire-and-forget. Frames the message as "
                         "`[from: X | one-way]` and (on first contact) "
