@@ -4,12 +4,17 @@ Write a skill once, use it in Claude Code, Codex CLI, and Gemini CLI.
 
 All three agents use the same core format: `SKILL.md` with `name` + `description` YAML frontmatter ([Agent Skills open standard](https://agentskills.io/specification)). Each agent reads what it understands and ignores the rest.
 
+## Flagship Skills
+
+| Skill | Description |
+|-------|-------------|
+| `tfork` | Deterministic terminal fork — spawns a verified new terminal window running any agentic coding tool (Claude Code, Codex, Gemini) with a plan or command, using a self-verifying binary that guarantees the window actually opens. |
+| `p2p` | P2P messaging between cmux agents using inline-prompt transport over cmux set-buffer/paste-buffer. Per-surface manifest routing; fire-and-forget. |
+
 ## Skills
 
 | Skill | Description |
 |-------|-------------|
-| `p2p` | P2P messaging between cmux agents using inline-prompt transport over cmux set-buffer/paste-buffer. Per-surface manifest routing; fire-and-forget. |
-| `fork-terminal` | Fork a new terminal pane running an agentic coding tool with a plan or summary |
 | `athena` | Research companion based on Andrej Karpathy's LLM wiki approach, organized into four tiers: unconfirmed → confirmed → consolidated → design (the one you actually use). |
 | `ateam` | **(Experimental)** Multi-LLM agent team management — spawn Claude, Codex, and Gemini teammates and coordinate them via a hybrid native + sentinel-based protocol. |
 | `find-session` | Search and resume previous sessions by keyword (Claude Code only) |
@@ -17,6 +22,7 @@ All three agents use the same core format: `SKILL.md` with `name` + `description
 | `judgy` | Opinionated code reviewer that spawns a second agent to critique your staged changes |
 | `project-mover` | Move a project folder and update all path-dependent metadata for Claude Code, Codex CLI, and Gemini CLI. |
 | `prompt-builder` | Interactive prompt crafting with iterative refinement and versioned saves |
+| `smart-grill` | Interview the user relentlessly about a plan or design — but only on decisions that actually need their input. |
 
 ## Install / Uninstall
 
