@@ -26,7 +26,7 @@ Paste this into each agent (Claude Code, Codex, Gemini) and confirm exit 0:
 | Path 1 (normal env) matches truth | `cmux identify` regression |
 | Path 2 (env stripped) matches truth | tty-walk regression — the original bug |
 | Path 3 (override) returned verbatim | `AGENT_MSG_SURFACE_ID` flag regression |
-| Path 4 (all paths fail) errors cleanly | silent-fallback regression |
+| Path 4 (all paths fail) returns None | silent-fallback regression — `my_surface()` must return None so `cli.py` can wrap it as `errors.not_in_cmux()`; it must NOT fall back to the focused-pane surface_ref |
 | stripped resolution ≠ focused surface | the original `focused`-fallback footgun re-appearing |
 
 ## Why the tty walk is non-trivial

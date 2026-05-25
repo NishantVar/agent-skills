@@ -37,8 +37,10 @@ def build_spawn_bootstrap(peer_name: str, peer_surface: str,
                           suggested_name: str | None,
                           first_message: str | None) -> str:
     """Same as build_bootstrap but phrased for a freshly-spawned agent
-    that has no prior context. tfork delivers this as the new agent's
-    first user-turn prompt via --delayed-input-file."""
+    that has no prior context. The tfork skill is expected to deliver
+    this as the new agent's first user-turn prompt via whatever
+    delayed-input mechanism it currently exposes — p2p does not
+    prescribe a flag."""
     suggest_line = (f"suggested_name={suggested_name}\n"
                     if suggested_name else "")
     body = (
