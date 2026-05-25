@@ -75,9 +75,13 @@ def resolve_peer(addressed: str, manifests: list[dict],
             source="name",
         )
 
-    # 2. Tab title match across live surfaces.
+    # 2. Tab title match across live surfaces. Case-insensitive: tab
+    # titles are user-typed/cosmetic, so `--peer CTest` should reach a
+    # tab titled `ctest`. Manifest names above stay exact-match because
+    # they are snake_case canonical identifiers.
+    addressed_cf = addressed.casefold()
     tab_matches = [s for s in surfaces.values()
-                   if s.get("title") == addressed]
+                   if (s.get("title") or "").casefold() == addressed_cf]
     if not tab_matches:
         return ResolveResult(kind="unknown")
     if len(tab_matches) > 1:

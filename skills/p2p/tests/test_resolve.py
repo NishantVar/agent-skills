@@ -88,6 +88,32 @@ def test_unknown_peer():
     assert r.kind == "unknown"
 
 
+def test_tab_title_match_is_case_insensitive():
+    """`--peer CTest` must reach a tab titled `ctest`. Tab titles are
+    user-typed cosmetic strings; casing should not be a routing key."""
+    surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
+                        "surface_ref": "surface:1", "title": "ctest"}])
+    r = resolve.resolve_peer("CTest", [], surfaces)
+    assert r.kind == "live"
+    assert r.source == "tab_first_contact"
+    assert r.surface_ref == "surface:1"
+
+
+def test_tab_titles_differing_only_in_case_are_ambiguous():
+    """Two tabs whose titles casefold to the same string must be flagged
+    ambiguous, not silently picked."""
+    surfaces = _setup([
+        {"workspace_ref": "ws:A", "workspace_title": "A",
+         "surface_ref": "surface:1", "title": "ctest"},
+        {"workspace_ref": "ws:B", "workspace_title": "B",
+         "surface_ref": "surface:2", "title": "CTest"},
+    ])
+    r = resolve.resolve_peer("ctest", [], surfaces)
+    assert r.kind == "ambiguous"
+    refs = {c["ref"] for c in r.candidates}
+    assert refs == {"surface:1", "surface:2"}
+
+
 def test_name_match_wins_over_tab_match():
     """When a tab title equals one name and a different agent's
     manifest name equals the same string, the manifest name path wins
