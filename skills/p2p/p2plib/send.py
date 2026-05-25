@@ -21,7 +21,8 @@ from . import errors, registry, resolve, surface, transport
 
 
 def _success(addressed: str, canonical: str | None, surf: str,
-             resolved_by: str, peer_status: str, kind: str) -> dict:
+             resolved_by: str, peer_status: str, kind: str,
+             one_way: bool = False) -> dict:
     return {
         "ok": True,
         "peer": addressed,
@@ -30,7 +31,17 @@ def _success(addressed: str, canonical: str | None, surf: str,
         "resolved_by": resolved_by,
         "peer_status": peer_status,
         "kind": kind,
+        "one_way": one_way,
     }
+
+
+def _frame(me_name: str, body: str, one_way: bool) -> str:
+    """`[from: X] body` or `[from: X | one-way] body`. The pipe-form
+    marker is part of the wire contract — receivers read it inline to
+    know no reply is expected. Slash commands are passed verbatim by the
+    caller and never reach this helper."""
+    tag = f"{me_name} | one-way" if one_way else me_name
+    return f"[from: {tag}] {body}"
 
 
 def _resolved_by(source: str | None) -> str:
@@ -93,7 +104,8 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
                               peer_surface: str,
                               surfaces: dict[str, dict],
                               manifests: list[dict],
-                              rerun_argv: list[str]) -> dict:
+                              rerun_argv: list[str],
+                              one_way: bool) -> dict:
     """Reply path: caller supplied --peer-surface (typically from an
     inline bootstrap). Skip resolution; route directly. Plain message
     framing — the peer already initiated contact, so no re-bootstrap."""
@@ -105,6 +117,7 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
             peer_surface=me["surface_ref"],
             suggested_name=peer,
             first_message=body,
+            one_way=one_way,
         )
         payload_file = _bootstrap.write_spawn_payload(peer, payload_text)
         return errors.peer_unknown(peer, payload_file, rerun_argv)
@@ -117,7 +130,7 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
     if transport.is_command(body.strip()):
         text = body.strip()
     else:
-        text = f"[from: {me['name']}] {body}"
+        text = _frame(me["name"], body, one_way)
     transport.send_buffer(peer_surface, s.get("workspace_ref"), text)
 
     return _success(
@@ -127,6 +140,7 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
         resolved_by="explicit_surface",
         peer_status=("stale" if is_stale else "live"),
         kind="message",
+        one_way=one_way,
     )
 
 
@@ -134,12 +148,15 @@ def send(peer: str | None, body: str, my_name: str | None,
          fallback_self_name: str | None,
          rerun_argv: list[str],
          peer_surface: str | None = None,
-         bootstrap_suggested_name: str | None = None) -> dict:
+         bootstrap_suggested_name: str | None = None,
+         one_way: bool = False) -> dict:
     """Orchestrator. `peer_surface` skips name/tab resolution and routes
     directly — used when the caller already knows the peer's surface
     (e.g. from an inline [p2p-bootstrap] block). `bootstrap_suggested_name`
     takes registration precedence over the scrollback-derived
-    `fallback_self_name`."""
+    `fallback_self_name`. `one_way=True` marks the message as
+    fire-and-forget: receivers see `[from: X | one-way]` and (for first
+    contact) a bootstrap that omits the reply request."""
     if not body.strip():
         return errors.empty_message()
     if not peer:
@@ -165,7 +182,8 @@ def send(peer: str | None, body: str, my_name: str | None,
         return _send_to_explicit_surface(
             peer=peer, body=body, me=me,
             peer_surface=peer_surface, surfaces=surfaces,
-            manifests=manifests, rerun_argv=rerun_argv)
+            manifests=manifests, rerun_argv=rerun_argv,
+            one_way=one_way)
 
     r = resolve.resolve_peer(peer, manifests, surfaces)
 
@@ -178,6 +196,7 @@ def send(peer: str | None, body: str, my_name: str | None,
             peer_surface=me["surface_ref"],
             suggested_name=peer,
             first_message=body,
+            one_way=one_way,
         )
         payload_file = _bootstrap.write_spawn_payload(peer, payload_text)
         return errors.peer_unknown(peer, payload_file, rerun_argv)
@@ -195,6 +214,7 @@ def send(peer: str | None, body: str, my_name: str | None,
             peer_surface=me["surface_ref"],
             suggested_name=suggested,
             first_message=body,
+            one_way=one_way,
         )
         transport.send_buffer(r.surface_ref, r.workspace_ref, text)
         kind_out = "bootstrap"
@@ -202,7 +222,7 @@ def send(peer: str | None, body: str, my_name: str | None,
         if transport.is_command(body.strip()):
             text = body.strip()
         else:
-            text = f"[from: {me['name']}] {body}"
+            text = _frame(me["name"], body, one_way)
         transport.send_buffer(r.surface_ref, r.workspace_ref, text)
         kind_out = "message"
 
@@ -213,4 +233,5 @@ def send(peer: str | None, body: str, my_name: str | None,
         resolved_by=_resolved_by(r.source),
         peer_status=("stale" if r.kind == "stale" else "live"),
         kind=kind_out,
+        one_way=one_way,
     )

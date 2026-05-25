@@ -17,7 +17,7 @@ description: >-
 ### Steps
 
 1. **Send a message to any peer — existing, stale, or unknown — with one call:**
-   `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --my-name {my_name} --message-file <path>`. Drop `--my-name` once this agent has registered. The helper handles registration, peer resolution, plain-vs-bootstrap framing, and cross-workspace routing internally.
+   `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --my-name {my_name} --message-file <path>`. Drop `--my-name` once this agent has registered. Add `--one-way` when you want fire-and-forget delivery (no reply expected): the wire frame becomes `[from: <me> | one-way] <body>` and the first-contact bootstrap omits the reply request. The helper handles registration, peer resolution, plain-vs-bootstrap framing, and cross-workspace routing internally.
 2. **Read the JSON result on stdout.**
    - `{"ok": true, ...}` → done. The success object reports `canonical_name`, `surface`, `resolved_by`, `peer_status` (`live`/`stale`), and `kind` (`message`/`bootstrap`).
    - `{"ok": false, "code": ..., "agent_instruction": ..., ...}` → follow the `agent_instruction` literally. Common cases:

@@ -319,6 +319,77 @@ def test_my_name_beats_bootstrap_suggested_name(tmp_registry, fc):
     assert me["name"] == "explicit_name"
 
 
+def test_one_way_to_live_peer_marks_frame_and_success(tmp_registry, fc):
+    """`--one-way` to a registered peer: wire frame carries the
+    pipe-form marker, success JSON reflects one_way=True, no bootstrap."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:2", workspace_title="O",
+           surface_ref="surface:200", title="t")
+    registry.register("peer_a", "surface:200",
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("peer_a", "fyi only", my_name=None,
+                    fallback_self_name=None, rerun_argv=[],
+                    one_way=True)
+    assert out["ok"]
+    assert out["one_way"] is True
+    assert out["kind"] == "message"
+    text = fc.sent[0][2]
+    assert text == "[from: me | one-way] fyi only"
+
+
+def test_one_way_first_contact_bootstrap_omits_reply_request(
+        tmp_registry, fc):
+    """First-contact via tab title with --one-way: bootstrap text must
+    not ask the peer to reply, and the first-message line must carry
+    the (one-way, no reply expected) marker."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:2", workspace_title="O",
+           surface_ref="surface:200", title="new_tab")
+    out = send.send("new_tab", "status update", my_name=None,
+                    fallback_self_name=None, rerun_argv=[],
+                    one_way=True)
+    assert out["ok"]
+    assert out["one_way"] is True
+    assert out["kind"] == "bootstrap"
+    text = fc.sent[0][2]
+    assert "[p2p-bootstrap]" in text
+    assert "reply when ready" not in text
+    assert "and reply" not in text
+    assert "no reply is expected" in text
+    assert ("First message from me (one-way, no reply expected): "
+            "status update") in text
+
+
+def test_default_send_keeps_reply_trailer_and_plain_frame(
+        tmp_registry, fc):
+    """Regression: omitting --one-way preserves the existing behavior —
+    bootstrap still asks for a reply, wire frame stays `[from: X]`."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:2", workspace_title="O",
+           surface_ref="surface:200", title="another_tab")
+    out = send.send("another_tab", "hi", my_name=None,
+                    fallback_self_name=None, rerun_argv=[])
+    assert out["ok"]
+    assert out["one_way"] is False
+    text = fc.sent[0][2]
+    assert "reply when ready" in text
+    assert "one-way" not in text
+
+
+def test_one_way_explicit_peer_surface_marks_frame(tmp_registry, fc):
+    """`--one-way` on the explicit-surface reply path: same marker."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
+           surface_ref="surface:777", title="whatever")
+    out = send.send("inbound_peer", "ack-free note", my_name=None,
+                    fallback_self_name=None, rerun_argv=[],
+                    peer_surface="surface:777", one_way=True)
+    assert out["ok"]
+    assert out["one_way"] is True
+    text = fc.sent[0][2]
+    assert text == "[from: me | one-way] ack-free note"
+
+
 def test_slash_command_skips_prefix(tmp_registry, fc):
     _seed_self(tmp_registry)
     fc.add(workspace_ref="workspace:2", workspace_title="O",

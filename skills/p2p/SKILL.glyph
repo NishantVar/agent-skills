@@ -20,7 +20,7 @@ block send_via_helper()
     description: "Issue one `send` call. The helper handles registration, peer resolution, plain-vs-bootstrap framing, cross-workspace routing, and payload-file generation."
     flow:
         "Write {message} to a temp file like `/tmp/p2p-out-{peer}.txt`."
-        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --message-file <path>`. Include `--my-name {my_name}` only on the first invocation in this agent's lifetime; the helper ignores it once a manifest exists."
+        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --message-file <path>`. Include `--my-name {my_name}` only on the first invocation in this agent's lifetime; the helper ignores it once a manifest exists. Add `--one-way` for fire-and-forget delivery — the wire frame becomes `[from: <me> | one-way] <body>` and any first-contact bootstrap drops the reply request."
         "Parse the JSON on stdout. `{ok: true}` is done. `{ok: false}` carries `code`, `agent_instruction`, and (per code) extra fields like `payload_file` or `candidates`."
 
 

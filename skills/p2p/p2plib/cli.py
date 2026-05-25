@@ -117,6 +117,8 @@ def cmd_send(args) -> int:
         rerun += ["--my-name", args.my_name]
     if args.bootstrap_suggested_name:
         rerun += ["--bootstrap-suggested-name", args.bootstrap_suggested_name]
+    if args.one_way:
+        rerun += ["--one-way"]
     if args.message_file:
         rerun += ["--message-file", args.message_file]
 
@@ -151,6 +153,7 @@ def cmd_send(args) -> int:
             rerun_argv=rerun,
             peer_surface=args.peer_surface,
             bootstrap_suggested_name=args.bootstrap_suggested_name,
+            one_way=args.one_way,
         )
     except transport.TransportError as exc:
         _print_json({
@@ -220,6 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--bootstrap-file", default=None,
                    help="Read --peer / --peer-surface / "
                         "--bootstrap-suggested-name from this file.")
+    s.add_argument("--one-way", action="store_true",
+                   help="Fire-and-forget. Frames the message as "
+                        "`[from: X | one-way]` and (on first contact) "
+                        "drops the bootstrap's reply request so the "
+                        "receiver is not pulled into responding.")
     s.add_argument("--message")
     s.add_argument("--message-file")
     s.set_defaults(func=cmd_send)
