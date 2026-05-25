@@ -173,6 +173,16 @@ def cmd_send(args) -> int:
             "rerun_argv": rerun, "retryable": True,
         })
         return EXIT_HANDOFF
+    # Contract nudge: info_needed(self_title) is a safety net, not the
+    # expected path. SKILL.md teaches agents to commit to --my-title
+    # upfront on first send. Surface a stderr advisory so reviewers and
+    # log readers see the drift.
+    if (result.get("code") == "info_needed"
+            and "self_title" in (result.get("missing") or [])):
+        print("advisory: info_needed(self_title) indicates a stale "
+              "call pattern. Calling agent should pass --my-title on "
+              "first send rather than call-then-react. See SKILL.md.",
+              file=sys.stderr)
     _print_json(result)
     return EXIT_OK if result.get("ok") else EXIT_HANDOFF
 

@@ -1,4 +1,4 @@
-skill p2p(my_title = "" <"Optional snake_case title to register under on first use. If empty AND the current cmux tab title is generic (`claude`, `codex`, etc.), the helper returns info_needed; pick a title that reflects this agent's role and rerun. Do NOT ask the human — choose from your own role context. Title is sticky for the agent's lifetime.">, peer = "" <"Cmux tab title of the destination peer. Single routing key, scoped to the caller's workspace by default.">, message = "" <"Message body. Always passed via --message-file to side-step shell quoting.">)
+skill p2p(my_title = "" <"REQUIRED on first send for this agent. Pick a snake_case role-reflective title (qa_lead, reviewer, builder, etc.) from your own role context BEFORE calling. Drop on subsequent calls; the title is sticky in the manifest. Carve-out: if your spawner already set a meaningful cmux tab title (anything outside {claude, claude-code, codex, gemini, shell, bash, zsh, \"\"}), you may omit --my-title and the helper will adopt it silently.">, peer = "" <"Cmux tab title of the destination peer. Single routing key, scoped to the caller's workspace by default.">, message = "" <"Message body. Always passed via --message-file to side-step shell quoting.">)
     description: "P2P messaging between cmux agents: one verb (`send`) handles first contact, follow-up, and reply. Routes by cmux tab title scoped to the caller's workspace; returns a handoff JSON object when a peer must be spawned or another skill must run."
 
     require single_stable_title
@@ -20,7 +20,7 @@ block send_via_helper()
     description: "Issue one `send` call. The helper handles registration, title resolution, plain-vs-bootstrap framing, cross-workspace routing, and payload-file generation."
     flow:
         "Write {message} to a temp file like `/tmp/p2p-out-{peer}.txt`."
-        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --message-file <path>`. Include `--my-title {my_title}` only on the first invocation in this agent's lifetime; the helper ignores it once a manifest exists. Add `--one-way` for fire-and-forget delivery — the wire frame becomes `[from: <me> | one-way] <body>` and any first-contact bootstrap drops the reply request. Add `--workspace <ref>` to scope the title match to a different workspace, or `--workspace all` for global scope."
+        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --my-title {my_title} --message-file <path>`. COMMIT to --my-title upfront on the first send for this agent — pick the snake_case title from your own role context, do not call-then-react to info_needed. Drop --my-title on subsequent invocations; the helper ignores it once a manifest exists. Add `--one-way` for fire-and-forget delivery — the wire frame becomes `[from: <me> | one-way] <body>` and any first-contact bootstrap drops the reply request. Add `--workspace <ref>` to scope the title match to a different workspace, or `--workspace all` for global scope."
         "Parse the JSON on stdout. `{ok: true}` is done. `{ok: false}` carries `code`, `agent_instruction`, and (per code) extra fields like `payload_file` or `candidates`."
 
 
@@ -38,7 +38,7 @@ block follow_handoff_instruction()
     flow:
         "`peer_unknown` → invoke the tfork skill and have it spawn an agent whose first user-turn input is the contents of `payload_file`. Use whatever delayed-input mechanism tfork currently exposes — p2p does not prescribe a flag. The payload file is already written 0600; do not re-create it."
         "`peer_ambiguous` → rerun with --peer set + --peer-surface <candidates[i].ref> to route by surface directly, or with --workspace <ref> to scope the title match. A bare `surface:N` string is not a valid --peer."
-        "`info_needed` with `missing: [\"self_title\"]` → choose a snake_case title that reflects this agent's role (e.g., `reviewer`, `qa_lead`, `builder`) from your own context, then rerun with `--my-title <t>`. Do NOT ask the human."
+        "`info_needed` with `missing: [\"self_title\"]` → safety net: you should have passed --my-title upfront on the first send. Choose a snake_case role-reflective title from your own context and rerun with `--my-title <t>`. Do NOT ask the human."
         "`title_collision` → another live agent in the workspace already holds that title. Pick a different --my-title and rerun."
         "`empty_message` → write a non-empty body and rerun."
 
