@@ -21,8 +21,8 @@ description: >-
 2. **Read the JSON result on stdout.**
    - `{"ok": true, ...}` → done. The success object reports `canonical_name`, `surface`, `resolved_by`, `peer_status` (`live`/`stale`), and `kind` (`message`/`bootstrap`).
    - `{"ok": false, "code": ..., "agent_instruction": ..., ...}` → follow the `agent_instruction` literally. Common cases:
-     - `peer_unknown` → the helper has written a spawn payload to `payload_file`. Invoke the **tfork** skill with `--delayed-input-file <payload_file> --delay 5`.
-     - `peer_ambiguous` → pick a unique address (the canonical manifest name, or one of the listed `candidates[].ref`) and rerun.
+     - `peer_unknown` → the helper has written a spawn payload to `payload_file`. Invoke the **tfork** skill and have it spawn a new agent whose first user-turn prompt is the contents of `payload_file` (use whatever delayed-input mechanism tfork currently exposes — p2p does not name a specific flag).
+     - `peer_ambiguous` → either pick the canonical manifest name (unique) or rerun with `--peer <original-or-label> --peer-surface <candidates[i].ref>` to route by surface directly. A bare `surface:N` string is not a valid `--peer`.
      - `info_needed` with `missing: ["self_name"]` → rerun with `--my-name`.
      - `name_collision` / `name_collision_stale` → pick a different name and rerun.
 3. **See who you can talk to:** `python3 ~/.claude/skills/p2p/agent_msg.py list`. Returns `{me, peers}` JSON with workspace info and `status` (`live`/`stale`) per agent.

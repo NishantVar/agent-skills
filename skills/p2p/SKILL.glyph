@@ -36,8 +36,8 @@ block reply_to_inline_bootstrap()
 block follow_handoff_instruction()
     description: "The helper returned ok:false. Read `agent_instruction` and act."
     flow:
-        "`peer_unknown` → invoke the tfork skill with `--delayed-input-file <payload_file> --delay 5`. The file is already written 0600; do not re-create it."
-        "`peer_ambiguous` → pick a unique address (canonical manifest name, or one of `candidates[].ref`) and rerun send."
+        "`peer_unknown` → invoke the tfork skill and have it spawn an agent whose first user-turn input is the contents of `payload_file`. Use whatever delayed-input mechanism tfork currently exposes — p2p does not prescribe a flag. The payload file is already written 0600; do not re-create it."
+        "`peer_ambiguous` → either rerun with --peer set to the canonical manifest name (unique), or rerun with --peer <original-or-label> --peer-surface <candidates[i].ref>. A bare `surface:N` string is not a valid --peer."
         "`info_needed` with `missing: [\"self_name\"]` → rerun with `--my-name <name>`."
         "`name_collision` / `name_collision_stale` → pick a different name and rerun."
         "`empty_message` → write a non-empty body and rerun."

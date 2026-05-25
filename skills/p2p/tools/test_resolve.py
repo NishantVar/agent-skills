@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Test surface resolution in the p2p skill helper.
+"""Test surface resolution in the p2p skill.
 
 Agent-agnostic: run from inside any agent runtime (Claude Code, Codex,
 Gemini, etc.) via its shell tool. Verifies my_surface() correctly resolves
 the agent's own cmux surface across all four code paths and does NOT
 silently fall back to the user-focused surface.
+
+Imports the production module at `p2plib.surface` (the new package the
+refactor introduced). Run after any change to `my_surface()`,
+`_ancestor_ttys()`, or `_surface_from_tty_walk()` in p2plib/surface.py.
 
 Usage:  python3 ~/.claude/skills/p2p/tools/test_resolve.py
 Exit:   0 on success, 1 on any failure.
@@ -16,9 +20,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-HELPER_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(HELPER_DIR))
-import agent_msg  # noqa: E402
+# p2plib lives one directory up from tools/. Add the skill root so
+# `import p2plib.surface` resolves whether this file is run in-tree
+# (this repo) or via the installed copy at ~/.claude/skills/p2p/.
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SKILL_ROOT))
+from p2plib import surface as surface_mod  # noqa: E402
 
 failures: list[str] = []
 
@@ -35,10 +42,10 @@ def run_resolve(env_overrides: dict | None = None, monkey: str = "") -> tuple[st
     """Invoke my_surface() in a clean subprocess. Returns (stdout, stderr, rc)."""
     code = (
         f"import sys\n"
-        f"sys.path.insert(0, {str(HELPER_DIR)!r})\n"
-        f"import agent_msg\n"
+        f"sys.path.insert(0, {str(SKILL_ROOT)!r})\n"
+        f"from p2plib import surface as s\n"
         f"{monkey}\n"
-        f"print(agent_msg.my_surface())\n"
+        f"print(s.my_surface())\n"
     )
     env = os.environ.copy()
     for k, v in (env_overrides or {}).items():
@@ -52,10 +59,10 @@ def run_resolve(env_overrides: dict | None = None, monkey: str = "") -> tuple[st
     return r.stdout.strip(), r.stderr.strip(), r.returncode
 
 
-print("Testing surface resolution in agent_msg.my_surface()\n")
+print("Testing surface resolution in p2plib.surface.my_surface()\n")
 
 # Ground truth: where this agent actually is, via ppid -> tty -> cmux tree.
-truth = agent_msg._surface_from_tty_walk()
+truth = surface_mod._surface_from_tty_walk()
 print(f"Ground truth (tty walk): {truth!r}\n")
 check("tty walk recovers a surface_ref",
       bool(truth and truth.startswith("surface:")))
@@ -83,14 +90,19 @@ out, err, rc = run_resolve(
 check("override is returned verbatim",
       out == "surface:test_override_999", out)
 
-# Path 4: everything stripped + tty walk neutered. Must error cleanly.
-print("\nPath 4: env stripped + tty walk neutered (expect clean error)")
+# Path 4: everything stripped + tty walk neutered. Contract: returns
+# None silently (the cli.py caller wraps None into errors.not_in_cmux()).
+# Critically must NOT fall back to focused/anything-else and return a
+# surface_ref.
+print("\nPath 4: env stripped + tty walk neutered (expect None)")
 out, err, rc = run_resolve(
     env_overrides={"CMUX_SURFACE_ID": None, "AGENT_MSG_SURFACE_ID": None},
-    monkey="agent_msg._surface_from_tty_walk = lambda: None",
+    monkey="s._surface_from_tty_walk = lambda *a, **kw: None",
 )
-check("exits non-zero", rc != 0)
-check("error mentions tried paths", "tried" in (err + out).lower())
+check("exits 0 (silent-None contract)", rc == 0,
+      f"rc={rc} stderr={err!r}")
+check("returns None (no surface_ref)", out == "None",
+      f"got {out!r}")
 check("does not silently return a surface_ref",
       not out.startswith("surface:"))
 

@@ -103,19 +103,16 @@ def peer_unknown(peer: str, payload_file: str, rerun_argv: list[str]) -> dict:
         "peer_unknown",
         f"Peer {peer!r} is not running in cmux. A spawn-bootstrap "
         f"payload has been written to {payload_file}.",
-        f"Invoke the tfork skill with --delayed-input-file "
-        f"{payload_file} to spawn the peer. The new agent will read the "
-        "payload as its first user-turn prompt, register itself, and "
-        "reply.",
+        f"Invoke the tfork skill to spawn an agent that reads "
+        f"{payload_file} as its first user-turn prompt. The new agent "
+        "will register itself, parse the bootstrap, and reply. p2p does "
+        "not name a specific tfork flag — pass the payload via whatever "
+        "delayed-input mechanism that skill currently exposes.",
         action="spawn_peer",
         handoff_skill="tfork",
         retryable=True,
         payload_file=payload_file,
         rerun_argv=rerun_argv,
-        suggested_next_command=(
-            f"python3 ~/.claude/skills/tfork/fork_terminal.py "
-            f"--delayed-input-file {payload_file} --delay 5"
-        ),
     )
 
 
@@ -125,7 +122,9 @@ def peer_ambiguous(peer: str, candidates: list[dict]) -> dict:
         f"Tab title {peer!r} matches more than one surface across "
         "workspaces.",
         "Re-address the peer using its registered manifest name "
-        "(unique) or one of the surface refs in `candidates`.",
+        "(which is unique), or rerun with --peer <original-or-label> "
+        "--peer-surface <candidates[i].ref> to route by surface "
+        "directly. Bare `surface:N` strings are NOT accepted as --peer.",
         action="none",
         candidates=candidates,
     )

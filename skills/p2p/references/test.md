@@ -1,6 +1,6 @@
 # Surface-resolution test
 
-If you change `my_surface()`, `_ancestor_ttys()`, or `_surface_from_tty_walk()` in `tools/agent_msg.py`, **re-run this test from inside every agent runtime you care about** (Claude Code, Codex, Gemini, …). The bug it guards against — silent mis-registration to the user-focused pane instead of the agent's own pane — is hard to notice without it.
+If you change `my_surface()`, `_ancestor_ttys()`, or `_surface_from_tty_walk()` in `p2plib/surface.py` (the production module — `tools/agent_msg.py` is the legacy monolith retained only until cutover), **re-run this test from inside every agent runtime you care about** (Claude Code, Codex, Gemini, …). The bug it guards against — silent mis-registration to the user-focused pane instead of the agent's own pane — is hard to notice without it.
 
 ## Run
 

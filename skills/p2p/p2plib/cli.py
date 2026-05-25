@@ -13,7 +13,6 @@ from . import bootstrap, errors, registry, send, surface, transport
 
 EXIT_OK = 0
 EXIT_HANDOFF = 2  # ok:false in JSON
-EXIT_NOT_REGISTERED = 4
 EXIT_SYSTEM = 1
 
 
