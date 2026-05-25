@@ -1,4 +1,4 @@
-skill p2p(my_name = "" <"Stable short name this agent registers under on first use. Lowercase snake_case. Ignored on subsequent calls once a manifest exists.">, peer = "" <"Manifest name or cmux tab title of the destination peer. Manifest name beats tab title; tab title is fallback for first contact.">, message = "" <"Message body. Always passed via --message-file to side-step shell quoting.">)
+skill p2p(my_name = "" <"Optional snake_case name to register under on first use. If empty, the helper auto-derives `agent_<surface_num>` (e.g., agent_556). Ignored on subsequent calls. Do NOT prompt the user to pick a name — auto-default is fine for plumbing.">, peer = "" <"Manifest name or cmux tab title of the destination peer. Manifest name beats tab title; tab title is fallback for first contact.">, message = "" <"Message body. Always passed via --message-file to side-step shell quoting.">)
     description: "P2P messaging between cmux agents: one verb (`send`) handles first contact, follow-up, and reply. Routes by per-surface manifest; returns a handoff JSON object when a peer must be spawned or another skill must run."
 
     require single_stable_name

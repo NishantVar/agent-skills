@@ -41,6 +41,14 @@ def _resolved_by(source: str | None) -> str:
     }.get(source or "", source or "")
 
 
+def _default_self_name(my_surface: str) -> str:
+    """`agent_<surface_num>` from `surface:<num>`. Surface IDs are unique
+    within a cmux instance, so this default is collision-free by
+    construction and stable for the agent's lifetime."""
+    suffix = my_surface.split(":", 1)[-1] if ":" in my_surface else my_surface
+    return f"agent_{suffix}"
+
+
 def _ensure_self(my_surface: str | None, my_name: str | None,
                  fallback_suggested: str | None,
                  live_set: set[str],
@@ -49,8 +57,10 @@ def _ensure_self(my_surface: str | None, my_name: str | None,
     error paths; both populated on success when self was just
     registered.
 
-    `fallback_suggested` is the bootstrap-derived suggested_name when
-    --my-name wasn't supplied and self isn't registered.
+    Auto-derives `agent_<surface_num>` when neither --my-name nor an
+    inline-bootstrap suggested_name was supplied. Self-naming should
+    never bounce a decision back to the user — peer routing keys are
+    plumbing, not a thing the human needs to pick.
     """
     if my_surface is None:
         return None, errors.not_in_cmux()
@@ -61,9 +71,7 @@ def _ensure_self(my_surface: str | None, my_name: str | None,
         # Renaming mid-session breaks peers that route by the prior name.
         return existing, None
 
-    chosen = my_name or fallback_suggested
-    if not chosen:
-        return None, errors.info_needed(["self_name"], rerun_argv)
+    chosen = my_name or fallback_suggested or _default_self_name(my_surface)
 
     m, err = registry.register(chosen, my_surface, live_set)
     if err:

@@ -124,17 +124,23 @@ def test_ambiguous_tab_returns_handoff(tmp_registry, fc):
     assert fc.sent == []
 
 
-def test_unregistered_no_self_name_returns_info_needed(tmp_registry, fc):
+def test_unregistered_no_self_name_auto_derives_from_surface(
+        tmp_registry, fc):
+    """Self-naming must never bounce to the user. With no --my-name and
+    no bootstrap-suggested-name, default to agent_<surface_num>."""
     fc.add(workspace_ref="workspace:2", workspace_title="O",
            surface_ref="surface:200", title="peer")
     registry.register("peer", "surface:200",
                       live_set={MY_SURFACE, "surface:200"})
     out = send.send("peer", "hi", my_name=None,
                     fallback_self_name=None, rerun_argv=["x"])
-    assert out["ok"] is False
-    assert out["code"] == "info_needed"
-    assert "self_name" in out["missing"]
-    assert fc.sent == []
+    assert out["ok"]
+    me = registry.get_self(MY_SURFACE)
+    # MY_SURFACE = "surface:100"
+    assert me["name"] == "agent_100"
+    # And the [from: ...] prefix uses the auto-derived name.
+    text = fc.sent[0][2]
+    assert text.startswith("[from: agent_100]")
 
 
 def test_unregistered_autoregisters_with_my_name(tmp_registry, fc):

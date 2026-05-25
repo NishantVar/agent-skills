@@ -8,7 +8,7 @@ description: >-
 
 ## Parameters
 
-- **my_name**: Stable short name to register under on first use. Lowercase snake_case. Required only the first time; subsequent calls ignore it and use the existing manifest. Default: "".
+- **my_name**: Optional stable short name to register under on first use. Lowercase snake_case. If empty, the helper auto-derives `agent_<surface_num>` from this agent's surface_ref (e.g., `agent_556`). Subsequent calls ignore this flag and use the existing manifest. Do NOT ask the user to pick a name — auto-default is fine for plumbing. Default: "".
 - **peer**: Name or cmux tab title of the destination peer. Manifest name beats tab title; tab title is fallback for first contact. Default: "".
 - **message**: Message body. Always passed via `--message-file` to side-step shell quoting. Default: "".
 
