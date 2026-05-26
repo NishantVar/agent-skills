@@ -101,13 +101,45 @@ def test_cross_workspace_returns_ambiguous_under_default_scope(
     _seed_self(tmp_registry)
     fc.add(workspace_ref="workspace:2", workspace_title="Other",
            surface_ref="surface:200", title="reviewer")
+    rerun = ["agent_msg.py", "send", "--peer", "reviewer",
+             "--message-file", "/tmp/x"]
     out = send.send("reviewer", "x", my_title=None,
-                    fallback_self_title=None, rerun_argv=[])
+                    fallback_self_title=None, rerun_argv=rerun)
     assert out["ok"] is False
     assert out["code"] == "peer_ambiguous"
     refs = {c["ref"] for c in out["candidates"]}
     assert refs == {"surface:200"}
     assert fc.sent == []
+    # Bug A: single-candidate-elsewhere gets the "not in your workspace"
+    # wording rather than "matches more than one".
+    assert "not in your workspace" in out["human_message"]
+    assert MY_WS in out["human_message"]
+    assert "matches more than one" not in out["human_message"]
+    # Bug B: envelope must reflect that this is a mechanical retry.
+    assert out["action_required"] == "pick_candidate"
+    assert out["retryable"] is True
+    assert out["rerun_argv"] == rerun
+
+
+def test_ambiguous_multi_candidate_keeps_generic_wording(
+        tmp_registry, fc):
+    """When the title matches in two different workspaces under global
+    scope, the existing 'matches more than one' wording stays."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:2", workspace_title="A",
+           surface_ref="surface:200", title="dup")
+    fc.add(workspace_ref="workspace:3", workspace_title="B",
+           surface_ref="surface:300", title="dup")
+    out = send.send("dup", "x", my_title=None,
+                    fallback_self_title=None, rerun_argv=[],
+                    scope_workspace_ref="workspace:99")  # title is nowhere in scope:99
+    assert out["ok"] is False
+    assert out["code"] == "peer_ambiguous"
+    assert "matches more than one" in out["human_message"]
+    assert "not in your workspace" not in out["human_message"]
+    # Envelope shape unchanged across both branches.
+    assert out["action_required"] == "pick_candidate"
+    assert out["retryable"] is True
 
 
 def test_unregistered_with_generic_tab_returns_info_needed(

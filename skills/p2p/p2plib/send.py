@@ -223,7 +223,9 @@ def send(peer: str | None, body: str,
                              scope_workspace_ref=scope)
 
     if r.kind == "ambiguous":
-        return errors.peer_ambiguous(peer, r.candidates)
+        return errors.peer_ambiguous(peer, r.candidates,
+                                     caller_workspace_ref=scope,
+                                     rerun_argv=rerun_argv)
 
     if r.kind == "unknown":
         payload_text = _bootstrap.build_spawn_bootstrap(

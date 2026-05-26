@@ -113,15 +113,54 @@ def peer_unknown(peer: str, payload_file: str, rerun_argv: list[str]) -> dict:
     )
 
 
-def peer_ambiguous(peer: str, candidates: list[dict]) -> dict:
+def peer_ambiguous(peer: str, candidates: list[dict],
+                   caller_workspace_ref: str | None = None,
+                   rerun_argv: list[str] | None = None) -> dict:
+    """Two shapes of ambiguity collapse into this one code:
+      (a) The title doesn't exist in the caller's workspace but does
+          exist elsewhere — most commonly len(candidates)==1 in another
+          workspace. The default-scope policy treats this as ambiguous
+          so the caller must opt in via --workspace.
+      (b) The title matches more than one live surface (whether all
+          elsewhere or split). The wording branches so single-elsewhere
+          gets a clearer message; the retry path is the same.
+
+    Envelope is `action_required=pick_candidate`, `retryable=True`. The
+    `agent_instruction` describes a mechanical retry (pick a candidate,
+    add --peer-surface or --workspace), so the envelope must say so —
+    leaving action=none / retryable=false would make a caller that
+    reads only the envelope (ignoring prose) treat this as terminal.
+    """
+    rerun_argv = rerun_argv or []
+    single_elsewhere = (
+        len(candidates) == 1
+        and caller_workspace_ref is not None
+        and candidates[0].get("workspace_ref") != caller_workspace_ref
+    )
+    if single_elsewhere:
+        c = candidates[0]
+        ws_title = c.get("workspace_title") or ""
+        ws_ref = c.get("workspace_ref") or ""
+        human = (
+            f"Tab title {peer!r} is not in your workspace "
+            f"({caller_workspace_ref}). One match in another workspace: "
+            f"{ws_title} ({ws_ref}) at {c.get('ref')}."
+        )
+    else:
+        human = (
+            f"Tab title {peer!r} matches more than one live surface "
+            "(across workspaces, or within one if cmux allowed "
+            "duplicates)."
+        )
     return _base(
         "peer_ambiguous",
-        f"Tab title {peer!r} matches more than one live surface "
-        "(across workspaces, or within one if cmux allowed duplicates).",
+        human,
         "Rerun with --peer <title> --peer-surface <candidates[i].ref> "
         "to route by surface directly, or with --workspace <ref> to "
         "scope the title match to a specific workspace. Bare "
         "`surface:N` strings are NOT accepted as --peer.",
-        action="none",
+        action="pick_candidate",
+        retryable=True,
+        rerun_argv=rerun_argv,
         candidates=candidates,
     )
