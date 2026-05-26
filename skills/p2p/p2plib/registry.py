@@ -11,14 +11,17 @@ Manifest shape:
 routing identifier. (workspace_ref, title) is the unique routing key;
 collisions are rejected at register-time via title_collision.
 
-Two-tier staleness:
+Sweep behavior:
   - surface_ref absent from `cmux tree --all` -> delete file (eager).
   - surface live but `last_seen` older than TTL -> mark status="stale",
     keep file (title stays held; agent can revive by touching).
   - surface live but the surface's CURRENT cmux title no longer matches
-    manifest.title (user renamed the tab outside of p2p) -> the
-    manifest is dead; delete file. The visible title is the routing
-    truth — a renamed tab cannot keep claiming its old identity.
+    manifest.title (user renamed the tab outside of p2p) -> in-place
+    rewrite: set `title` to the current cmux title and append the
+    prior title to `former_titles` (creating the list if absent). The
+    manifest is NOT reaped; the rename history powers the
+    `peer_renamed` handoff so peers addressing the old title get a
+    bridge to the new one (resolve.py scans former_titles on miss).
 
 Legacy compatibility: manifests written by the old `name`-based code
 are read transparently — a missing `title` field falls back to `name`.
@@ -108,12 +111,16 @@ def _iter_manifest_files():
 
 def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
                  now: float | None = None) -> list[dict]:
-    """Two-tier sweep inside the lock. Returns the post-sweep manifest list.
+    """Sweep inside the lock. Returns the post-sweep manifest list.
 
-    When `surfaces` is supplied (surface_index map), an additional stale
-    trigger fires: if the surface's current cmux title differs from
-    `manifest.title`, the manifest is dead (user renamed the tab
-    outside of p2p) and the file is unlinked.
+    When `surfaces` is supplied (surface_index map) and the surface's
+    current cmux title differs from `manifest.title`, the manifest is
+    rewritten in place: `title` becomes the current cmux title and the
+    prior title is appended to `former_titles`. The manifest is NOT
+    unlinked — the rename history is what powers `peer_renamed`.
+
+    Empty current titles (`""`) are ignored — they're a surface_index
+    miss, not a real rename. Don't clobber a registered title with "".
     """
     now = time.time() if now is None else now
     survivors: list[dict] = []
@@ -128,24 +135,31 @@ def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
             except FileNotFoundError:
                 pass
             continue
+        mutated = False
         if surfaces is not None:
             current_title = (surfaces.get(ref) or {}).get("title", "")
-            if current_title != m.get("title"):
-                # Tab was renamed outside p2p. Old identity is dead.
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
-                continue
+            if current_title and current_title != m.get("title"):
+                # Tab renamed outside p2p. Promote rename into the
+                # manifest so peer_renamed can bridge addressers of
+                # the prior title to the new one.
+                former = list(m.get("former_titles") or [])
+                old_title = m.get("title")
+                if old_title and old_title not in former:
+                    former.append(old_title)
+                m["title"] = current_title
+                m["former_titles"] = former
+                mutated = True
         last_seen = m.get("last_seen") or m.get("started_at") or 0
         if now - last_seen > TTL_SECONDS:
             if m.get("status") != "stale":
                 m["status"] = "stale"
-                _atomic_write(path, m)
+                mutated = True
         else:
             if m.get("status") == "stale":
                 m.pop("status", None)
-                _atomic_write(path, m)
+                mutated = True
+        if mutated:
+            _atomic_write(path, m)
         survivors.append(m)
     return survivors
 

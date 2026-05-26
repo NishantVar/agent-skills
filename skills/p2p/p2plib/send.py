@@ -13,7 +13,7 @@ Self-naming precedence on first send (no existing manifest):
      info_needed targeted at the CALLING AGENT to pick a meaningful
      name from its role context.
 
-The two non-trivial branches:
+The non-trivial branches:
   * `kind="unknown"` writes a fresh spawn payload to /tmp under O_EXCL
     0600 and returns a `peer_unknown` handoff with `payload_file` and
     `handoff_skill="tfork"`. The CALLING AGENT invokes tfork — this
@@ -21,6 +21,11 @@ The two non-trivial branches:
   * `kind="stale"` and `kind=live, title==addressed` both send a
     bootstrap into the live peer when the manifest is stale (so the
     peer can re-touch); otherwise a plain `[from: X]` message.
+  * `kind="renamed"` returns a `peer_renamed` handoff carrying every
+    candidate surface whose `former_titles` includes the addressed
+    title. Caller picks whether the rename signals the same agent
+    (retry against current_title / --peer-surface) or a role change
+    (treat as unknown).
 """
 
 from __future__ import annotations
@@ -107,6 +112,13 @@ def _ensure_self(my_surface: str | None,
     # the routing key. Failures are silent inside transport.rename_tab.
     if chosen != current_title:
         transport.rename_tab(my_surface, workspace_ref, chosen)
+        # Reflect the rename in the in-memory snapshot so subsequent
+        # sweeps (register-time AND the read-side sweep in `send`)
+        # don't mis-interpret it as an external rename and rewrite the
+        # manifest title back / push our chosen title onto former_titles.
+        existing_surf = surfaces.get(my_surface)
+        if existing_surf is not None:
+            surfaces[my_surface] = {**existing_surf, "title": chosen}
 
     m, err = registry.register(chosen, my_surface, workspace_ref,
                                live_set, surfaces)
@@ -198,11 +210,14 @@ def send(peer: str | None, body: str,
         return handoff
     assert me is not None
 
-    # Read-side enumeration: do NOT pass `surfaces=`. The title-mismatch
-    # reap belongs to register-time sweeps (mutations), not to reads.
-    # Passing it here would also reap our own just-renamed manifest
-    # because `surfaces` was captured before _ensure_self's rename.
-    manifests = registry.all_manifests(live)
+    # Read-side enumeration also passes `surfaces=` so the in-place
+    # rename promotion (manifest.title <- current cmux title, prior
+    # title appended to former_titles) happens promptly. Without this,
+    # peer_renamed would only fire after some other agent triggered a
+    # register-time sweep on the renamed peer's workspace. The
+    # self-rename case is safe because _ensure_self updated
+    # surfaces[my_surface] in place above.
+    manifests = registry.all_manifests(live, surfaces=surfaces)
 
     if peer_surface:
         return _send_to_explicit_surface(
@@ -226,6 +241,11 @@ def send(peer: str | None, body: str,
         return errors.peer_ambiguous(peer, r.candidates,
                                      caller_workspace_ref=scope,
                                      rerun_argv=rerun_argv)
+
+    if r.kind == "renamed":
+        return errors.peer_renamed(peer, r.candidates,
+                                   caller_workspace_ref=scope,
+                                   rerun_argv=rerun_argv)
 
     if r.kind == "unknown":
         payload_text = _bootstrap.build_spawn_bootstrap(

@@ -427,6 +427,98 @@ def test_slash_command_skips_prefix(tmp_registry, fc):
     assert not text.startswith("[from:")
 
 
+def test_peer_renamed_when_addressing_former_title(tmp_registry, fc):
+    """A live tab in the caller's workspace was previously registered
+    as 'reviewer' and has since been renamed to 'r1'. Addressing
+    'reviewer' returns peer_renamed pointing at the current title and
+    surface — no silent failure, no wrong route."""
+    _seed_self(tmp_registry)
+    # Peer surface is live, currently titled 'r1', but its manifest
+    # carries former_titles=['reviewer'] from a prior cmux rename.
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="r1")
+    p = registry.manifest_path("surface:200")
+    p.write_text(json.dumps({
+        "title": "r1", "former_titles": ["reviewer"],
+        "surface_ref": "surface:200", "workspace_ref": MY_WS,
+        "started_at": 1, "last_seen": int(time.time()),
+    }))
+    rerun = ["agent_msg.py", "send", "--peer", "reviewer",
+             "--message-file", "/tmp/x"]
+    out = send.send("reviewer", "hi", my_title=None,
+                    fallback_self_title=None, rerun_argv=rerun)
+    assert out["ok"] is False
+    assert out["code"] == "peer_renamed"
+    # No message goes out.
+    assert fc.sent == []
+    # Envelope shape parity with peer_ambiguous.
+    assert out["action_required"] == "confirm_rename"
+    assert out["retryable"] is True
+    assert out["rerun_argv"] == rerun
+    assert len(out["candidates"]) == 1
+    c = out["candidates"][0]
+    assert c["ref"] == "surface:200"
+    assert c["current_title"] == "r1"
+    assert c["former_title"] == "reviewer"
+    # Human wording surfaces the new title clearly.
+    assert "r1" in out["human_message"]
+    assert "reviewer" in out["human_message"]
+
+
+def test_peer_renamed_lazy_promotion_via_read_side_sweep(
+        tmp_registry, fc):
+    """Even when the renamed peer's manifest has NOT yet had its
+    title/former_titles updated on disk (e.g., the peer never ran a
+    register since the rename), the read-side sweep in `send` promotes
+    the rename in place — so the very first peer addressing the prior
+    title sees peer_renamed rather than peer_unknown."""
+    _seed_self(tmp_registry)
+    # Peer surface currently has title 'r1' per cmux, but the on-disk
+    # manifest still says 'reviewer' (no former_titles yet).
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="r1")
+    p = registry.manifest_path("surface:200")
+    p.write_text(json.dumps({
+        "title": "reviewer", "surface_ref": "surface:200",
+        "workspace_ref": MY_WS,
+        "started_at": 1, "last_seen": int(time.time()),
+    }))
+    out = send.send("reviewer", "hi", my_title=None,
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"] is False
+    assert out["code"] == "peer_renamed"
+    # The sweep promoted the rename onto disk.
+    on_disk = json.loads(p.read_text())
+    assert on_disk["title"] == "r1"
+    assert on_disk["former_titles"] == ["reviewer"]
+
+
+def test_live_current_match_wins_over_rename_in_send(
+        tmp_registry, fc):
+    """Edge case #3: peer addressing 'reviewer' must hit the live tab
+    that currently holds that title, not a rename candidate."""
+    _seed_self(tmp_registry)
+    # Old surface, renamed away from 'reviewer' to 'r1'.
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="r1")
+    p_old = registry.manifest_path("surface:200")
+    p_old.write_text(json.dumps({
+        "title": "r1", "former_titles": ["reviewer"],
+        "surface_ref": "surface:200", "workspace_ref": MY_WS,
+        "started_at": 1, "last_seen": int(time.time()),
+    }))
+    # New surface that took the 'reviewer' title.
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:300", title="reviewer")
+    registry.register("reviewer", "surface:300", MY_WS,
+                      live_set={MY_SURFACE, "surface:200", "surface:300"})
+    out = send.send("reviewer", "hi", my_title=None,
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"]
+    assert out["surface"] == "surface:300"
+    assert out["title"] == "reviewer"
+
+
 def test_legacy_name_manifest_routes_under_promoted_title(
         tmp_registry, fc):
     """A manifest written by the old code (with `name` not `title`) is

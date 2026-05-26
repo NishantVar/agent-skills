@@ -119,6 +119,105 @@ def test_tab_title_match_is_case_insensitive():
     assert r.surface_ref == "surface:1"
 
 
+def test_renamed_returns_candidate_with_former_and_current_titles():
+    """No live current-title match but a live surface in scope has the
+    addressed title in former_titles -> kind=renamed with the matched
+    former title and the current cmux title."""
+    surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
+                        "surface_ref": "surface:1", "title": "r1"}])
+    manifests = [{"title": "r1", "former_titles": ["reviewer"],
+                  "surface_ref": "surface:1", "workspace_ref": "ws:1",
+                  "started_at": 1, "last_seen": 1}]
+    r = resolve.resolve_peer("reviewer", manifests, surfaces,
+                             scope_workspace_ref="ws:1")
+    assert r.kind == "renamed"
+    assert len(r.candidates) == 1
+    c = r.candidates[0]
+    assert c["ref"] == "surface:1"
+    assert c["current_title"] == "r1"
+    assert c["former_title"] == "reviewer"
+    assert c["workspace_ref"] == "ws:1"
+
+
+def test_renamed_match_is_case_insensitive():
+    surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
+                        "surface_ref": "surface:1", "title": "r1"}])
+    manifests = [{"title": "r1", "former_titles": ["Reviewer"],
+                  "surface_ref": "surface:1", "workspace_ref": "ws:1",
+                  "started_at": 1, "last_seen": 1}]
+    r = resolve.resolve_peer("REVIEWER", manifests, surfaces,
+                             scope_workspace_ref="ws:1")
+    assert r.kind == "renamed"
+    # The matched-former-title preserves the manifest's casing so the
+    # human-readable message reads naturally.
+    assert r.candidates[0]["former_title"] == "Reviewer"
+
+
+def test_renamed_chain_returns_matched_intermediate_title():
+    """Chain reviewer -> r1 -> reviewer_v2: addressing r1 returns r1
+    as the matched former_title (not the earliest reviewer)."""
+    surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
+                        "surface_ref": "surface:1", "title": "reviewer_v2"}])
+    manifests = [{"title": "reviewer_v2",
+                  "former_titles": ["reviewer", "r1"],
+                  "surface_ref": "surface:1", "workspace_ref": "ws:1",
+                  "started_at": 1, "last_seen": 1}]
+    r = resolve.resolve_peer("r1", manifests, surfaces,
+                             scope_workspace_ref="ws:1")
+    assert r.kind == "renamed"
+    assert r.candidates[0]["former_title"] == "r1"
+    assert r.candidates[0]["current_title"] == "reviewer_v2"
+
+
+def test_live_current_title_match_wins_over_rename():
+    """Edge case #3 from the proposal: surface A renamed away (former
+    title 'reviewer'), surface B then created with title 'reviewer'.
+    Live current match must win over rename detection."""
+    surfaces = _setup([
+        {"workspace_ref": "ws:1", "workspace_title": "W",
+         "surface_ref": "surface:1", "title": "r1"},
+        {"workspace_ref": "ws:1", "workspace_title": "W",
+         "surface_ref": "surface:2", "title": "reviewer"},
+    ])
+    manifests = [
+        {"title": "r1", "former_titles": ["reviewer"],
+         "surface_ref": "surface:1", "workspace_ref": "ws:1",
+         "started_at": 1, "last_seen": 1},
+        {"title": "reviewer", "surface_ref": "surface:2",
+         "workspace_ref": "ws:1",
+         "started_at": 1, "last_seen": 1},
+    ]
+    r = resolve.resolve_peer("reviewer", manifests, surfaces,
+                             scope_workspace_ref="ws:1")
+    assert r.kind == "live"
+    assert r.surface_ref == "surface:2"
+
+
+def test_renamed_scoped_to_caller_workspace():
+    """Edge case #4: cross-workspace rename detection is out of scope.
+    A renamed manifest in another workspace does NOT surface to a
+    caller scoped to ws:1."""
+    surfaces = _setup([{"workspace_ref": "ws:2", "workspace_title": "Other",
+                        "surface_ref": "surface:1", "title": "r1"}])
+    manifests = [{"title": "r1", "former_titles": ["reviewer"],
+                  "surface_ref": "surface:1", "workspace_ref": "ws:2",
+                  "started_at": 1, "last_seen": 1}]
+    r = resolve.resolve_peer("reviewer", manifests, surfaces,
+                             scope_workspace_ref="ws:1")
+    assert r.kind == "unknown"
+
+
+def test_unknown_when_addressed_not_in_titles_or_former_titles():
+    surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
+                        "surface_ref": "surface:1", "title": "alpha"}])
+    manifests = [{"title": "alpha",
+                  "surface_ref": "surface:1", "workspace_ref": "ws:1",
+                  "started_at": 1, "last_seen": 1}]
+    r = resolve.resolve_peer("missing", manifests, surfaces,
+                             scope_workspace_ref="ws:1")
+    assert r.kind == "unknown"
+
+
 def test_source_is_title_global_when_scope_none():
     surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
                         "surface_ref": "surface:1", "title": "only"}])

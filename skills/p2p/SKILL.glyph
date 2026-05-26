@@ -38,6 +38,7 @@ block follow_handoff_instruction()
     flow:
         "`peer_unknown` → invoke the tfork skill and have it spawn an agent whose first user-turn input is the contents of `payload_file`. Use whatever delayed-input mechanism tfork currently exposes — p2p does not prescribe a flag. The payload file is already written 0600; do not re-create it."
         "`peer_ambiguous` → rerun with --peer set + --peer-surface <candidates[i].ref> to route by surface directly, or with --workspace <ref> to scope the title match. A bare `surface:N` string is not a valid --peer."
+        "`peer_renamed` → no live tab holds the addressed title in scope, but a live surface in scope was previously registered under it (human likely renamed the cmux tab). `candidates[i]` carries `current_title`, `former_title`, `ref`. If the rename signals the same agent under a new label, rerun with --peer <current_title> (or --peer-surface <ref>). If the rename signals a role change, treat the destination as a different agent — re-evaluate intent, and if no live tab now fits, fall through to the peer_unknown path (spawn via tfork). Never silently retarget."
         "`info_needed` with `missing: [\"self_title\"]` → safety net: you should have passed --my-title upfront on the first send. Choose a snake_case role-reflective title from your own context and rerun with `--my-title <t>`. Do NOT ask the human."
         "`title_collision` → another live agent in the workspace already holds that title. Pick a different --my-title and rerun."
         "`empty_message` → write a non-empty body and rerun."

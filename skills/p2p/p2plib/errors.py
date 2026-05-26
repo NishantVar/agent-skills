@@ -164,3 +164,53 @@ def peer_ambiguous(peer: str, candidates: list[dict],
         rerun_argv=rerun_argv,
         candidates=candidates,
     )
+
+
+def peer_renamed(peer: str, candidates: list[dict],
+                 caller_workspace_ref: str | None = None,
+                 rerun_argv: list[str] | None = None) -> dict:
+    """No live tab in scope matches `peer`, but one or more live
+    surfaces in scope have `peer` in their `former_titles` — the tab
+    was renamed (typically the human clicking the title in cmux).
+
+    Each candidate carries `current_title` (the new tab title) and
+    `former_title` (the matched prior title — what the caller actually
+    addressed). Live current-title matches always win at the resolver
+    layer; this handoff only fires when no current match exists.
+
+    Envelope mirrors peer_ambiguous: `action_required=confirm_rename`,
+    `retryable=True`, `rerun_argv` populated. The retry is mechanical
+    (pick a candidate, rerun with current_title or --peer-surface) so
+    the envelope says so — a caller reading only envelope fields must
+    reach the same decision as one parsing the prose.
+    """
+    rerun_argv = rerun_argv or []
+    if len(candidates) == 1:
+        c = candidates[0]
+        ws_ref = c.get("workspace_ref") or ""
+        human = (
+            f"No live tab titled {peer!r} in your workspace "
+            f"({caller_workspace_ref or ws_ref}). Surface previously "
+            f"registered under {peer!r} is still live at {c.get('ref')}, "
+            f"now titled {c.get('current_title')!r}."
+        )
+    else:
+        human = (
+            f"No live tab titled {peer!r}; {len(candidates)} live "
+            f"surfaces previously held that title and have since been "
+            "renamed."
+        )
+    return _base(
+        "peer_renamed",
+        human,
+        "If the same agent is the intended target, rerun with --peer "
+        "<candidates[i].current_title> or --peer-surface "
+        "<candidates[i].ref>. The rename may signal a role change — "
+        "verify intent (read recent scrollback or ask the peer) "
+        "before resending sensitive content. Otherwise treat as "
+        "peer_unknown and spawn via tfork.",
+        action="confirm_rename",
+        retryable=True,
+        rerun_argv=rerun_argv,
+        candidates=candidates,
+    )

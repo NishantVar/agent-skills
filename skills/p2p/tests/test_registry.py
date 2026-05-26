@@ -1,6 +1,6 @@
-"""Two-tier sweep, _touch_self heartbeat, (workspace, title) collision,
-title-mismatch stale trigger, legacy `name` compat, corrupt-manifest
-handling, fcntl serialization."""
+"""Sweep, _touch_self heartbeat, (workspace, title) collision,
+title-mismatch in-place rename promotion (with former_titles list),
+legacy `name` compat, corrupt-manifest handling, fcntl serialization."""
 
 from __future__ import annotations
 
@@ -61,24 +61,48 @@ def test_sweep_clears_stale_when_fresh_again(tmp_registry):
     assert "status" not in json.loads(p.read_text())
 
 
-def test_sweep_reaps_when_tab_title_mismatch(tmp_registry):
-    """Tab renamed outside of p2p: manifest.title no longer matches the
-    surface's current cmux title, so the identity is dead — file is
-    unlinked even though the surface is still live."""
+def test_sweep_promotes_rename_in_place(tmp_registry):
+    """Tab renamed outside p2p while surface is still live: manifest is
+    rewritten in place, NOT unlinked. title becomes the current cmux
+    title; prior title is appended to former_titles. This is what
+    powers the peer_renamed handoff so peers addressing the old title
+    get a bridge to the new one."""
     p = registry.manifest_path("surface:1")
-    _write(p, {"title": "old_name", "surface_ref": "surface:1",
+    _write(p, {"title": "reviewer", "surface_ref": "surface:1",
                "workspace_ref": "ws:1",
                "started_at": 1, "last_seen": int(time.time())})
     out = registry.all_manifests(
         live_set={"surface:1"},
-        surfaces=_surface_index([("surface:1", "ws:1", "renamed_by_user")]))
-    assert not p.exists()
-    assert out == []
+        surfaces=_surface_index([("surface:1", "ws:1", "r1")]))
+    assert p.exists()
+    m = out[0]
+    assert m["title"] == "r1"
+    assert m["former_titles"] == ["reviewer"]
+    on_disk = json.loads(p.read_text())
+    assert on_disk["title"] == "r1"
+    assert on_disk["former_titles"] == ["reviewer"]
+
+
+def test_sweep_rename_chain_appends_to_former_titles(tmp_registry):
+    """Second rename after a first one extends former_titles rather
+    than overwriting it. Rename chain (reviewer -> r1 -> reviewer_v2)
+    keeps every intermediate name reachable as a peer_renamed
+    candidate."""
+    p = registry.manifest_path("surface:1")
+    _write(p, {"title": "r1", "former_titles": ["reviewer"],
+               "surface_ref": "surface:1", "workspace_ref": "ws:1",
+               "started_at": 1, "last_seen": int(time.time())})
+    out = registry.all_manifests(
+        live_set={"surface:1"},
+        surfaces=_surface_index([("surface:1", "ws:1", "reviewer_v2")]))
+    assert out[0]["title"] == "reviewer_v2"
+    assert out[0]["former_titles"] == ["reviewer", "r1"]
 
 
 def test_sweep_keeps_manifest_when_no_surface_index_provided(tmp_registry):
-    """When `surfaces` is None, the title-mismatch check is skipped —
-    callers that don't have a fresh surface_index don't trigger reaping."""
+    """When `surfaces` is None, the rename-promotion path is skipped —
+    callers that don't have a fresh surface_index leave the manifest
+    untouched."""
     p = registry.manifest_path("surface:1")
     _write(p, {"title": "keepme", "surface_ref": "surface:1",
                "workspace_ref": "ws:1",
@@ -86,6 +110,36 @@ def test_sweep_keeps_manifest_when_no_surface_index_provided(tmp_registry):
     out = registry.all_manifests(live_set={"surface:1"})
     assert p.exists()
     assert out[0]["title"] == "keepme"
+    assert "former_titles" not in out[0]
+
+
+def test_sweep_skips_empty_current_title(tmp_registry):
+    """A surface_index entry with title=='' is a snapshot miss, not a
+    real rename. Don't clobber the registered title with empty."""
+    p = registry.manifest_path("surface:1")
+    _write(p, {"title": "real", "surface_ref": "surface:1",
+               "workspace_ref": "ws:1",
+               "started_at": 1, "last_seen": int(time.time())})
+    out = registry.all_manifests(
+        live_set={"surface:1"},
+        surfaces=_surface_index([("surface:1", "ws:1", "")]))
+    assert out[0]["title"] == "real"
+    assert "former_titles" not in out[0]
+
+
+def test_sweep_reaps_when_surface_gone_even_with_former_titles(tmp_registry):
+    """Surface absent from live_set still wins over the no-reap rule —
+    a renamed-then-closed surface drops cleanly. The whole
+    former_titles history goes with the manifest."""
+    p = registry.manifest_path("surface:1")
+    _write(p, {"title": "current", "former_titles": ["reviewer", "r1"],
+               "surface_ref": "surface:1", "workspace_ref": "ws:1",
+               "started_at": 1, "last_seen": int(time.time())})
+    out = registry.all_manifests(
+        live_set=set(),
+        surfaces=_surface_index([]))
+    assert not p.exists()
+    assert out == []
 
 
 def test_touch_self_revives_stale_keeps_title(tmp_registry):

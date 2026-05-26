@@ -13,6 +13,13 @@ Resolution:
      workspace info so the caller can disambiguate via --peer-surface
      or --workspace.
 
+Rename detection (only fires when step 1 yields zero live matches):
+  - Scan in-scope live manifests for `former_titles` containing the
+    addressed title. Any hit becomes a `renamed` candidate carrying
+    the surface's current title + the matched former title. A live
+    current-title match in step 1 always wins over rename detection
+    (peer_renamed is the fallback when no live current match exists).
+
 Stale resolution:
   - When the matched manifest has `status="stale"`, the result kind is
     `stale`. The peer is expected to receive a fresh bootstrap so it
@@ -83,6 +90,37 @@ def resolve_peer(addressed: str, manifests: list[dict],
                     for s in out_of_scope
                 ],
             )
+        # No live current-title match in scope. Check for a former
+        # title match — somebody renamed their tab and a peer is still
+        # addressing the prior identity.
+        rename_candidates: list[dict] = []
+        for m in manifests:
+            if (scope_workspace_ref is not None
+                    and m.get("workspace_ref") != scope_workspace_ref):
+                continue
+            matched_former = None
+            for ft in (m.get("former_titles") or []):
+                if ft.casefold() == addressed_cf:
+                    matched_former = ft
+                    break
+            if matched_former is None:
+                continue
+            m_ref = m.get("surface_ref") or ""
+            s = surfaces.get(m_ref)
+            if s is None:
+                # Manifest references a surface not in the snapshot —
+                # shouldn't happen post-sweep but skip defensively.
+                continue
+            rename_candidates.append({
+                "ref": s["ref"],
+                "workspace_ref": s.get("workspace_ref"),
+                "workspace_title": s.get("workspace_title", ""),
+                "current_title": s.get("title", ""),
+                "former_title": matched_former,
+            })
+        if rename_candidates:
+            return ResolveResult(kind="renamed",
+                                 candidates=rename_candidates)
         return ResolveResult(kind="unknown")
 
     if len(matches) > 1:
