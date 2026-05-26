@@ -225,6 +225,30 @@ def get_self(surface_ref: str | None) -> dict | None:
     return _read_manifest(path)
 
 
+def _cmux_collision_holder(title: str, surface_ref: str,
+                           workspace_ref: str | None,
+                           surfaces: dict[str, dict] | None
+                           ) -> str | None:
+    """Read-only cmux-state collision probe. Returns the surface_ref of
+    another live tab in `workspace_ref` whose current cmux title equals
+    `title`, or None if no such tab exists.
+
+    Surfaces with empty current title are skipped — a surface_index miss
+    isn't a positive signal of holding any title.
+    """
+    if surfaces is None:
+        return None
+    for ref, s in surfaces.items():
+        if ref == surface_ref:
+            continue
+        if s.get("workspace_ref") != workspace_ref:
+            continue
+        cur = s.get("title", "")
+        if cur and cur == title:
+            return ref
+    return None
+
+
 def register(title: str, surface_ref: str, workspace_ref: str | None,
              live_set: set[str],
              surfaces: dict[str, dict] | None = None
@@ -266,6 +290,22 @@ def register(title: str, surface_ref: str, workspace_ref: str | None,
             return None, {"kind": "title_collision", "title": title,
                           "workspace_ref": workspace_ref,
                           "holder_surface": m.get("surface_ref")}
+        # cmux-state collision check. A live tab in the same workspace
+        # with current title == requested is a held title even if its
+        # manifest hasn't been promoted yet (lazy-promotion window) or
+        # doesn't exist (first-contact agent that registered itself but
+        # whose manifest is still being written). The manifest scan
+        # above misses this because we deliberately do not run rename
+        # promotion inside register() (see promote_renames=False). This
+        # check is read-only — never mutates the other surface's
+        # manifest, just rejects the registration so the (workspace_ref,
+        # title) uniqueness invariant holds.
+        holder = _cmux_collision_holder(title, surface_ref, workspace_ref,
+                                        surfaces)
+        if holder is not None:
+            return None, {"kind": "title_collision", "title": title,
+                          "workspace_ref": workspace_ref,
+                          "holder_surface": holder}
         now = int(time.time())
         data = {
             "title": title,
@@ -325,4 +365,9 @@ def would_collide(title: str, surface_ref: str,
             if m.get("surface_ref") == surface_ref:
                 continue  # our own existing manifest, not a conflict
             return m.get("surface_ref")
-        return None
+        # cmux-state collision check — see register() for rationale.
+        # Catches the unpromoted-rename case where a live tab already
+        # holds the title in cmux but its manifest hasn't been updated
+        # yet.
+        return _cmux_collision_holder(title, surface_ref, workspace_ref,
+                                      surfaces)

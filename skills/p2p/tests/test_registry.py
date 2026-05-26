@@ -343,6 +343,59 @@ def test_register_does_not_rewrite_holder_under_stale_snapshot(tmp_registry):
     assert "former_titles" not in on_disk
 
 
+def test_register_blocks_when_live_tab_holds_title_unpromoted(tmp_registry):
+    """QA-C round-4 regression: a live tab already titled `taken` in
+    the workspace must block registration of `taken` even when its
+    manifest hasn't been rename-promoted yet (lazy-promotion window).
+
+    Pre-fix register/would_collide only scanned manifests; with rename
+    promotion gated off (the round-3 fix), the unpromoted case slipped
+    through and let a second `taken` register, violating
+    (workspace_ref, title) uniqueness."""
+    # B's manifest still says title="b" (not yet promoted), but B's
+    # cmux tab has been retitled to "taken".
+    p_b = registry.manifest_path("surface:B")
+    _write(p_b, {"title": "b", "surface_ref": "surface:B",
+                 "workspace_ref": "ws:1",
+                 "started_at": 1, "last_seen": int(time.time())})
+    fresh_surfaces = _surface_index([
+        ("surface:A", "ws:1", "current_a"),
+        ("surface:B", "ws:1", "taken"),
+    ])
+    m, err = registry.register(
+        "taken", "surface:A", "ws:1",
+        live_set={"surface:A", "surface:B"},
+        surfaces=fresh_surfaces)
+    assert m is None
+    assert err == {"kind": "title_collision", "title": "taken",
+                   "workspace_ref": "ws:1",
+                   "holder_surface": "surface:B"}
+    # B's manifest must NOT be mutated by the collision check.
+    import json as _json
+    on_disk = _json.loads(p_b.read_text())
+    assert on_disk["title"] == "b"
+    assert "former_titles" not in on_disk
+
+
+def test_would_collide_blocks_when_live_tab_holds_title_unpromoted(
+        tmp_registry):
+    """Same scenario as above via the probe path. would_collide() must
+    also detect cmux-state holders, not just manifest holders."""
+    p_b = registry.manifest_path("surface:B")
+    _write(p_b, {"title": "b", "surface_ref": "surface:B",
+                 "workspace_ref": "ws:1",
+                 "started_at": 1, "last_seen": int(time.time())})
+    fresh_surfaces = _surface_index([
+        ("surface:A", "ws:1", "current_a"),
+        ("surface:B", "ws:1", "taken"),
+    ])
+    holder = registry.would_collide(
+        "taken", "surface:A", "ws:1",
+        live_set={"surface:A", "surface:B"},
+        surfaces=fresh_surfaces)
+    assert holder == "surface:B"
+
+
 def test_concurrent_register_serializes(tmp_registry):
     """Two concurrent registers for the SAME (workspace, title) must
     serialize: one wins, the other sees a title_collision."""
