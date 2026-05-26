@@ -107,10 +107,18 @@ def _ensure_self(my_surface: str | None,
         else:
             return None, errors.info_needed(["self_title"], rerun_argv)
 
-    # If --my-title (or any chosen title) differs from the current tab
-    # title, rename the tab cosmetically so the visible title matches
-    # the routing key. Failures are silent inside transport.rename_tab.
+    # Probe for collision BEFORE renaming so a title_collision handoff
+    # doesn't leave the caller's cmux tab visibly renamed while the
+    # manifest stays unregistered. The check inside register() is the
+    # authoritative backstop; this probe just avoids the common
+    # already-held case.
     if chosen != current_title:
+        holder = registry.would_collide(chosen, my_surface, workspace_ref,
+                                        live_set, surfaces)
+        if holder is not None:
+            return None, errors.title_collision(
+                chosen, workspace_ref or "", holder,
+                rerun_argv=rerun_argv)
         transport.rename_tab(my_surface, workspace_ref, chosen)
         # Reflect the rename in the in-memory snapshot so subsequent
         # sweeps (register-time AND the read-side sweep in `send`)

@@ -261,6 +261,39 @@ def test_my_title_collision_blocks_registration(tmp_registry, fc):
     assert out["rerun_argv"] == rerun
 
 
+def test_my_title_collision_does_not_rename_own_tab(tmp_registry, fc):
+    """QA-C regression: title_collision must not leave the caller's
+    cmux tab visibly renamed. Probe-before-rename means the tab keeps
+    its prior title when the handoff fires."""
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="taken")
+    registry.register("taken", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("anything", "x", my_title="taken",
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["code"] == "title_collision"
+    # Caller's tab title must still be its pre-call value, not the
+    # colliding `taken`. The fc fixture seeds my_surface with title="me".
+    my_tab = next(s for s in fc.surfaces if s.surface_ref == MY_SURFACE)
+    assert my_tab.title == "me"
+
+
+def test_my_title_no_collision_renames_and_registers(tmp_registry, fc):
+    """Sanity for the happy path: non-colliding --my-title on first
+    registration still renames the tab AND writes the manifest."""
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="peer_a")
+    registry.register("peer_a", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("peer_a", "hi", my_title="qa_lead",
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"]
+    my_tab = next(s for s in fc.surfaces if s.surface_ref == MY_SURFACE)
+    assert my_tab.title == "qa_lead"
+    me = registry.get_self(MY_SURFACE)
+    assert me["title"] == "qa_lead"
+
+
 def test_peer_unknown_writes_payload_and_returns_handoff(
         tmp_registry, fc):
     _seed_self(tmp_registry)

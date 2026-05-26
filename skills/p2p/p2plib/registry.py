@@ -265,3 +265,35 @@ def all_manifests(live_set: set[str],
     """Convenience: take the lock, sweep, return post-sweep manifests."""
     with registry_lock():
         return sweep_locked(live_set, surfaces=surfaces)
+
+
+def would_collide(title: str, surface_ref: str,
+                  workspace_ref: str | None,
+                  live_set: set[str],
+                  surfaces: dict[str, dict] | None = None) -> str | None:
+    """Probe whether `register(title, surface_ref, workspace_ref)` would
+    fail with title_collision. Returns the holder's surface_ref on
+    conflict, or None if `register` would succeed.
+
+    Mirrors the (workspace_ref, title) check inside `register` but does
+    not write. Callers use this when they need to perform other side
+    effects (e.g., cmux tab rename) BEFORE registration and don't want
+    those side effects to land on a failure path.
+
+    Note: there's a brief TOCTOU window between this probe and a
+    subsequent `register` call — another agent could claim the title
+    in between. The collision check inside `register` is the
+    authoritative backstop; this probe only avoids the common
+    already-held case.
+    """
+    with registry_lock():
+        manifests = sweep_locked(live_set, surfaces=surfaces)
+        for m in manifests:
+            if m.get("title") != title:
+                continue
+            if m.get("workspace_ref") != workspace_ref:
+                continue
+            if m.get("surface_ref") == surface_ref:
+                continue  # our own existing manifest, not a conflict
+            return m.get("surface_ref")
+        return None
