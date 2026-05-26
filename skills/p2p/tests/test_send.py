@@ -152,12 +152,17 @@ def test_unregistered_with_generic_tab_returns_info_needed(
            surface_ref="surface:200", title="peer")
     registry.register("peer", "surface:200", MY_WS,
                       live_set={MY_SURFACE, "surface:200"})
+    rerun = ["agent_msg.py", "send", "--peer", "peer",
+             "--message-file", "/tmp/x"]
     out = send.send("peer", "hi", my_title=None,
-                    fallback_self_title=None, rerun_argv=["x"])
+                    fallback_self_title=None, rerun_argv=rerun)
     assert out["ok"] is False
     assert out["code"] == "info_needed"
     assert "self_title" in out["missing"]
     assert out["action_required"] == "pick_self_title"
+    # Envelope: prose is a mechanical retry instruction.
+    assert out["retryable"] is True
+    assert out["rerun_argv"] == rerun
     # Self should NOT have been registered.
     assert registry.get_self(MY_SURFACE) is None
 
@@ -242,12 +247,18 @@ def test_my_title_collision_blocks_registration(tmp_registry, fc):
            surface_ref="surface:200", title="taken")
     registry.register("taken", "surface:200", MY_WS,
                       live_set={MY_SURFACE, "surface:200"})
+    rerun = ["agent_msg.py", "send", "--peer", "anything",
+             "--my-title", "taken", "--message-file", "/tmp/x"]
     out = send.send("anything", "x", my_title="taken",
-                    fallback_self_title=None, rerun_argv=[])
+                    fallback_self_title=None, rerun_argv=rerun)
     assert out["ok"] is False
     assert out["code"] == "title_collision"
     assert out["holder_surface"] == "surface:200"
     assert registry.get_self(MY_SURFACE) is None
+    # Envelope: prose tells the agent to pick a different title + rerun.
+    assert out["action_required"] == "pick_self_title"
+    assert out["retryable"] is True
+    assert out["rerun_argv"] == rerun
 
 
 def test_peer_unknown_writes_payload_and_returns_handoff(
@@ -271,10 +282,17 @@ def test_peer_unknown_writes_payload_and_returns_handoff(
 
 def test_empty_message(tmp_registry, fc):
     _seed_self(tmp_registry)
+    rerun = ["agent_msg.py", "send", "--peer", "anyone",
+             "--message-file", "/tmp/x"]
     out = send.send("anyone", "   \n  ", my_title=None,
-                    fallback_self_title=None, rerun_argv=[])
+                    fallback_self_title=None, rerun_argv=rerun)
     assert out["ok"] is False
     assert out["code"] == "empty_message"
+    # Envelope: prose tells the agent to rewrite + rerun, envelope
+    # must reflect that mechanical retry.
+    assert out["action_required"] == "rewrite_message"
+    assert out["retryable"] is True
+    assert out["rerun_argv"] == rerun
 
 
 def test_destination_workspace_is_carried_to_transport(tmp_registry, fc):

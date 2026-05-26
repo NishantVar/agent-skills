@@ -40,31 +40,51 @@ def not_in_cmux() -> dict:
     )
 
 
-def empty_message() -> dict:
+def empty_message(rerun_argv: list[str] | None = None) -> dict:
+    """Body was empty after stripping. The prose instruction names a
+    mechanical retry (rewrite the file, rerun), so the envelope
+    reflects that — action_required=rewrite_message, retryable=True,
+    rerun_argv populated."""
     return _base(
         "empty_message",
         "The supplied message body is empty.",
         "Write a non-empty message body to the file and rerun the same "
         "command.",
-        action="none",
+        action="rewrite_message",
+        retryable=True,
+        rerun_argv=rerun_argv or [],
     )
 
 
 def title_collision(title: str, workspace_ref: str,
-                    holder_surface: str) -> dict:
+                    holder_surface: str,
+                    rerun_argv: list[str] | None = None) -> dict:
+    """Another live agent in the workspace already holds `title`.
+    Mechanical retry: pick a different --my-title and rerun. Envelope
+    matches: retryable=True with rerun_argv populated. The agent must
+    pick a fresh title from its own role context (do NOT bounce to the
+    human) — see also info_needed(self_title) instructional wording."""
     return _base(
         "title_collision",
         f"Tab title {title!r} is already held by another live tab at "
         f"{holder_surface} in workspace {workspace_ref}.",
-        "Pick a different --my-title and rerun. Titles must be unique "
-        "within a workspace; routing is by (workspace, title).",
+        "Pick a different --my-title (snake_case, role-reflective — "
+        "choose from your own role context, do not ask the human) and "
+        "rerun. Titles must be unique within a workspace; routing is "
+        "by (workspace, title).",
         action="pick_self_title",
+        retryable=True,
+        rerun_argv=rerun_argv or [],
         holder_surface=holder_surface,
         workspace_ref=workspace_ref,
     )
 
 
 def info_needed(missing: list[str], rerun_argv: list[str]) -> dict:
+    """Both branches describe a mechanical retry. Envelope reflects
+    that — retryable=True, rerun_argv carried. action_required is
+    branch-specific so a caller reading only envelope fields can route
+    on action alone."""
     needs_self_title = "self_title" in missing
     if needs_self_title:
         # Target the calling AGENT, not the human. The agent has role
@@ -84,12 +104,13 @@ def info_needed(missing: list[str], rerun_argv: list[str]) -> dict:
     else:
         instruction = ("Supply the missing flags and rerun the same "
                        "subcommand.")
-        action = "none"
+        action = "provide_input"
     return _base(
         "info_needed",
         "Missing required input: " + ", ".join(missing),
         instruction,
         action=action,
+        retryable=True,
         rerun_argv=rerun_argv,
         missing=missing,
     )

@@ -126,7 +126,8 @@ def _ensure_self(my_surface: str | None,
         kind = err["kind"]
         if kind == "title_collision":
             return None, errors.title_collision(
-                chosen, err["workspace_ref"], err["holder_surface"])
+                chosen, err["workspace_ref"], err["holder_surface"],
+                rerun_argv=rerun_argv)
         if kind == "not_in_cmux":
             return None, errors.not_in_cmux()
         return None, errors.info_needed(["self_title"], rerun_argv)
@@ -194,7 +195,7 @@ def send(peer: str | None, body: str,
     when None, defaults to the caller's own workspace. Pass an
     explicit sentinel to widen scope — see cli.py."""
     if not body.strip():
-        return errors.empty_message()
+        return errors.empty_message(rerun_argv=rerun_argv)
     if not peer:
         return errors.info_needed(["peer"], rerun_argv)
 
