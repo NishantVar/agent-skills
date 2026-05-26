@@ -65,9 +65,15 @@ def _frame(me_title: str, body: str, one_way: bool) -> str:
     """`[from: X] body` or `[from: X | one-way] body`. The pipe-form
     marker is part of the wire contract — receivers read it inline to
     know no reply is expected. Slash commands are passed verbatim by
-    the caller and never reach this helper."""
+    the caller and never reach this helper.
+
+    Plain (non-bootstrap) messages get a short trailer telling the
+    receiver to load the p2p skill — covers the case where the tab is
+    still registered in the manifest but the agent occupying it has
+    been replaced and never saw the original bootstrap."""
     tag = f"{me_title} | one-way" if one_way else me_title
-    return f"[from: {tag}] {body}"
+    trailer = "" if one_way else "\n\nTo reply: Load p2p"
+    return f"[from: {tag}] {body}{trailer}"
 
 
 def _ensure_self(my_surface: str | None,

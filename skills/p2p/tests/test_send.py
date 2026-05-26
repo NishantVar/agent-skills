@@ -51,7 +51,7 @@ def test_live_peer_in_workspace_sends_plain_message(tmp_registry, fc):
     surf, ws, text = fc.sent[0]
     assert surf == "surface:200"
     assert ws == MY_WS
-    assert text == "[from: me] hello there"
+    assert text == "[from: me] hello there\n\nTo reply: Load p2p"
 
 
 def test_live_first_contact_sends_bootstrap(tmp_registry, fc):
@@ -379,7 +379,7 @@ def test_explicit_peer_surface_skips_resolution(tmp_registry, fc):
     surf, ws, text = fc.sent[0]
     assert surf == "surface:777"
     assert ws == "workspace:7"
-    assert text == "[from: me] thanks for the ping"
+    assert text == "[from: me] thanks for the ping\n\nTo reply: Load p2p"
     assert "[p2p-bootstrap]" not in text
 
 
@@ -421,7 +421,7 @@ def test_explicit_peer_surface_with_stale_manifest_still_plain(
     assert out["title"] == "stale_one"
     assert out["peer_status"] == "stale"
     text = fc.sent[0][2]
-    assert text == "[from: me] yo"
+    assert text == "[from: me] yo\n\nTo reply: Load p2p"
 
 
 def test_one_way_to_live_peer_marks_frame(tmp_registry, fc):
@@ -612,7 +612,7 @@ def test_self_externally_renamed_frames_with_current_cmux_title(
                     fallback_self_title=None, rerun_argv=[])
     assert out["ok"]
     text = fc.sent[0][2]
-    assert text == "[from: newme] hello"
+    assert text == "[from: newme] hello\n\nTo reply: Load p2p"
     # And the on-disk manifest reflects the rename promotion.
     me_on_disk = json.loads(registry.manifest_path(MY_SURFACE).read_text())
     assert me_on_disk["title"] == "newme"

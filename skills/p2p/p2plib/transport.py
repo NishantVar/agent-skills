@@ -14,6 +14,23 @@ import secrets
 import subprocess
 import time
 
+# Paste larger payloads in this many chars per round. Big single pastes
+# can be truncated or dropped by some terminals / target CLIs, so we
+# split into multiple set-buffer + paste-buffer rounds and only press
+# Enter after the last chunk.
+CHUNK_SIZE = 1000
+
+# cmux paste delivers any literal '\n' in the buffer as an Enter
+# keystroke (see `cmux send --help`), and target TUIs don't have
+# bracketed-paste mode enabled on their input pane — so a
+# multi-paragraph body would submit at the first newline and arrive at
+# the receiver as two user turns. Flatten newlines to a visible
+# arrow-symbol surrogate that reads cleanly but never triggers Enter.
+# Skipped for slash-command bodies because those are expected to be
+# single-line by convention and the slash menu wants real keystroke
+# semantics on the leading character.
+NEWLINE_SURROGATE = " ↵ "
+
 
 def is_command(text: str) -> bool:
     """True when `text` would open a slash-command / Codex plugin
@@ -45,25 +62,33 @@ def send_buffer(surface_ref: str, workspace_ref: str | None,
     send. The function still works with None, but routing becomes
     workspace-implicit.
     """
-    name = _buffer_name()
+    payload = text if is_command(text) else text.replace(
+        "\n", NEWLINE_SURROGATE)
 
-    r = _run(["cmux", "set-buffer", "--name", name, "--", text])
-    if r.returncode != 0:
-        raise TransportError(
-            f"cmux set-buffer failed: {r.stderr.strip()}")
+    chunks = [payload[i:i + CHUNK_SIZE]
+              for i in range(0, len(payload), CHUNK_SIZE)] or [payload]
 
-    paste = ["cmux", "paste-buffer", "--name", name,
-             "--surface", surface_ref]
-    if workspace_ref:
-        paste += ["--workspace", workspace_ref]
-    r = _run(paste)
-    if r.returncode != 0:
-        raise TransportError(
-            f"cmux paste-buffer failed: {r.stderr.strip()}")
+    for chunk in chunks:
+        name = _buffer_name()
 
-    # Give the target CLI time to ingest the paste before the keystroke,
-    # or it races and the message sits unsent.
-    time.sleep(0.3)
+        r = _run(["cmux", "set-buffer", "--name", name, "--", chunk])
+        if r.returncode != 0:
+            raise TransportError(
+                f"cmux set-buffer failed: {r.stderr.strip()}")
+
+        paste = ["cmux", "paste-buffer", "--name", name,
+                 "--surface", surface_ref]
+        if workspace_ref:
+            paste += ["--workspace", workspace_ref]
+        r = _run(paste)
+        if r.returncode != 0:
+            raise TransportError(
+                f"cmux paste-buffer failed: {r.stderr.strip()}")
+
+        # Let the target CLI ingest this chunk before the next paste or
+        # the Enter keystroke — without it the input races and gets
+        # dropped or sent half-formed.
+        time.sleep(0.3)
 
     if is_command(text):
         space = ["cmux", "send", "--surface", surface_ref, " "]
