@@ -112,6 +112,8 @@ def _ensure_self(my_surface: str | None,
     # manifest stays unregistered. The check inside register() is the
     # authoritative backstop; this probe just avoids the common
     # already-held case.
+    renamed = False
+    pre_rename_surf = surfaces.get(my_surface)
     if chosen != current_title:
         holder = registry.would_collide(chosen, my_surface, workspace_ref,
                                         live_set, surfaces)
@@ -120,19 +122,29 @@ def _ensure_self(my_surface: str | None,
                 chosen, workspace_ref or "", holder,
                 rerun_argv=rerun_argv)
         transport.rename_tab(my_surface, workspace_ref, chosen)
+        renamed = True
         # Reflect the rename in the in-memory snapshot so subsequent
         # sweeps (register-time AND the read-side sweep in `send`)
         # don't mis-interpret it as an external rename and rewrite the
         # manifest title back / push our chosen title onto former_titles.
-        existing_surf = surfaces.get(my_surface)
-        if existing_surf is not None:
-            surfaces[my_surface] = {**existing_surf, "title": chosen}
+        if pre_rename_surf is not None:
+            surfaces[my_surface] = {**pre_rename_surf, "title": chosen}
 
     m, err = registry.register(chosen, my_surface, workspace_ref,
                                live_set, surfaces)
     if err:
         kind = err["kind"]
         if kind == "title_collision":
+            # TOCTOU window between would_collide() and register():
+            # another agent claimed the title in the gap. Roll back
+            # the cmux rename and the in-memory snapshot so the
+            # title_collision handoff doesn't leave the caller's tab
+            # visibly renamed.
+            if renamed:
+                transport.rename_tab(my_surface, workspace_ref,
+                                     current_title)
+                if pre_rename_surf is not None:
+                    surfaces[my_surface] = pre_rename_surf
             return None, errors.title_collision(
                 chosen, err["workspace_ref"], err["holder_surface"],
                 rerun_argv=rerun_argv)

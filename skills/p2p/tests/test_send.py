@@ -278,6 +278,28 @@ def test_my_title_collision_does_not_rename_own_tab(tmp_registry, fc):
     assert my_tab.title == "me"
 
 
+def test_my_title_collision_rolls_back_rename_on_toctou(
+        tmp_registry, fc, monkeypatch):
+    """QA-C TOCTOU regression: would_collide() can return None and
+    register() can still return title_collision (another agent claimed
+    the title between probe and register). When that happens, the
+    rename must be rolled back so the caller's tab doesn't end up
+    visibly renamed."""
+    # Force the TOCTOU scenario by mocking would_collide() to lie.
+    monkeypatch.setattr(registry, "would_collide",
+                        lambda *a, **kw: None)
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="taken")
+    registry.register("taken", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("anything", "x", my_title="taken",
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["code"] == "title_collision"
+    # Tab must be rolled back to its pre-call title, not left as `taken`.
+    my_tab = next(s for s in fc.surfaces if s.surface_ref == MY_SURFACE)
+    assert my_tab.title == "me"
+
+
 def test_my_title_no_collision_renames_and_registers(tmp_registry, fc):
     """Sanity for the happy path: non-colliding --my-title on first
     registration still renames the tab AND writes the manifest."""

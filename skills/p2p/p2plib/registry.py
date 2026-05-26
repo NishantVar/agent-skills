@@ -276,15 +276,20 @@ def would_collide(title: str, surface_ref: str,
     conflict, or None if `register` would succeed.
 
     Mirrors the (workspace_ref, title) check inside `register` but does
-    not write. Callers use this when they need to perform other side
-    effects (e.g., cmux tab rename) BEFORE registration and don't want
-    those side effects to land on a failure path.
+    NOT create a manifest for `title`. It does run a normal sweep
+    (same as every other lock-taking operation), so it may write
+    stale-status changes, legacy promotions, and rename promotions to
+    OTHER manifests — that's expected for any caller already on this
+    code path. A future caller that needs a pure side-effect-free
+    probe would need a non-mutating sweep helper.
 
     Note: there's a brief TOCTOU window between this probe and a
     subsequent `register` call — another agent could claim the title
     in between. The collision check inside `register` is the
     authoritative backstop; this probe only avoids the common
-    already-held case.
+    already-held case. Callers performing other side effects (e.g.,
+    cmux tab rename) between the probe and `register` must roll those
+    side effects back if `register` later returns title_collision.
     """
     with registry_lock():
         manifests = sweep_locked(live_set, surfaces=surfaces)
