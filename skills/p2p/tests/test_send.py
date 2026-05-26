@@ -537,6 +537,67 @@ def test_live_current_match_wins_over_rename_in_send(
     assert out["title"] == "reviewer"
 
 
+def test_self_externally_renamed_frames_with_current_cmux_title(
+        tmp_registry, fc):
+    """Regression (codex_reviewer dd89b32 finding 1): my manifest says
+    title='me' but my cmux tab has been renamed externally to 'newme'.
+    Without refreshing `me` from the post-sweep manifest set, framing
+    would emit '[from: me]' while the manifest gets promoted to
+    'newme' on the same call — peers seeing '[from: me]' would later
+    get peer_renamed when they replied to 'me', which is the OPPOSITE
+    of the bridge we want."""
+    _seed_self(tmp_registry)  # writes manifest title='me'
+    # Externally rename the cmux tab.
+    fc.surfaces[0].title = "newme"
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="peer_a")
+    registry.register("peer_a", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("peer_a", "hello", my_title=None,
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"]
+    text = fc.sent[0][2]
+    assert text == "[from: newme] hello"
+    # And the on-disk manifest reflects the rename promotion.
+    me_on_disk = json.loads(registry.manifest_path(MY_SURFACE).read_text())
+    assert me_on_disk["title"] == "newme"
+    assert me_on_disk["former_titles"] == ["me"]
+
+
+def test_in_scope_rename_wins_over_out_of_scope_current(
+        tmp_registry, fc):
+    """Regression (codex_reviewer dd89b32 finding 2): caller scoped to
+    workspace A; title 'reviewer' is held currently by a tab in
+    workspace B; A also has a live surface whose former_titles
+    contains 'reviewer'. The in-scope rename match must win over the
+    out-of-scope ambiguous bounce — caller's own workspace is more
+    relevant."""
+    _seed_self(tmp_registry)
+    # Out-of-scope current-title match.
+    fc.add(workspace_ref="workspace:99", workspace_title="Other",
+           surface_ref="surface:999", title="reviewer")
+    # In-scope renamed surface (former title 'reviewer').
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="r1")
+    p = registry.manifest_path("surface:200")
+    p.write_text(json.dumps({
+        "title": "r1", "former_titles": ["reviewer"],
+        "surface_ref": "surface:200", "workspace_ref": MY_WS,
+        "started_at": 1, "last_seen": int(time.time()),
+    }))
+    out = send.send("reviewer", "hi", my_title=None,
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"] is False
+    assert out["code"] == "peer_renamed"
+    # The candidate is the in-scope renamed surface, not the
+    # out-of-scope current holder.
+    assert len(out["candidates"]) == 1
+    assert out["candidates"][0]["ref"] == "surface:200"
+    assert out["candidates"][0]["workspace_ref"] == MY_WS
+    assert out["candidates"][0]["current_title"] == "r1"
+    assert fc.sent == []
+
+
 def test_legacy_name_manifest_routes_under_promoted_title(
         tmp_registry, fc):
     """A manifest written by the old code (with `name` not `title`) is

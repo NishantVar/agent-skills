@@ -76,23 +76,13 @@ def resolve_peer(addressed: str, manifests: list[dict],
     matches = in_scope if scope_workspace_ref is not None else in_scope
 
     if not matches:
-        if out_of_scope:
-            # Caller scoped to current workspace but the title exists
-            # elsewhere. Return ambiguous with all candidates so they
-            # can opt out with --workspace.
-            return ResolveResult(
-                kind="ambiguous",
-                candidates=[
-                    {"ref": s["ref"],
-                     "workspace_ref": s.get("workspace_ref"),
-                     "workspace_title": s.get("workspace_title", ""),
-                     "title": s.get("title", "")}
-                    for s in out_of_scope
-                ],
-            )
-        # No live current-title match in scope. Check for a former
-        # title match — somebody renamed their tab and a peer is still
-        # addressing the prior identity.
+        # No live current-title match in scope. Check for an in-scope
+        # former-title match FIRST — a renamed agent in the caller's
+        # own workspace is more relevant than a current-title match
+        # in some other workspace. If the caller's workspace itself
+        # has a peer that used to hold this title, we want
+        # peer_renamed to fire rather than the out-of-scope
+        # ambiguous bounce.
         rename_candidates: list[dict] = []
         for m in manifests:
             if (scope_workspace_ref is not None
@@ -121,6 +111,20 @@ def resolve_peer(addressed: str, manifests: list[dict],
         if rename_candidates:
             return ResolveResult(kind="renamed",
                                  candidates=rename_candidates)
+        if out_of_scope:
+            # No in-scope match (current or former). Caller scoped to
+            # current workspace but the title exists elsewhere — let
+            # them opt out via --workspace.
+            return ResolveResult(
+                kind="ambiguous",
+                candidates=[
+                    {"ref": s["ref"],
+                     "workspace_ref": s.get("workspace_ref"),
+                     "workspace_title": s.get("workspace_title", ""),
+                     "title": s.get("title", "")}
+                    for s in out_of_scope
+                ],
+            )
         return ResolveResult(kind="unknown")
 
     if len(matches) > 1:

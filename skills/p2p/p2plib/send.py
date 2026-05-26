@@ -215,10 +215,20 @@ def send(peer: str | None, body: str,
     # rename promotion (manifest.title <- current cmux title, prior
     # title appended to former_titles) happens promptly. Without this,
     # peer_renamed would only fire after some other agent triggered a
-    # register-time sweep on the renamed peer's workspace. The
-    # self-rename case is safe because _ensure_self updated
-    # surfaces[my_surface] in place above.
+    # register-time sweep on the renamed peer's workspace.
     manifests = registry.all_manifests(live, surfaces=surfaces)
+
+    # Self may have been promoted by the sweep too (cmux tab renamed
+    # externally between our last registration and this send).
+    # _ensure_self short-circuits on the existing manifest without
+    # checking against the current cmux title, so `me` can carry the
+    # stale title. Refresh from the post-sweep set so framing uses
+    # the current identity rather than emitting `[from: <old>]`.
+    if my_surf:
+        for m in manifests:
+            if m.get("surface_ref") == my_surf:
+                me = m
+                break
 
     if peer_surface:
         return _send_to_explicit_surface(
