@@ -31,12 +31,21 @@ def _base(code: str, human: str, instruction: str, *,
 
 
 def not_in_cmux() -> dict:
+    """Terminal: the calling process cannot mutate its own environment
+    to recover. The prose is honest about that — no mechanical retry
+    is possible from where the caller stands, so action_required=none
+    and retryable=false."""
     return _base(
         "not_in_cmux",
         "This agent could not resolve its own cmux surface.",
-        "Set AGENT_MSG_SURFACE_ID=surface:<N> in the environment and "
-        "rerun. The agent is likely not running inside a cmux pane.",
+        "Terminal — do not retry this command as-is. The calling "
+        "process cannot fix its own environment. To use p2p, relaunch "
+        "this agent inside a cmux pane (the cmux wrapper sets "
+        "AGENT_MSG_SURFACE_ID for child processes), or have the "
+        "spawner export AGENT_MSG_SURFACE_ID=surface:<N> before "
+        "starting the agent.",
         action="none",
+        retryable=False,
     )
 
 

@@ -84,22 +84,17 @@ def _resolve_title_aliases(args) -> None:
         args.bootstrap_suggested_title = args.bootstrap_suggested_name
 
 
-def cmd_send(args) -> int:
-    _resolve_title_aliases(args)
+def _build_rerun_argv(args) -> list[str]:
+    """Reconstruct an argv that replays the same send. Every retryable
+    handoff carries this so an envelope-only caller can rerun
+    mechanically without re-deriving flags from the prose.
 
-    # --bootstrap-file fills defaults for --peer / --peer-surface /
-    # --bootstrap-suggested-title when the agent has the bootstrap text
-    # in a file rather than as individual flags.
-    if args.bootstrap_file:
-        text = Path(args.bootstrap_file).read_text()
-        parsed = bootstrap.parse_bootstrap_text(text) or {}
-        args.peer = args.peer or parsed.get("peer_title")
-        args.peer_surface = args.peer_surface or parsed.get("peer_surface")
-        args.bootstrap_suggested_title = (
-            args.bootstrap_suggested_title
-            or parsed.get("suggested_title"))
-
-    body = _read_body(args)
+    BOTH --message and --message-file get preserved verbatim. SKILL.md
+    teaches --message-file as the canonical path, but --message is
+    still accepted by the CLI, so the rerun would otherwise drop the
+    body source for inline-message callers and make `empty_message` /
+    `title_collision` / `info_needed` non-replayable for them.
+    """
     rerun: list[str] = ["agent_msg.py", "send"]
     if args.peer:
         rerun += ["--peer", args.peer]
@@ -116,6 +111,28 @@ def cmd_send(args) -> int:
         rerun += ["--one-way"]
     if args.message_file:
         rerun += ["--message-file", args.message_file]
+    if args.message is not None:
+        rerun += ["--message", args.message]
+    return rerun
+
+
+def cmd_send(args) -> int:
+    _resolve_title_aliases(args)
+
+    # --bootstrap-file fills defaults for --peer / --peer-surface /
+    # --bootstrap-suggested-title when the agent has the bootstrap text
+    # in a file rather than as individual flags.
+    if args.bootstrap_file:
+        text = Path(args.bootstrap_file).read_text()
+        parsed = bootstrap.parse_bootstrap_text(text) or {}
+        args.peer = args.peer or parsed.get("peer_title")
+        args.peer_surface = args.peer_surface or parsed.get("peer_surface")
+        args.bootstrap_suggested_title = (
+            args.bootstrap_suggested_title
+            or parsed.get("suggested_title"))
+
+    body = _read_body(args)
+    rerun = _build_rerun_argv(args)
 
     # Scrollback fallback only runs when neither --my-title nor
     # --bootstrap-suggested-title was supplied and the agent isn't
