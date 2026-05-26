@@ -1,97 +1,53 @@
-skill p2p(my_name = "" <"Stable short name this agent should be registered under. Lowercase snake_case. If empty, pick a name from the agent's role and confirm with the user when ambiguous.">, peer_name = "" <"Name of the peer to spawn, connect to, or send a message to.">, peer_tab = "" <"Cmux tab title to search for when the peer is identified by tab rather than by a previously-registered name.">, message = "" <"Optional message body. For spawn or connect, becomes the first message sent. For a plain send, the full content.">)
-    description: "P2P messaging between cmux agents using inline-prompt transport over cmux set-buffer/paste-buffer. Per-surface manifest routing; fire-and-forget."
+skill p2p(my_title = "" <"REQUIRED on first send for this agent EXCEPT on inline-bootstrap reply (see reply_to_inline_bootstrap block). Pick a snake_case role-reflective title (qa_lead, reviewer, builder, etc.) from your own role context BEFORE calling. Drop on subsequent calls; the title is sticky in the manifest. Carve-outs: (a) inline-bootstrap reply uses --bootstrap-suggested-title instead — DO NOT pass --my-title there, it overrides the initiator's expected title and breaks routing; (b) if your spawner already set a meaningful cmux tab title (anything outside {claude, claude-code, codex, gemini, shell, bash, zsh, \"\"}), you may omit --my-title and the helper will adopt it silently.">, peer = "" <"Cmux tab title of the destination peer. Single routing key, scoped to the caller's workspace by default.">, message = "" <"Message body. Always passed via --message-file to side-step shell quoting.">)
+    description: "P2P messaging between cmux agents: one verb (`send`) handles first contact, follow-up, and reply. Routes by cmux tab title scoped to the caller's workspace; returns a handoff JSON object when a peer must be spawned or another skill must run."
 
-    require single_stable_name
-    require always_tag_messages
-    avoid silent_collisions
-
-    context:
-        transport_model
-        registry_model
-        bootstrap_protocol
+    require single_stable_title
+    require always_use_send_verb
+    require honor_handoff_json
+    avoid skill_calls_skill
 
     flow:
-        ensure_self_registered()
-
-        if handle_incoming_bootstrap.applies()
-            handle_incoming_bootstrap()
-        elif spawn_new_peer.applies()
-            spawn_new_peer()
-        elif connect_to_existing_peer.applies()
-            connect_to_existing_peer()
-        elif send_to_known_peer.applies()
-            send_to_known_peer()
-        elif list_known_peers.applies()
-            list_known_peers()
+        if inline_bootstrap_present.applies()
+            reply_to_inline_bootstrap()
         else
-            no_matching_action()
+            send_via_helper()
+
+        if handoff_received.applies()
+            follow_handoff_instruction()
 
 
-block ensure_self_registered()
-    description: "Ensure this agent has a manifest and a stable name before any other action runs."
+block send_via_helper()
+    description: "Issue one `send` call. The helper handles registration, title resolution, plain-vs-bootstrap framing, cross-workspace routing, and payload-file generation."
     flow:
-        "Run `python3 ~/.claude/skills/p2p/tools/agent_msg.py whoami`. If it exits 0 the agent is already registered; the JSON on stdout has the current name. Remember the name and end this block."
-        "If whoami exits non-zero, choose a short, lowercase, snake_case name for this agent. Prefer the user-supplied {my_name} when non-empty. Otherwise pick one that reflects the agent's role (`reviewer`, `planner`, `worker_a`); confirm with the user when the role is ambiguous."
-        "Run `python3 ~/.claude/skills/p2p/tools/agent_msg.py register --name <chosen_name>`. The helper writes the per-surface manifest, renames the cmux tab cosmetically, and exits 0 on success. On a name-collision error, pick a different name and retry."
+        "Write {message} to a temp file like `/tmp/p2p-out-{peer}.txt`."
+        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --my-title {my_title} --message-file <path>`. COMMIT to --my-title upfront on the first send for this agent (exception: inline-bootstrap reply uses --bootstrap-suggested-title instead — see reply_to_inline_bootstrap block). Pick the snake_case title from your own role context, do not call-then-react to info_needed. Drop --my-title on subsequent invocations; the helper ignores it once a manifest exists. Add `--one-way` for fire-and-forget delivery — the wire frame becomes `[from: <me> | one-way] <body>` and any first-contact bootstrap drops the reply request. Add `--workspace <ref>` to scope the title match to a different workspace, or `--workspace all` for global scope."
+        "Parse the JSON on stdout. `{ok: true}` is done. `{ok: false}` carries `code`, `agent_instruction`, and (per code) extra fields like `payload_file` or `candidates`."
 
 
-block handle_incoming_bootstrap()
-    description: "The current user prompt or recent scrollback contains a literal `[p2p-bootstrap]` tag — a peer is opening a connection and expects this agent to register itself and acknowledge"
+block reply_to_inline_bootstrap()
+    description: "An inbound `[p2p-bootstrap]` block is in this agent's prompt. Do one `send` call — register + reply in the same invocation."
     flow:
-        "Run `python3 ~/.claude/skills/p2p/tools/agent_msg.py parse-incoming`. The helper scans the agent's most recent scrollback for the bootstrap block and prints `{peer_name, peer_surface, suggested_name}` as JSON. If the helper exits non-zero, abort and report that no bootstrap was found."
-        "The peer is already registered on its own side (it must have been, to send the bootstrap), so no additional registration is needed for the peer. `ensure_self_registered` has already handled this side."
-        "If the bootstrap text included a `First message from <peer_name>: ...` line, surface that message to the user verbatim (with the `[from: <peer_name>]` framing) and ask whether to reply. If there is no first message, just confirm the connection is live and report the peer's name."
+        "Read `peer_title=` / `peer_surface=` / `suggested_title=` from the inline `[p2p-bootstrap]` block in the user-turn prompt."
+        "Write the reply body to a temp file like `/tmp/p2p-out-{peer}.txt`."
+        "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer <peer_title> --peer-surface <peer_surface> --bootstrap-suggested-title <suggested_title> --message-file <path>`. The helper registers this agent under `suggested_title` on the fly and routes directly without title resolution. DO NOT also pass --my-title here — code precedence is --my-title > --bootstrap-suggested-title, so adding it would override the title the initiator expects and break their routing to this agent. The send_via_helper 'REQUIRED on first send' rule is satisfied here by --bootstrap-suggested-title."
+        "If the bootstrap text is in a file rather than inline, pass `--bootstrap-file <path>` instead — it fills --peer, --peer-surface, and --bootstrap-suggested-title from the parsed text."
 
 
-block spawn_new_peer()
-    description: "The user wants to launch a brand-new agent in a new cmux surface and begin a conversation with it"
+block follow_handoff_instruction()
+    description: "The helper returned ok:false. Read `agent_instruction` and act."
     flow:
-        "Decide which agentic CLI the new peer will run (Claude Code, Codex, Gemini). Confirm with the user when not stated. Pick a short snake_case name for the new peer; prefer {peer_name} when supplied."
-        "Generate the bootstrap payload: `python3 ~/.claude/skills/p2p/tools/agent_msg.py bootstrap-payload --target-name <peer_name>` plus `--message <first_message>` when the user wants to send an opening line ({message} carries it). Write the helper's stdout to a temp file such as `/tmp/agent-msg-bootstrap-<peer_name>.txt`."
-        "Hand the spawn itself off to the fork-terminal skill. Pass `--delayed-input-file <bootstrap_file>` and `--delay 5` so the new agent's first user-turn prompt is the bootstrap text. Let fork-terminal pick the launcher (claude/codex/gemini) per its own rules."
-        "Do not wait for the new peer to come up. The new peer will register itself, parse the bootstrap, and reply when ready. Replies arrive in this agent's terminal as fresh `[from: <peer_name>] ...` user-turn lines."
+        "`peer_unknown` → invoke the tfork skill and have it spawn an agent whose first user-turn input is the contents of `payload_file`. Use whatever delayed-input mechanism tfork currently exposes — p2p does not prescribe a flag. The payload file is already written 0600; do not re-create it."
+        "`peer_ambiguous` → rerun with --peer set + --peer-surface <candidates[i].ref> to route by surface directly, or with --workspace <ref> to scope the title match. A bare `surface:N` string is not a valid --peer."
+        "`peer_renamed` → no live tab holds the addressed title in scope, but a live surface in scope was previously registered under it (human likely renamed the cmux tab). `candidates[i]` carries `current_title`, `former_title`, `ref`. If the rename signals the same agent under a new label, rerun with --peer <current_title> (or --peer-surface <ref>). If the rename signals a role change, treat the destination as a different agent — re-evaluate intent, and if no live tab now fits, fall through to the peer_unknown path (spawn via tfork). Never silently retarget."
+        "`info_needed` with `missing: [\"self_title\"]` → safety net: you should have passed --my-title upfront on the first send. Choose a snake_case role-reflective title from your own context and rerun with `--my-title <t>`. Do NOT ask the human."
+        "`title_collision` → another live agent in the workspace already holds that title. Pick a different --my-title and rerun."
+        "`empty_message` → write a non-empty body and rerun."
 
 
-block connect_to_existing_peer()
-    description: "The user wants to start talking to an agent already running in cmux, identified by its tab title or by a previously-registered name"
-    flow:
-        "Resolve the target surface. Run `python3 ~/.claude/skills/p2p/tools/agent_msg.py resolve --peer <name_or_tab> --fallback-tab`. The helper first checks the manifest registry by name; if no match, it falls back to matching the cmux tab title. Capture the surface_ref it prints. Prefer {peer_name} over {peer_tab} when both are present, falling back to {peer_tab} otherwise."
-        "Compose the optional opening line from the user's request. {message} carries it when supplied."
-        "Run `python3 ~/.claude/skills/p2p/tools/agent_msg.py bootstrap --peer-surface <surface_ref>` plus `--message <opening_line>` when applicable. The helper sends the tagged bootstrap into the target surface via set-buffer/paste-buffer. The target agent's coding CLI will see it as a user-turn prompt; it is expected to invoke this skill, register itself, and reply."
-        "If the target was matched only by tab title (not by an existing manifest), tell the user that the target agent has not been seen on the messaging registry before — it will need to invoke this skill to participate, which the bootstrap text instructs it to do."
+const single_stable_title = """Pick one short, lowercase, snake_case title on the first call and keep it for life. Peers route by `(workspace, title)`; renaming mid-session makes this agent unreachable under the prior title. The helper renames the cmux tab cosmetically to match the registered title."""
 
+const always_use_send_verb = """All outgoing messages go through `agent_msg.py send`. Never call `cmux set-buffer`, `cmux paste-buffer`, or `cmux send-key` directly — the helper alone passes `--workspace` (without it cross-workspace delivery fails as `Surface is not a terminal`), applies the `[from: <me>]` prefix, and uses a per-op buffer name to avoid concurrent-sender interleaving."""
 
-block send_to_known_peer()
-    description: "The user wants this agent to send a message to a peer it is already connected to (or wants to reply to a `[from: <name>] ...` line in the conversation)"
-    flow:
-        "Identify the destination peer name. Prefer {peer_name} when supplied. Otherwise read the most recent `[from: <name>] ...` line in the conversation and treat that name as the destination."
-        "Write the message body to a temp file (for example `/tmp/agent-msg-out-<peer>.txt`) to side-step any shell quoting concerns. Then run `python3 ~/.claude/skills/p2p/tools/agent_msg.py send --peer <peer_name> --message-file <path>`. The helper looks the peer up in the manifest registry, prefixes the body with `[from: <my_name>]`, and delivers via set-buffer/paste-buffer."
-        "Do not wait for a reply. Any reply arrives later as a fresh `[from: <peer_name>] ...` user-turn line and will be picked up naturally on the agent's next turn."
+const honor_handoff_json = """When the helper returns `ok: false`, the JSON contains an explicit `agent_instruction` field. Follow it verbatim — do not improvise around it. The handoff carries `code`, `human_message`, `agent_instruction`, `action_required`, `handoff_skill`, `rerun_argv`, and `retryable`, plus per-code extras."""
 
-
-block list_known_peers()
-    description: "The user wants to see what peers this agent is currently aware of"
-    flow:
-        "Run `python3 ~/.claude/skills/p2p/tools/agent_msg.py list-peers`. The helper sweeps stale manifests (surface no longer in cmux) and prints the live peer list as JSON: `[{name, surface_ref, started_at}, ...]`."
-        "Summarize the result for the user — peer names and their cmux surfaces."
-
-
-block no_matching_action()
-    description: "None of the p2p actions clearly apply."
-    flow:
-        "Ask the user to clarify: are they trying to spawn a new peer, connect to an existing one, send a message to a known peer, or list known peers?"
-
-
-const single_stable_name = """Pick exactly one short, lowercase, snake_case name on the first invocation and keep it for the lifetime of this agent. Never rename mid-session — peers route by the manifest's `name` field, so changing it makes you unreachable under your old name."""
-
-const always_tag_messages = """Every outgoing message must carry a `[from: <my_name>]` prefix. Always send through `agent_msg.py send` so the prefix is applied and the cmux set-buffer / paste-buffer transport is used. Never `cmux send` raw text directly to a peer surface."""
-
-const silent_collisions = """Routing is by the per-surface manifest's `name` field, not the cmux tab title. Always re-resolve a peer through `agent_msg.py resolve` (or by reading the registry) before sending — a renamed or stale tab title must never be trusted as the routing key."""
-
-const transport_model = """Communication uses `cmux set-buffer` + `cmux paste-buffer` so messages of any size go through without shell ARG_MAX truncation. Sending is fire-and-forget: replies arrive in this agent's terminal as fresh `[from: <peer_name>] ...` user-turn lines and are picked up on the agentic CLI's next turn — there is no polling and no synchronous wait."""
-
-const registry_model = """Each agent's identity lives in a per-surface manifest at `~/.cmux/agents/by-surface/<surface_ref>.json` containing `{name, surface_ref, started_at}`. The cmux tab title is renamed cosmetically to match, but it is not the authoritative routing key. Stale manifests (whose surface_ref no longer appears in `cmux tree --all`) are reaped lazily by any agent that enumerates the registry — no daemon or cleanup hook is required."""
-
-const bootstrap_protocol = """Bootstrap messages are tagged `[p2p-bootstrap]` and carry `peer_name=`, `peer_surface=`, optional `suggested_name=`, and an optional `First message from <name>: ...` line. A receiving agent reads the tag in its prompt or scrollback, invokes this skill, registers itself, and is then reachable."""
-
-
+const skill_calls_skill = """This skill never invokes the tfork skill itself. When a spawn is needed, send returns a `peer_unknown` handoff with `handoff_skill: \"tfork\"` and a pre-written `payload_file`; the calling agent invokes the tfork skill using whatever delayed-input mechanism that skill currently exposes (p2p does not prescribe a flag). Same rule in reverse: tfork never calls p2p."""

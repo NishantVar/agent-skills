@@ -1,6 +1,6 @@
 # Surface-resolution test
 
-If you change `my_surface()`, `_ancestor_ttys()`, or `_surface_from_tty_walk()` in `tools/agent_msg.py`, **re-run this test from inside every agent runtime you care about** (Claude Code, Codex, Gemini, …). The bug it guards against — silent mis-registration to the user-focused pane instead of the agent's own pane — is hard to notice without it.
+If you change `my_surface()`, `_ancestor_ttys()`, or `_surface_from_tty_walk()` in `p2plib/surface.py` (the production module — `tools/agent_msg.py` is the legacy monolith retained only until cutover), **re-run this test from inside every agent runtime you care about** (Claude Code, Codex, Gemini, …). The bug it guards against — silent mis-registration to the user-focused pane instead of the agent's own pane — is hard to notice without it.
 
 ## Run
 
@@ -26,7 +26,7 @@ Paste this into each agent (Claude Code, Codex, Gemini) and confirm exit 0:
 | Path 1 (normal env) matches truth | `cmux identify` regression |
 | Path 2 (env stripped) matches truth | tty-walk regression — the original bug |
 | Path 3 (override) returned verbatim | `AGENT_MSG_SURFACE_ID` flag regression |
-| Path 4 (all paths fail) errors cleanly | silent-fallback regression |
+| Path 4 (all paths fail) returns None | silent-fallback regression — `my_surface()` must return None so `cli.py` can wrap it as `errors.not_in_cmux()`; it must NOT fall back to the focused-pane surface_ref |
 | stripped resolution ≠ focused surface | the original `focused`-fallback footgun re-appearing |
 
 ## Why the tty walk is non-trivial
