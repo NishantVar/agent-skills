@@ -137,7 +137,26 @@ def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
             continue
         mutated = False
         if surfaces is not None:
-            current_title = (surfaces.get(ref) or {}).get("title", "")
+            surf = surfaces.get(ref) or {}
+            current_title = surf.get("title", "")
+            # Legacy-manifest promotion: pre-refactor manifests carry
+            # only `name`+`surface_ref`+`started_at`. Fill in workspace_ref
+            # from the live surface index so the resolver's
+            # workspace-scoped former_titles scan can see this manifest.
+            # Without this, legacy renamed surfaces silently fail
+            # peer_renamed detection. We also drop the legacy `name`
+            # field once `title` is in place — single-identifier refactor.
+            if "workspace_ref" not in m:
+                ws_ref = surf.get("workspace_ref")
+                if ws_ref:
+                    m["workspace_ref"] = ws_ref
+                    mutated = True
+            if "title" not in m and "name" in m:
+                m["title"] = m["name"]
+                mutated = True
+            if "name" in m and m.get("title"):
+                m.pop("name", None)
+                mutated = True
             if current_title and current_title != m.get("title"):
                 # Tab renamed outside p2p. Promote rename into the
                 # manifest so peer_renamed can bridge addressers of

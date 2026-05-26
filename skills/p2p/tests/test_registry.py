@@ -127,6 +127,63 @@ def test_sweep_skips_empty_current_title(tmp_registry):
     assert "former_titles" not in out[0]
 
 
+def test_sweep_promotes_legacy_manifest_workspace_ref(tmp_registry):
+    """QA-E regression: legacy manifests (no workspace_ref) get the
+    field filled in from the live surface index on sweep. Without this,
+    the resolver's workspace-scoped former_titles scan silently skips
+    them and peer_renamed never fires for legacy renamed surfaces.
+
+    Also verifies the legacy `name` field is dropped once `title` is
+    in place — single-identifier refactor."""
+    p = registry.manifest_path("surface:576")
+    _write(p, {"name": "btest", "surface_ref": "surface:576",
+               "started_at": int(time.time())})
+    out = registry.all_manifests(
+        live_set={"surface:576"},
+        surfaces=_surface_index([("surface:576", "workspace:49", "btest")]))
+    assert len(out) == 1
+    assert out[0]["workspace_ref"] == "workspace:49"
+    assert out[0]["title"] == "btest"
+    assert "name" not in out[0]
+    on_disk = json.loads(p.read_text())
+    assert on_disk["workspace_ref"] == "workspace:49"
+    assert on_disk["title"] == "btest"
+    assert "name" not in on_disk
+
+
+def test_sweep_promotes_legacy_manifest_with_rename(tmp_registry):
+    """QA-E end-to-end: legacy manifest + cmux rename. Sweep must
+    write workspace_ref AND promote the rename in the same pass —
+    former_titles ends up with the legacy `name` value so the resolver
+    can bridge addressers of the old title to the new one."""
+    p = registry.manifest_path("surface:576")
+    _write(p, {"name": "btest", "surface_ref": "surface:576",
+               "started_at": int(time.time())})
+    out = registry.all_manifests(
+        live_set={"surface:576"},
+        surfaces=_surface_index(
+            [("surface:576", "workspace:49", "btest_v2")]))
+    assert out[0]["workspace_ref"] == "workspace:49"
+    assert out[0]["title"] == "btest_v2"
+    assert out[0]["former_titles"] == ["btest"]
+    assert "name" not in out[0]
+
+
+def test_sweep_reaps_legacy_manifest_when_surface_orphan(tmp_registry):
+    """QA-E sub-decision: a legacy manifest whose surface is no longer
+    live gets reaped on sweep, NOT half-promoted. The reap check
+    happens before promotion, so this should already hold — guard
+    against regression."""
+    p = registry.manifest_path("surface:576")
+    _write(p, {"name": "btest", "surface_ref": "surface:576",
+               "started_at": 1})
+    out = registry.all_manifests(
+        live_set=set(),
+        surfaces=_surface_index([]))
+    assert not p.exists()
+    assert out == []
+
+
 def test_sweep_reaps_when_surface_gone_even_with_former_titles(tmp_registry):
     """Surface absent from live_set still wins over the no-reap rule —
     a renamed-then-closed surface drops cleanly. The whole
