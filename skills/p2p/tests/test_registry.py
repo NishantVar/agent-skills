@@ -310,6 +310,39 @@ def _child_register(args):
                       live_set={"surface:1", "surface:2"})
 
 
+def test_register_does_not_rewrite_holder_under_stale_snapshot(tmp_registry):
+    """QA-C round-3 regression: caller's stale `surfaces` snapshot must
+    not trigger rename promotion of another agent's just-claimed
+    manifest inside register()'s sweep. Without the
+    promote_renames=False gate, register would rewrite the holder's
+    title to the caller's stale tab title, hide the collision, and
+    write a duplicate claim."""
+    # B (the legitimate winner) holds title=taken in workspace:1.
+    p_b = registry.manifest_path("surface:B")
+    _write(p_b, {"title": "taken", "surface_ref": "surface:B",
+                 "workspace_ref": "ws:1",
+                 "started_at": 1, "last_seen": int(time.time())})
+    # A's stale surfaces snapshot says B's tab is still labeled "b"
+    # (i.e., A read cmux before B's tab got renamed/claimed).
+    stale_surfaces = _surface_index([
+        ("surface:A", "ws:1", "current_a"),
+        ("surface:B", "ws:1", "b"),
+    ])
+    m, err = registry.register(
+        "taken", "surface:A", "ws:1",
+        live_set={"surface:A", "surface:B"},
+        surfaces=stale_surfaces)
+    assert m is None
+    assert err == {"kind": "title_collision", "title": "taken",
+                   "workspace_ref": "ws:1",
+                   "holder_surface": "surface:B"}
+    # B's manifest must NOT have been rewritten to title="b".
+    import json as _json
+    on_disk = _json.loads(p_b.read_text())
+    assert on_disk["title"] == "taken"
+    assert "former_titles" not in on_disk
+
+
 def test_concurrent_register_serializes(tmp_registry):
     """Two concurrent registers for the SAME (workspace, title) must
     serialize: one wins, the other sees a title_collision."""

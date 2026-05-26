@@ -110,7 +110,8 @@ def _iter_manifest_files():
 
 
 def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
-                 now: float | None = None) -> list[dict]:
+                 now: float | None = None,
+                 promote_renames: bool = True) -> list[dict]:
     """Sweep inside the lock. Returns the post-sweep manifest list.
 
     When `surfaces` is supplied (surface_index map) and the surface's
@@ -121,6 +122,16 @@ def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
 
     Empty current titles (`""`) are ignored — they're a surface_index
     miss, not a real rename. Don't clobber a registered title with "".
+
+    `promote_renames=False` disables the title-mismatch rewrite path.
+    The legacy `workspace_ref` backfill and `name` -> `title` drop
+    still run (they don't depend on a fresh cmux snapshot — the
+    workspace assignment is stable, and the name field is one-way
+    legacy data). `register()` calls with promote_renames=False so a
+    stale caller-supplied `surfaces` snapshot can't trigger a rename
+    rewrite of another agent's just-claimed manifest in the TOCTOU
+    window between caller's cmux tree read and the register-time
+    lock acquisition.
     """
     now = time.time() if now is None else now
     survivors: list[dict] = []
@@ -157,7 +168,8 @@ def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
             if "name" in m and m.get("title"):
                 m.pop("name", None)
                 mutated = True
-            if current_title and current_title != m.get("title"):
+            if (promote_renames and current_title
+                    and current_title != m.get("title")):
                 # Tab renamed outside p2p. Promote rename into the
                 # manifest so peer_renamed can bridge addressers of
                 # the prior title to the new one.
@@ -230,9 +242,15 @@ def register(title: str, surface_ref: str, workspace_ref: str | None,
 
     with registry_lock():
         # Sweep first so we make decisions against fresh state. Pass
-        # surfaces so renamed-outside-p2p manifests get reaped before
-        # we collision-check.
-        manifests = sweep_locked(live_set, surfaces=surfaces)
+        # surfaces so legacy manifests get workspace_ref backfilled
+        # (needed for the workspace-scoped collision check). Disable
+        # rename promotion — the caller's `surfaces` snapshot may be
+        # stale relative to a concurrent register() that just claimed
+        # `title`, and applying rename promotion against stale data
+        # would rewrite the winner's manifest to the caller's stale
+        # tab title and hide the collision.
+        manifests = sweep_locked(live_set, surfaces=surfaces,
+                                 promote_renames=False)
         for m in manifests:
             if m.get("title") != title:
                 continue
@@ -292,7 +310,13 @@ def would_collide(title: str, surface_ref: str,
     side effects back if `register` later returns title_collision.
     """
     with registry_lock():
-        manifests = sweep_locked(live_set, surfaces=surfaces)
+        # Skip rename promotion for the same reason register() does:
+        # the caller's snapshot may be stale relative to a concurrent
+        # claim, and promotion against stale data would mask a real
+        # collision. workspace_ref backfill still runs (needed for
+        # the workspace-scoped check below).
+        manifests = sweep_locked(live_set, surfaces=surfaces,
+                                 promote_renames=False)
         for m in manifests:
             if m.get("title") != title:
                 continue
