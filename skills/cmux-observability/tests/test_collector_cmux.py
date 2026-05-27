@@ -61,7 +61,6 @@ def test_parse_top_no_tags_returns_empty_tag_map(fixture_dir):
     assert "surface:39" in result.stats_by_surface
 
 
-import subprocess
 from pathlib import Path
 
 from cmux_observability.collector.cmux import (
