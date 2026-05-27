@@ -487,7 +487,16 @@ def test_copy_ref_chip_text_is_icon_and_has_data_focus(tmp_path: Path):
     except ImportError:
         import pytest
 
-        pytest.skip("bs4 unavailable; T22 chip rule needs DOM parsing")
+        # T22 follow-up #2 (Reviewer HOLD): bs4 is now pinned in
+        # pyproject.toml [project.optional-dependencies].test, so a missing
+        # bs4 is a packaging regression rather than an environmental quirk.
+        # Fail loudly instead of silently skipping — the addendum-2 chip rule
+        # is hard-blocking and MUST run on every suite execution.
+        pytest.fail(
+            "bs4 unavailable but is a declared test dependency "
+            "(beautifulsoup4>=4.12 in [project.optional-dependencies].test); "
+            "the T22 chip rule is hard-blocking and must not skip"
+        )
 
     snap = _snap_with_surface_failure()
     html_path, _json_path = render_snapshot(snap, tmp_path)
