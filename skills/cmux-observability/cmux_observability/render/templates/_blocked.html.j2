@@ -31,7 +31,9 @@
         <em class="blocked-reason">{{ agent.summary.needs_input_reason }}</em>
       {% endif %}
       <div class="blocked-stamp">captured {{ snapshot.captured_at | relative_time }}</div>
+      {# blocked-ref-start #}
       <span class="chip blocked-ref" title="cmux focus {{ s.ref }}">{{ s.ref }}</span>
+      {# blocked-ref-end #}
     </article>
   {% endfor %}
 </section>
