@@ -7,7 +7,7 @@ exceptions are reserved for programmer error and unrecoverable conditions.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
