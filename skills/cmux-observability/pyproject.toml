@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cmux-observability"
+version = "0.1.0"
+description = "Local cmux observability skill for coding agents"
+requires-python = ">=3.11"
+dependencies = [
+  "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8",
+  "pyyaml>=6",
+]
+
+[project.scripts]
+cmux-observability = "cmux_observability.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cmux_observability*"]
