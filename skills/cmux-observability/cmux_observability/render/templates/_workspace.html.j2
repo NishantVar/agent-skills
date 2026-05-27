@@ -22,11 +22,13 @@
   {%- set _basename = _title.rstrip("/").rsplit("/", 1)[-1] or _title -%}
 {%- endif -%}
 <div class="card">
+  {# T22 (qa_lead HOLD): the copy-ref chip used to live INSIDE <h3>, so screen
+     readers announced the bare workspace ref as part of the heading. The
+     chip now sits as a sibling button after the activity dot + surface count;
+     <h3> holds the workspace title only. The chip body is the icon glyph
+     ⧉ (U+29C9) — the ref lives in data-cmux-focus + title + aria-label. #}
   <header class="card-header">
     <h3 class="card-title">
-      {# workspace-copy-ref-start #}
-      <span class="chip workspace-copy-ref" title="cmux focus {{ ws.ref }}">{{ ws.ref }}</span>
-      {# workspace-copy-ref-end #}
       {% if _is_path %}
         <span class="ws-title-basename">{{ _basename }}</span>
         <span class="ws-path-full">{{ _title }}</span>
@@ -36,6 +38,9 @@
     </h3>
     <span class="activity-dot" data-activity="{{ _activity }}" aria-label="activity: {{ _activity }}"></span>
     <span class="surface-count" title="surface count">{{ ws.surfaces | length }}</span>
+    {# workspace-copy-ref-start #}
+    <button type="button" class="chip workspace-copy-ref" data-cmux-focus="{{ ws.ref }}" aria-label="Copy cmux focus command for this workspace" title="cmux focus {{ ws.ref }}">⧉</button>
+    {# workspace-copy-ref-end #}
   </header>
   <details class="card-body"{% if _has_needs_input or _has_running %} open{% endif %}>
     <summary>surfaces ({{ ws.surfaces | length }})</summary>

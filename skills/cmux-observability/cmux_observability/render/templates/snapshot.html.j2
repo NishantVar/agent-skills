@@ -438,6 +438,24 @@
     flex: 0 0 auto;
   }
 
+  /* T22 (qa_lead HOLD): copy-ref chips were promoted from <span> to
+     <button> to carry the action-affordance semantics (data-cmux-focus).
+     Reset the user-agent button styles so a button.chip looks identical
+     to the pre-existing .chip style shipped from style.css. The chip body
+     is the icon glyph ⧉ (U+29C9); ref lives in attributes only. */
+  button.chip {
+    font: inherit;
+    cursor: pointer;
+    color: inherit;
+    /* Match style.css .chip {padding: 1px 8px} but the line-height of a
+       button user-agent is taller than a span — keep visual parity by
+       leaving padding to the existing .chip rule. */
+  }
+  button.chip:focus-visible {
+    outline: 2px solid var(--state-running);
+    outline-offset: 2px;
+  }
+
   /* T14: click-to-expand surface row. <details class="surface-details">
      wraps a <summary class="surface-row"> (collapsed flex view) and a
      <div class="surface-expanded"> panel revealed when the user toggles.

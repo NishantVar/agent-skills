@@ -63,8 +63,13 @@
     {% if _has_redactions %}
       <span class="surface-redaction-badge" title="{{ agent.summary.redactions_applied | join(', ') }}">redacted</span>
     {% endif %}
+    {# T22 (qa_lead HOLD): chip is a sibling element of the mono-title /
+       surface-summary spans inside <summary class="surface-row"> (not nested
+       inside any text container). Chip body is the icon glyph ⧉ (U+29C9);
+       the ref lives in data-cmux-focus + title + aria-label so AT does NOT
+       announce a bare ref as part of the row label. #}
     {# copy-ref-chip-start #}
-    <span class="chip surface-copy-ref" title="cmux focus {{ s.ref }}">{{ s.ref }}</span>
+    <button type="button" class="chip surface-copy-ref" data-cmux-focus="{{ s.ref }}" aria-label="Copy cmux focus command for this surface" title="cmux focus {{ s.ref }}">⧉</button>
     {# copy-ref-chip-end #}
   </summary>
   <div class="surface-expanded">

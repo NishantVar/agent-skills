@@ -31,8 +31,10 @@
         <em class="blocked-reason">{{ agent.summary.needs_input_reason }}</em>
       {% endif %}
       <div class="blocked-stamp">captured {{ snapshot.captured_at | relative_time }}</div>
+      {# T22 (qa_lead HOLD): chip body is icon glyph ⧉ (U+29C9); the ref
+         lives in data-cmux-focus + title + aria-label only. #}
       {# blocked-ref-start #}
-      <span class="chip blocked-ref" title="cmux focus {{ s.ref }}">{{ s.ref }}</span>
+      <button type="button" class="chip blocked-ref" data-cmux-focus="{{ s.ref }}" aria-label="Copy cmux focus command for this surface" title="cmux focus {{ s.ref }}">⧉</button>
       {# blocked-ref-end #}
     </article>
   {% endfor %}

@@ -431,3 +431,80 @@ def test_no_bare_workspace_or_surface_ref_outside_allowed_elements_in_rendered_h
                 f"ref {m.group()!r} at offset {m.start()} rendered outside "
                 f"the allowed homes. Context window:\n{ctx}"
             )
+
+
+# T22 (qa_lead HOLD) — copy-ref chip surgery.
+#
+# Visible-text rule (6th audit rule): the three copy-ref chip classes
+# (surface-copy-ref, workspace-copy-ref, blocked-ref) carry an action
+# affordance — their visible text MUST be the icon glyph, not the ref. The
+# ref lives ONLY in data-cmux-focus / title / aria-label.
+#
+# surface-diagnostic and failures-banner remain exempt: those are
+# bug-report / failure-target affordances where the ref IS the content.
+COPY_REF_CHIP_CLASSES = (
+    "surface-copy-ref",
+    "workspace-copy-ref",
+    "blocked-ref",
+)
+
+
+def _chip_text_clean(soup, chip_class: str) -> tuple[int, list[str]]:
+    """Return ``(count, bad_texts)`` for every element with ``chip_class``.
+
+    ``count`` is how many chips of that class exist (non-vacuity guard);
+    ``bad_texts`` collects the stripped text content of any chip whose
+    visible text still matches the ref regex — i.e. chips that leaked the
+    raw ``workspace:N`` / ``surface:N`` into user-visible text.
+    """
+    count = 0
+    bad: list[str] = []
+    for el in soup.find_all(class_=chip_class):
+        count += 1
+        text = el.get_text(strip=True)
+        if _REF_LITERAL_RE.search(text):
+            bad.append(text)
+    return count, bad
+
+
+def test_copy_ref_chip_text_is_icon_not_ref(tmp_path: Path):
+    """T22 / qa_lead HOLD: the three copy-ref chip classes must NOT render
+    the bare ref as their visible text. The ref belongs in attributes
+    (data-cmux-focus, title, aria-label); the chip body is an icon glyph.
+
+    Requires bs4 (the rule is a get_text() check; the regex-window
+    fallback can't distinguish text nodes from attribute values). If bs4
+    is unavailable the test is skipped — the existing rendered-HTML scan
+    above still enforces the broader allowed-homes rule.
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        import pytest
+
+        pytest.skip("bs4 unavailable; T22 chip-text rule needs DOM parsing")
+
+    snap = _snap_with_surface_failure()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Non-vacuity: every copy-ref chip class must render at least once in
+    # the fixture, otherwise the rule for that class is silently green.
+    total_chips = 0
+    leaks: list[tuple[str, str]] = []
+    for chip_class in COPY_REF_CHIP_CLASSES:
+        count, bad = _chip_text_clean(soup, chip_class)
+        assert count >= 1, (
+            f"fixture must render at least one .{chip_class} chip so the "
+            f"visible-text rule is exercised; saw {count}"
+        )
+        total_chips += count
+        for bt in bad:
+            leaks.append((chip_class, bt))
+
+    assert not leaks, (
+        "copy-ref chip(s) leaked bare ref as visible text — chip text must "
+        "be the icon glyph, ref belongs in data-cmux-focus / title / "
+        f"aria-label: {leaks!r}"
+    )
