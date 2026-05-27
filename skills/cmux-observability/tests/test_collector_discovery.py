@@ -162,6 +162,97 @@ def test_cache_with_mismatched_inputs_triggers_rescan(tmp_home, monkeypatch):
     assert all("cached_only" not in str(r) for r in repos)
 
 
+def test_discovery_bad_dot_git_file_records_failure(tmp_home):
+    """A `.git` file with an invalid `gitdir:` payload must NOT appear in
+    `repos` and MUST produce a non-fatal `Failure(component='discovery')`
+    targeted at the bad `.git` path. A sibling valid repo in the same scan
+    must still surface — failure isolation, not scan abort.
+    """
+    good = tmp_home / "projects" / "good_repo"
+    _mk_repo(good)
+
+    bad_parent = tmp_home / "projects" / "bogus_worktree"
+    bad_parent.mkdir(parents=True)
+    bad_git = bad_parent / ".git"
+    bad_git.write_text("gitdir: /nonexistent/path/that/cannot/resolve\n")
+
+    repos, failures = discover_repos(_cfg(tmp_home))
+
+    # Good repo still surfaces.
+    assert any("good_repo" in str(r) for r in repos), repos
+    # Bad candidate is not in repos.
+    assert not any("bogus_worktree" in str(r) for r in repos), repos
+    # Exactly one discovery Failure targeted at the bad .git path.
+    bad_failures = [
+        f for f in failures
+        if f.component == "discovery" and str(bad_git) in (f.target or "")
+    ]
+    assert len(bad_failures) == 1, failures
+
+
+def test_discovery_mdfind_seed_under_hard_pruned_dir_currently_leaks(tmp_home, monkeypatch):
+    """CHARACTERIZATION TEST — pins current (buggy) behavior.
+
+    `discover_repos` filters `find`-scanner output through `_HARD_PRUNES`
+    (via `find -prune`) but filters `mdfind` seed candidates only through
+    `_is_under(allowed_roots)` and the user-configured
+    `cfg.productivity.exclude`. A repo inside a hard-pruned directory like
+    `Library/` therefore leaks into `repos` when reached via `mdfind`,
+    even though the equivalent `find`-scanner path would prune it.
+
+    This test pins the current behavior so it can't silently get worse.
+    When `discover_repos` is updated to apply `_HARD_PRUNES` to mdfind
+    candidates too (see `discovery.py` mdfind branch ~line 183), flip the
+    `not any(...)` to `not any(...)` semantically — i.e. invert the
+    assertion and rename — and the matching `find`-scanner behavior in
+    `test_discovery_prunes_excluded_dirs` will keep coverage symmetrical.
+
+    TODO(T18 follow-up): escalate to Reviewer — either apply hard-prunes
+    to the mdfind branch of `discover_repos`, or accept this delta as
+    documented behavior.
+    """
+    pruned_repo = tmp_home / "Library" / "Application Support" / "leaky_repo"
+    _mk_repo(pruned_repo)
+
+    import cmux_observability.collector.discovery as discovery_mod
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(
+        discovery_mod, "_run_mdfind_seed",
+        lambda: [pruned_repo / ".git"],
+    )
+    # Disable the find scanner so mdfind is the only candidate source —
+    # isolates the mdfind contract from `find`'s prune behavior.
+    monkeypatch.setattr(
+        discovery_mod, "_run_find_scan", lambda root, depth: [],
+    )
+
+    cfg = Config(
+        productivity=ProductivityConfig(
+            repo_paths=[str(tmp_home)],
+            exclude=[],                        # user did NOT exclude Library
+            author_emails=[],
+        ),
+        discovery=DiscoveryConfig(
+            use_mdfind_seed=True,
+            max_depth=6,
+            cache_ttl_seconds=3600,
+            cache_path=str(tmp_home / ".local" / "share" / "cmux-observability" / "repo_discovery.json"),
+        ),
+        summarizer=None,
+        render=None,
+    )
+    repos, failures = discover_repos(cfg)
+    # CURRENT (buggy) behavior: the Library-rooted repo DOES leak through.
+    # Flip this assertion (and the test name) when discover_repos applies
+    # _HARD_PRUNES to mdfind seed candidates.
+    assert any("Library" in r.parts for r in repos), (
+        "expected current buggy behavior — mdfind seed under Library leaks; "
+        "if this test now fails because the bug is fixed, invert the assertion "
+        "to `assert not any(...)` and rename to "
+        "`test_discovery_mdfind_seed_under_hard_pruned_dir_is_excluded`."
+    )
+
+
 def test_cache_with_stale_generated_at_triggers_rescan(tmp_home, monkeypatch):
     cache_path = tmp_home / ".local" / "share" / "cmux-observability" / "repo_discovery.json"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
