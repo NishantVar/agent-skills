@@ -5,4 +5,11 @@
 {% else %}
   <p class="meta">No trend yet.</p>
 {% endif %}
+{# T16: honest empty-state label. Trends only become meaningful after enough
+   samples have been collected, so spell that out below the trends area when
+   the points list is empty. The literal "N" is intentional per the v1.1
+   plan — it's a UX cue that trends are sample-driven, not a placeholder. #}
+{% if not snapshot.history.points %}
+  <small class="muted">Trends appear after N snapshots are collected over time</small>
+{% endif %}
 </section>

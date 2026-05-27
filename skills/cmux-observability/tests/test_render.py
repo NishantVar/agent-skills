@@ -4,6 +4,8 @@ from pathlib import Path
 from cmux_observability.errors import Failure
 from cmux_observability.model import (
     Agent,
+    HistoryPoint,
+    HistorySeries,
     Productivity,
     RepoStats,
     Snapshot,
@@ -2490,3 +2492,112 @@ def test_render_themes_chip_focuses_summary_with_prevent_scroll(tmp_path: Path):
         "chip click handler must provide a bare .focus() fallback for "
         "runtimes that reject FocusOptions"
     )
+
+
+# T16: honest-empty-state labels on productivity strip and history trends.
+#
+# Predicate notes (kept close to the tests so future readers don't have to
+# chase them through the plan doc):
+#
+# * Productivity strip is "all-zero" iff every numeric in
+#   `productivity.totals` is zero AND every per-repo `commits` dict is
+#   zero/absent. None and 0 are treated alike (no git history walker yet means
+#   the field is either missing or stuck at zero). When the predicate holds we
+#   render ONE muted line below the strip — not per-metric.
+# * History trends are "empty" iff `snapshot.history.points` is empty. The
+#   label intentionally keeps the literal `N` as a UX cue per the v1.1 plan.
+
+def _productivity_with_totals(today: int, week: int, thirty: int) -> Productivity:
+    return Productivity(
+        repos=[
+            RepoStats(
+                path="/home/u/p",
+                name="p",
+                commits={"today": today, "week": week, "30d": thirty},
+                last_commit_at=None,
+            )
+        ],
+        totals={"today": today, "week": week, "30d": thirty},
+    )
+
+
+def _snap_productivity_only(productivity: Productivity) -> Snapshot:
+    return Snapshot(
+        schema_version=1,
+        captured_at=datetime(2026, 5, 27, 14, 30, 0, tzinfo=timezone.utc),
+        host="laptop",
+        cmux_version="1.2.3",
+        workspaces=[],
+        agents=[],
+        themes=[],
+        productivity=productivity,
+        history=None,
+        failures=[],
+    )
+
+
+def _snap_history_only(history: HistorySeries) -> Snapshot:
+    return Snapshot(
+        schema_version=1,
+        captured_at=datetime(2026, 5, 27, 14, 30, 0, tzinfo=timezone.utc),
+        host="laptop",
+        cmux_version="1.2.3",
+        workspaces=[],
+        agents=[],
+        themes=[],
+        productivity=None,
+        history=history,
+        failures=[],
+    )
+
+
+def test_render_productivity_strip_honest_label_when_all_metrics_zero(tmp_path: Path):
+    """T16: when every productivity metric is zero/None, render one muted line
+    below the strip telling the user it's not collected yet."""
+    snap = _snap_productivity_only(_productivity_with_totals(0, 0, 0))
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    assert "not collected yet — needs git history walker" in html
+    # Must be muted (re-uses the existing .muted token; no new CSS).
+    assert 'class="muted"' in html
+
+
+def test_render_productivity_strip_no_honest_label_when_any_metric_nonzero(
+    tmp_path: Path,
+):
+    """T16: the honest label MUST disappear cleanly once any productivity
+    metric arrives. Even a single non-zero count is enough to suppress it."""
+    snap = _snap_productivity_only(_productivity_with_totals(0, 1, 0))
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    assert "not collected yet — needs git history walker" not in html
+
+
+def test_render_history_honest_label_when_empty(tmp_path: Path):
+    """T16: when `snapshot.history.points` is empty, render one muted line
+    below the trends area explaining that trends are sample-driven."""
+    snap = _snap_history_only(HistorySeries(points=[]))
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    assert "Trends appear after N snapshots are collected over time" in html
+    assert 'class="muted"' in html
+
+
+def test_render_history_no_honest_label_when_populated(tmp_path: Path):
+    """T16: the empty-history label disappears once at least one history
+    snapshot lands."""
+    snap = _snap_history_only(
+        HistorySeries(
+            points=[
+                HistoryPoint(
+                    captured_at=datetime(2026, 5, 27, 14, 0, 0, tzinfo=timezone.utc),
+                    agents_total=2,
+                    agents_running=1,
+                    agents_needs_input=0,
+                )
+            ]
+        )
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    assert "Trends appear after N snapshots are collected over time" not in html
