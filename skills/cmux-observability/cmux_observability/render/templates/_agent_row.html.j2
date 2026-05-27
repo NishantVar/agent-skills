@@ -63,7 +63,9 @@
     {% if _has_redactions %}
       <span class="surface-redaction-badge" title="{{ agent.summary.redactions_applied | join(', ') }}">redacted</span>
     {% endif %}
+    {# copy-ref-chip-start #}
     <span class="chip surface-copy-ref" title="cmux focus {{ s.ref }}">{{ s.ref }}</span>
+    {# copy-ref-chip-end #}
   </summary>
   <div class="surface-expanded">
     {% if agent and agent.summary %}
@@ -85,7 +87,9 @@
       {%- set _pid = agent.pid if agent.pid is not none else "?" -%}
       {%- set _pv = agent.summary.prompt_version if agent.summary else "—" -%}
       {%- set _sh = (agent.summary.screen_hash[:7] if (agent.summary and agent.summary.screen_hash) else "—") -%}
+      {# diagnostic-line-start #}
       <div class="surface-diagnostic">{{ agent.workspace_ref }} · {{ agent.surface_ref }} · {{ _pid }} · {{ agent.type_source }} · {{ _pv }} · {{ _sh }}</div>
+      {# diagnostic-line-end #}
     {% endif %}
   </div>
 </details>

@@ -24,7 +24,9 @@
 <div class="card">
   <header class="card-header">
     <h3 class="card-title">
-      <span class="chip">{{ ws.ref }}</span>
+      {# workspace-copy-ref-start #}
+      <span class="chip workspace-copy-ref" title="cmux focus {{ ws.ref }}">{{ ws.ref }}</span>
+      {# workspace-copy-ref-end #}
       {% if _is_path %}
         <span class="ws-title-basename">{{ _basename }}</span>
         <span class="ws-path-full">{{ _title }}</span>

@@ -1,7 +1,9 @@
 <section class="failures-banner" role="region" aria-label="Collection failures">
   <ul>
     {% for f in snapshot.failures %}
+      {# failures-target-start #}
       <li><b>{{ f.component }}</b>{% if f.target %} <code>{{ f.target }}</code>{% endif %}: {{ f.message }}</li>
+      {# failures-target-end #}
     {% endfor %}
   </ul>
 </section>
