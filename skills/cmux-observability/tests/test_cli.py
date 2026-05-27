@@ -360,3 +360,8 @@ def test_collect_heuristic_weak_marker_not_promoted(
     assert snap.agents == []
     pending_refs = {p["surface_ref"] for p in out["pending_summaries"]}
     assert "surface:1" not in pending_refs
+
+    workspace_surface_refs = {
+        s.ref for ws in snap.workspaces for s in ws.surfaces
+    }
+    assert "surface:1" in workspace_surface_refs
