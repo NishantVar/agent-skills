@@ -73,3 +73,72 @@ def parse_tree(stdout: str) -> list[Workspace]:
             ))
 
     return workspaces
+
+
+from dataclasses import dataclass, field
+import re as _re
+
+
+@dataclass
+class TagLine:
+    kind: str           # "claude_code" | "codex" | "opencode" | "gemini" | ...
+    state: str          # raw cmux state string, e.g. "Running" / "Needs input"
+    pid: int | None
+
+
+@dataclass
+class SurfaceStats:
+    cpu_pct: float
+    mem_bytes: int
+
+
+@dataclass
+class TopResult:
+    tags_by_workspace: dict[str, list[TagLine]] = field(default_factory=dict)
+    stats_by_surface: dict[str, SurfaceStats] = field(default_factory=dict)
+
+
+_TOP_WORKSPACE_RE = _re.compile(r"workspace (workspace:\d+)")
+_TOP_TAG_RE       = _re.compile(
+    r'\btag\s+(\S+)\s+"([^"]+)"\s+pid=(\d+)'
+)
+_TOP_SURFACE_RE   = _re.compile(
+    r"^\s*([\d.]+)%\s+([\d.]+)\s+(KB|MB|GB|B)\s+\d+\s+.*\bsurface (surface:\d+)"
+)
+
+
+def _to_bytes(value: float, unit: str) -> int:
+    mul = {"B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3}[unit]
+    return int(value * mul)
+
+
+def parse_top(stdout: str) -> TopResult:
+    """Parse `cmux top --all` output. `tag <kind> "<state>" pid=N` lines are
+    attributed to the most recently seen workspace line (cmux groups them
+    under their workspace)."""
+    result = TopResult()
+    cur_workspace: str | None = None
+
+    for raw in stdout.splitlines():
+        m = _TOP_WORKSPACE_RE.search(raw)
+        if m:
+            cur_workspace = m.group(1)
+            continue
+
+        m = _TOP_TAG_RE.search(raw)
+        if m and cur_workspace is not None:
+            kind, state, pid_s = m.groups()
+            result.tags_by_workspace.setdefault(cur_workspace, []).append(
+                TagLine(kind=kind, state=state, pid=int(pid_s))
+            )
+            continue
+
+        m = _TOP_SURFACE_RE.match(raw)
+        if m:
+            cpu_s, mem_s, unit, surface_ref = m.groups()
+            result.stats_by_surface[surface_ref] = SurfaceStats(
+                cpu_pct=float(cpu_s),
+                mem_bytes=_to_bytes(float(mem_s), unit),
+            )
+
+    return result
