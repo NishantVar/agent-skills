@@ -1,0 +1,179 @@
+run_settings:
+  max_hops_per_step: 4
+  step_timeout_seconds: 60
+  ttl_seconds: 1800
+
+steps:
+  - id: 1
+    name: baseline
+    prime:
+      - {worker: worker_alpha,   role: receiver}
+      - {worker: worker_bravo,   role: receiver}
+      - {worker: worker_charlie, role: receiver}
+    actions:
+      - {type: driver_send, peer: worker_alpha,   body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\"}"}
+      - {type: driver_send, peer: worker_bravo,   body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\"}"}
+      - {type: driver_send, peer: worker_charlie, body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\"}"}
+      - {type: trigger_counter_lap, start: worker_alpha, value: 0}
+      - {type: driver_send, peer: worker_alpha,   body_template: "SIM:REPORT {}"}
+      - {type: driver_send, peer: worker_bravo,   body_template: "SIM:REPORT {}"}
+      - {type: driver_send, peer: worker_charlie, body_template: "SIM:REPORT {}"}
+    assertions:
+      - {worker: sim_driver,  kind: ok, observed_kind: bootstrap, peer_status: live, resolved_by: title_in_workspace, count: 3}
+      - {worker: worker_alpha,   kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
+      - {worker: worker_bravo,   kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
+      - {worker: worker_charlie, kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
+    classification: pass_fail
+
+  - id: 2
+    name: rename_and_recover
+    actions:
+      - {type: cmux_rename, from: worker_bravo, to: bravo_renamed}
+      - {type: trigger_send_one, sender: worker_alpha, peer: worker_bravo}
+    assertions:
+      - worker: worker_alpha
+        kind: error
+        observed_code: peer_renamed
+        candidate_check:
+          current_title: bravo_renamed
+          former_title: worker_bravo
+    post_recovery_actions:
+      - {type: driver_send, peer: worker_alpha,
+         body_template: "SIM:UPDATE_RING {\"former\":\"worker_bravo\",\"current\":\"bravo_renamed\"}"}
+      - {type: driver_send, peer: worker_charlie,
+         body_template: "SIM:UPDATE_RING {\"former\":\"worker_bravo\",\"current\":\"bravo_renamed\"}"}
+      - {type: driver_send, peer: bravo_renamed,
+         body_template: "SIM:UPDATE_RING {\"former\":\"worker_bravo\",\"current\":\"bravo_renamed\"}"}
+      - {type: driver_send, peer: worker_alpha, body_template: "SIM:RECOVER {\"step_id\":2}"}
+    post_recovery_assertions:
+      - {worker: worker_alpha, kind: ok, observed_kind: message, peer_status: live, intended_peer: bravo_renamed}
+    classification: pass_fail
+
+  - id: 3
+    name: duplicate_title_collision
+    actions:
+      - {type: tfork_duplicate, my_title: worker_alpha}
+    assertions:
+      - {worker: tfork_duplicate, kind: error, observed_code: title_collision}
+    cleanup:
+      - {type: close_pane, of: tfork_duplicate}
+    classification: pass_fail
+
+  - id: 4
+    name: one_way_burst
+    prime:
+      - {worker: bravo_renamed, role: receiver_log_only}
+    actions:
+      - {type: driver_send, peer: worker_alpha,
+         body_template: "SIM:PRIME {\"step_id\":4,\"role\":\"sender\"}"}
+      - {type: trigger_one_way_burst, sender: worker_alpha, peer: bravo_renamed, count: 5}
+    assertions:
+      - {worker: worker_alpha, kind: ok, observed_kind: message, one_way: true, count: 5}
+      - {worker: bravo_renamed, event: inbound_frame, count: 5, distinct_attempt_ids: true, all_one_way: true}
+      - {worker: bravo_renamed, event: send_result, count: 0}
+    classification: pass_fail
+
+  - id: 5
+    name: concurrent_send
+    prime:
+      - {worker: bravo_renamed, role: receiver_log_only}
+    actions:
+      - {type: driver_send, peer: worker_alpha,   body_template: "SIM:PRIME {\"step_id\":5,\"role\":\"sender\"}"}
+      - {type: driver_send, peer: worker_charlie, body_template: "SIM:PRIME {\"step_id\":5,\"role\":\"sender\"}"}
+      - {type: barrier_fire, senders: [worker_alpha, worker_charlie], peer: bravo_renamed}
+    assertions:
+      - {worker: worker_alpha,   kind: ok, observed_kind: message, count: 1}
+      - {worker: worker_charlie, kind: ok, observed_kind: message, count: 1}
+      - {worker: bravo_renamed, event: inbound_frame, count: 2, distinct_attempt_ids: true}
+      - {worker: bravo_renamed, event: send_result, count: 0}
+    classification: pass_fail
+
+  - id: 6
+    name: stale_manifest
+    pre_actions:
+      - {type: age_manifest, title: bravo_renamed}
+    actions:
+      - {type: trigger_send_one, sender: worker_alpha, peer: bravo_renamed}
+    assertions:
+      - {worker: worker_alpha, kind: ok, observed_kind: bootstrap, peer_status: stale}
+    classification: pass_fail
+
+  - id: 7
+    name: graceful_death
+    actions:
+      - {type: driver_send, peer: worker_charlie,
+         body_template: "SIM:ANNOUNCE_DEATH {\"peers\":[\"worker_alpha\",\"bravo_renamed\"]}"}
+    assertions:
+      - {worker: worker_charlie, kind: ok, observed_kind: message, one_way: true, count: 2}
+      - {worker: worker_alpha,   event: inbound_frame, body_prefix: "DEATH_NOTICE:", count: 1}
+      - {worker: bravo_renamed,  event: inbound_frame, body_prefix: "DEATH_NOTICE:", count: 1}
+    post_recovery_actions:
+      - {type: driver_send, peer: worker_alpha,
+         body_template: "SIM:MARK_INELIGIBLE {\"title\":\"worker_charlie\"}"}
+      - {type: driver_send, peer: bravo_renamed,
+         body_template: "SIM:MARK_INELIGIBLE {\"title\":\"worker_charlie\"}"}
+      - {type: driver_send, peer: worker_alpha,
+         body_template: "SIM:UPDATE_RING {\"former\":\"worker_charlie\",\"current\":\"bravo_renamed\"}"}
+      - {type: driver_send, peer: bravo_renamed,
+         body_template: "SIM:UPDATE_RING {\"former\":\"worker_charlie\",\"current\":\"worker_alpha\"}"}
+      - {type: close_pane, of: worker_charlie}
+      - {type: trigger_counter_lap, start: worker_alpha, value: 100}
+    post_recovery_assertions:
+      - {worker: worker_alpha,   kind: ok, intended_peer_not: worker_charlie}
+      - {worker: bravo_renamed,  kind: ok, intended_peer_not: worker_charlie}
+    classification: pass_fail
+
+  - id: 8
+    name: silent_kill
+    pre_actions:
+      - {type: close_pane, of: bravo_renamed}
+    actions:
+      - {type: trigger_send_one, sender: worker_alpha, peer: bravo_renamed}
+    assertions:
+      - {worker: worker_alpha, kind: error, observed_code: peer_unknown, payload_file_nonempty: true}
+    classification: pass_fail
+
+  - id: 9
+    name: resurrect
+    actions:
+      - {type: tfork_resurrect, title: bravo_renamed}
+      - {type: trigger_send_one, sender: worker_alpha, peer: bravo_renamed}
+    assertions:
+      - worker: worker_alpha
+        kind: ok
+        observed_kind: bootstrap
+        resolved_by: title_in_workspace
+        peer_status: live
+        surface_differs_from_step_id: 8
+    classification: pass_fail
+
+  - id: 10
+    name: cold_spawn_worker_delta
+    actions:
+      - {type: driver_send, peer: worker_alpha,
+         body_template: "SIM:PRIME {\"step_id\":10,\"role\":\"sender\",\"target\":\"worker_delta\"}"}
+      - {type: trigger_send_one, sender: worker_alpha, peer: worker_delta}
+    assertions:
+      - {worker: worker_alpha, kind: error, observed_code: peer_unknown,
+         payload_file_nonempty: true, handoff_skill: tfork}
+    post_recovery_actions:
+      - {type: driver_tfork_from_payload, sender: worker_alpha}
+    post_recovery_assertions:
+      - {worker: worker_delta, kind: ok, observed_kind: message,
+         resolved_by: explicit_surface, peer_status: live}
+    cleanup:
+      - {type: close_pane, of: worker_delta}
+    classification: pass_fail
+
+  - id: 11
+    name: duplicate_current_title_probe
+    actions:
+      - {type: cmux_rename_attempt, from: worker_alpha, to: bravo_renamed,
+         on_reject: record_informational}
+      - {type: probe_send, sender: sim_driver, peer: bravo_renamed}
+    assertions:
+      - worker: sim_driver
+        any_of:
+          - {kind: error, observed_code: peer_ambiguous, candidates_min: 2}
+          - {kind: informational, reason: "cmux rejected rename"}
+    classification: probe
