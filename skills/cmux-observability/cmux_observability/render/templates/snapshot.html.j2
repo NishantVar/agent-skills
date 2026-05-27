@@ -350,6 +350,89 @@
     font-size: 0.85rem;
     color: var(--muted);
   }
+
+  /* T13: surface row redesign. Flex layout pinned by 5 cells in order:
+     [state-pill] [mono title] [summary (grows + truncates)] [captured stamp]
+     [copy-ref chip]. The summary cell carries `flex: 1; min-width: 0;` plus
+     the ellipsis triple so a pathological long line shrinks gracefully; the
+     `title=` attr on the cell carries the full untruncated text for hover
+     (and the template-side `truncated_summary` filter caps the rendered text
+     at 80 chars / first newline, whichever comes first). */
+  .surface-row-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+  .surface-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+  }
+  .surface-row + .surface-row {
+    border-top: 1px solid var(--border);
+  }
+  .state-pill {
+    flex: 0 0 auto;
+    display: inline-block;
+    padding: 0 var(--space-2);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
+    color: var(--contrast-strong);
+    background: var(--surface);
+  }
+  .state-pill.state-running {
+    background: color-mix(in srgb, var(--state-running) 18%, transparent);
+    border-color: var(--state-running);
+  }
+  .state-pill.state-needs_input {
+    background: color-mix(in srgb, var(--state-needs-input) 18%, transparent);
+    border-color: var(--state-needs-input);
+  }
+  .state-pill.state-idle {
+    background: color-mix(in srgb, var(--state-idle) 14%, transparent);
+    border-color: var(--state-idle);
+  }
+  .state-pill.state-unknown {
+    background: transparent;
+    border-style: var(--state-unknown-border-style);
+    border-color: var(--state-unknown);
+    color: var(--muted);
+  }
+  .mono-title {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--contrast-strong);
+    max-width: 28ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .surface-summary {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  .surface-captured {
+    flex: 0 0 auto;
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+  .surface-copy-ref {
+    flex: 0 0 auto;
+  }
 </style>
 <style>{{ inline_css | safe }}</style>
 </head><body>
@@ -435,8 +518,11 @@
     var chips = Array.prototype.slice.call(
       document.querySelectorAll('.counter[data-state]')
     );
+    // T13: surface rows moved from <tr> to <div class="surface-row">; the
+    // selector now matches by `data-search` attribute presence so any future
+    // row container is picked up automatically.
     var rows = Array.prototype.slice.call(
-      document.querySelectorAll('tr[data-search]')
+      document.querySelectorAll('[data-search]')
     );
     var searchInput = document.getElementById('hero-search');
 

@@ -153,8 +153,8 @@ def test_render_populated_snapshot_exercises_all_partials(tmp_path: Path):
     assert "surface:1" in html
     assert "claude_code worker" in html
     assert "running" in html
-    assert "12.3" in html              # cpu_pct
-    assert "100.0 MB" in html          # 104857600 / 1024 / 1024
+    # T13 dropped cpu/mem from the surface row layout — the row is now
+    # [state-pill][mono title][summary][captured Xs ago][copy-ref chip].
     assert "writing pytest fixtures" in html
     # _themes
     assert "testing" in html
@@ -419,17 +419,19 @@ def test_render_hero_click_filter_and_url_hash_state(tmp_path: Path):
         )
 
     # Surface rows expose their state via data-state so the JS can hide/show.
-    # Fixture has agents on surfaces 1..17; row 1 is running.
-    assert re.search(r'<tr[^>]*data-state="running"', html), (
+    # Fixture has agents on surfaces 1..17; row 1 is running. T13 moved row
+    # containers from <tr> to <div class="surface-row"> — the contract is
+    # the data-state attribute on the row root, not the tag name.
+    assert re.search(r'<\w+[^>]*data-state="running"', html), (
         "agent row missing data-state=\"running\""
     )
-    assert re.search(r'<tr[^>]*data-state="needs_input"', html), (
+    assert re.search(r'<\w+[^>]*data-state="needs_input"', html), (
         "agent row missing data-state=\"needs_input\""
     )
-    assert re.search(r'<tr[^>]*data-state="idle"', html), (
+    assert re.search(r'<\w+[^>]*data-state="idle"', html), (
         "agent row missing data-state=\"idle\""
     )
-    assert re.search(r'<tr[^>]*data-state="unknown"', html), (
+    assert re.search(r'<\w+[^>]*data-state="unknown"', html), (
         "agent row missing data-state=\"unknown\""
     )
 
@@ -479,8 +481,8 @@ def test_render_hero_search_live_filter_and_url_hash(tmp_path: Path):
     # The populated fixture has ws.title="Project Maya", surface.title=
     # "claude_code worker", summary.text="writing pytest fixtures for maya
     # project". Corpus must be lowercased so JS does `.includes(q.toLowerCase())`.
-    row_match = re.search(r'<tr[^>]*data-search="([^"]*)"', html)
-    assert row_match, "surface <tr> missing data-search attribute"
+    row_match = re.search(r'<\w+[^>]*data-search="([^"]*)"', html)
+    assert row_match, "surface row missing data-search attribute"
     corpus = row_match.group(1)
     # Lowercased once at render-time:
     assert corpus == corpus.lower(), f"data-search corpus must be lowercased: {corpus!r}"
@@ -539,10 +541,9 @@ def test_render_hero_search_corpus_handles_missing_summary(tmp_path: Path):
     html = html_path.read_text()
 
     # Every surface row carries data-search, even those without a summary.
-    rows = re.findall(r'<tr\b[^>]*>', html)
-    # Filter to rows that look like surface rows (have a data-state OR are
-    # inside a surface table — easier: assert at least the populated-fixture
-    # count of rows carry data-search).
+    # T13 swapped the tag from <tr> to <div class="surface-row">; the contract
+    # is the data-search attribute, not the tag.
+    rows = re.findall(r'<\w+\b[^>]*>', html)
     rows_with_search = [r for r in rows if 'data-search="' in r]
     # Fixture has 41 surfaces, all in workspaces — all should carry corpus.
     assert len(rows_with_search) == 41, (
@@ -571,7 +572,7 @@ def test_render_hero_search_corpus_escapes_html(tmp_path: Path):
     # raw <script>. We matched the attribute via [^"]* so absence of a raw "
     # inside is structurally guaranteed; the assertions below additionally
     # confirm the dangerous chars survive as entity references.
-    row = re.search(r'<tr[^>]*data-search="([^"]*)"', html)
+    row = re.search(r'<\w+[^>]*data-search="([^"]*)"', html)
     assert row, "missing data-search on surface row"
     corpus_attr = row.group(1)
     # Raw < / > / " MUST be entity-encoded inside the attribute value.
@@ -1331,3 +1332,407 @@ def test_render_filter_script_flips_aria_pressed(tmp_path: Path):
     assert "aria-pressed" in filter_script, (
         "filter script must set aria-pressed in lockstep with data-filter-active"
     )
+
+
+# ---------------------------------------------------------------------------
+# T13: surface row redesign — state pill, mono title, ellipsized summary
+# ---------------------------------------------------------------------------
+
+def _snap_surface_row(
+    *,
+    surface_title: str = "claude_code worker",
+    summary: "Summary | None" = "__default__",
+    is_agent: bool = True,
+    has_agent: bool = True,
+) -> Snapshot:
+    """T13 helper: single workspace, single surface, optional agent + summary.
+    `summary="__default__"` uses a tame default; pass `None` for "no summary"
+    or a custom `Summary` for the truncation tests.
+    """
+    surface = Surface(
+        ref="surface:1",
+        pane_ref="pane:1",
+        workspace_ref="workspace:1",
+        kind="terminal",
+        title=surface_title,
+        is_agent=is_agent,
+    )
+    workspace = Workspace(
+        ref="workspace:1",
+        title="Project A",
+        window_ref="window:1",
+        surfaces=[surface],
+    )
+    agents: list[Agent] = []
+    if has_agent:
+        if summary == "__default__":
+            summary_obj: Summary | None = Summary(
+                text="hello world",
+                state_hint="running",
+                needs_input_reason=None,
+                confidence=0.9,
+                cache_hit=False,
+                cached_at=datetime(2026, 5, 27, 14, 29, 0, tzinfo=timezone.utc),
+                prompt_version=1,
+                screen_hash="dead",
+            )
+        else:
+            summary_obj = summary  # type: ignore[assignment]
+        agents.append(Agent(
+            surface_ref="surface:1",
+            workspace_ref="workspace:1",
+            type="claude_code",
+            type_source="cmux_tag",
+            type_confidence=1.0,
+            state="running",
+            state_source="cmux_tag",
+            pid=42,
+            summary=summary_obj,
+        ))
+    return Snapshot(
+        schema_version=1,
+        captured_at=datetime(2026, 5, 27, 14, 30, 0, tzinfo=timezone.utc),
+        host="laptop",
+        cmux_version="1.2.3",
+        workspaces=[workspace],
+        agents=agents,
+        themes=[],
+        productivity=None,
+        history=None,
+        failures=[],
+    )
+
+
+def _surface_row_html(html: str) -> str:
+    """Extract the inner HTML of the surface row whose data-state="running"."""
+    import re
+    m = re.search(
+        r'<(?P<tag>tr|div|li|article)\b(?P<attrs>[^>]*\bdata-state="running"[^>]*)>'
+        r'(?P<inner>.*?)</(?P=tag)>',
+        html, re.S,
+    )
+    assert m, "surface row with data-state=\"running\" not found"
+    return m.group("attrs") + ">" + m.group("inner")
+
+
+def test_render_surface_row_has_state_pill_and_mono_title(tmp_path: Path):
+    """T13 step 2: row contains a state pill (state name in a span with
+    state-running styling) AND the surface title rendered in monospace
+    (either inline font-family or via a class hook backed by --font-mono).
+    """
+    import re
+
+    snap = _snap_surface_row(surface_title="claude_code worker")
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    row = _surface_row_html(html)
+
+    # State pill: an inline element with a class hook tied to the agent state.
+    # The pill text is the state name.
+    assert re.search(
+        r'class="[^"]*state-pill[^"]*"[^>]*>[\s]*running',
+        row, re.S,
+    ), "row must render a state pill (class=\"state-pill ...\") containing the state name"
+
+    # Mono title cell: title text wrapped in an element with a `mono-title`
+    # class hook. The class is styled by an inline rule that references
+    # --font-mono (defined in T7).
+    assert re.search(
+        r'class="[^"]*mono-title[^"]*"[^>]*>[\s]*claude_code worker',
+        row, re.S,
+    ), "surface title must render with class=\"mono-title\""
+
+    # Inline <style> binds .mono-title to --font-mono.
+    assert re.search(
+        r'\.mono-title\b[^{}]*\{[^}]*font-family\s*:\s*var\(\s*--font-mono',
+        html, re.S,
+    ), "mono-title must use var(--font-mono) for its font-family"
+
+
+def test_render_surface_row_summary_cell_truncates_via_css_and_keeps_full_text_in_title(tmp_path: Path):
+    """T13 step 3: the summary cell carries the ellipsis triple
+    (white-space: nowrap; overflow: hidden; text-overflow: ellipsis;) AND a
+    `title="<full text>"` attribute so non-mouse users can still inspect the
+    full text. The flex grow + min-width guard live in inline CSS for the
+    `.surface-summary` class hook.
+    """
+    import re
+
+    summary_text = "writing pytest fixtures for the surface row"
+    summary = Summary(
+        text=summary_text,
+        state_hint="running",
+        needs_input_reason=None,
+        confidence=0.9,
+        cache_hit=False,
+        cached_at=datetime(2026, 5, 27, 14, 29, 0, tzinfo=timezone.utc),
+        prompt_version=1,
+        screen_hash="dead",
+    )
+    snap = _snap_surface_row(summary=summary)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    # `.surface-summary` rule in inline <style> uses the ellipsis triple +
+    # `flex: 1; min-width: 0;`.
+    style_block = re.search(
+        r'\.surface-summary\b[^{}]*\{(?P<decls>[^}]*)\}',
+        html, re.S,
+    )
+    assert style_block, "inline <style> must define a .surface-summary rule"
+    decls = style_block.group("decls")
+    for needle in (
+        "white-space: nowrap",
+        "overflow: hidden",
+        "text-overflow: ellipsis",
+        "min-width: 0",
+    ):
+        assert needle in decls, (
+            f".surface-summary must declare {needle!r}; got: {decls!r}"
+        )
+    # `flex: 1` (or flex-grow: 1) — accept either shorthand or longhand.
+    assert re.search(r'flex\s*:\s*1\b|flex-grow\s*:\s*1\b', decls), (
+        f".surface-summary must set flex: 1 (grow); got: {decls!r}"
+    )
+
+    # The summary cell carries title="<full text>" for hover reveal.
+    assert re.search(
+        r'class="[^"]*surface-summary[^"]*"[^>]*\btitle="' + re.escape(summary_text) + r'"'
+        r'|\btitle="' + re.escape(summary_text) + r'"[^>]*class="[^"]*surface-summary[^"]*"',
+        row, re.S,
+    ), "summary cell must carry title=\"<full summary text>\" for non-mouse users"
+
+    # Visible text equals the original (it's <80 chars, no newline).
+    assert summary_text in row, "short summary text must appear verbatim in the row"
+
+
+def test_render_surface_row_summary_truncates_long_text_to_80_chars_with_ellipsis(tmp_path: Path):
+    """T13 step 4: a pathological >80 char single-line summary is template-
+    truncated to 80 chars + '…'. Full text is preserved in the `title=` attr.
+    """
+    import re
+
+    # 200-char pathological fixture; will be truncated to 80 chars + '…'.
+    long_text = "a" * 200
+    summary = Summary(
+        text=long_text,
+        state_hint="running",
+        needs_input_reason=None,
+        confidence=0.9,
+        cache_hit=False,
+        cached_at=datetime(2026, 5, 27, 14, 29, 0, tzinfo=timezone.utc),
+        prompt_version=1,
+        screen_hash="dead",
+    )
+    snap = _snap_surface_row(summary=summary)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    # Visible body of the summary cell — extract inner text.
+    cell_match = re.search(
+        r'<[^>]*class="[^"]*surface-summary[^"]*"[^>]*>(?P<body>.*?)</[^>]+>',
+        row, re.S,
+    )
+    assert cell_match, "surface-summary cell not found"
+    body = cell_match.group("body").strip()
+    # Body must NOT contain the full 200-char string.
+    assert long_text not in body, (
+        f"long summary must be truncated in the visible body; got len={len(body)}"
+    )
+    # Body must end with the ellipsis suffix.
+    assert "…" in body, f"truncated summary must include '…' suffix; got: {body!r}"
+    # And the prefix is 80 chars of 'a' (template guard truncates AT 80 chars).
+    assert body.startswith("a" * 80), (
+        f"truncated body must start with 80 a's; got: {body[:90]!r}"
+    )
+    # The `title=` attribute on the cell carries the full untruncated text.
+    title_attr = re.search(
+        r'class="[^"]*surface-summary[^"]*"[^>]*\btitle="([^"]*)"',
+        row, re.S,
+    )
+    assert title_attr, "surface-summary cell missing title= attribute"
+    # Jinja autoescape leaves a-z untouched; full 200-char string survives.
+    assert title_attr.group(1) == long_text, (
+        f"title= must carry the full untruncated text; got len={len(title_attr.group(1))}"
+    )
+
+
+def test_render_surface_row_summary_truncates_at_first_newline_when_shorter(tmp_path: Path):
+    """T13 step 4: when the first newline appears before 80 chars, truncate
+    at the newline (keep the first line)."""
+    import re
+
+    first_line = "short first line"
+    summary_text = first_line + "\nsecond line should not appear\nthird line either"
+    summary = Summary(
+        text=summary_text,
+        state_hint="running",
+        needs_input_reason=None,
+        confidence=0.9,
+        cache_hit=False,
+        cached_at=datetime(2026, 5, 27, 14, 29, 0, tzinfo=timezone.utc),
+        prompt_version=1,
+        screen_hash="dead",
+    )
+    snap = _snap_surface_row(summary=summary)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    cell_match = re.search(
+        r'<[^>]*class="[^"]*surface-summary[^"]*"[^>]*>(?P<body>.*?)</[^>]+>',
+        row, re.S,
+    )
+    assert cell_match, "surface-summary cell not found"
+    body = cell_match.group("body").strip()
+    # Newline-trailing content must not appear in the visible cell.
+    assert "second line" not in body, (
+        f"content after first newline must be truncated; got: {body!r}"
+    )
+    # First-line prefix is preserved; ellipsis appended because the original
+    # had more content beyond the newline.
+    assert body.startswith(first_line), (
+        f"first line must survive truncation; got: {body!r}"
+    )
+    assert "…" in body, (
+        f"newline-truncated summary must include '…' suffix; got: {body!r}"
+    )
+
+
+def test_render_surface_row_captured_relative_time_and_copy_ref_chip(tmp_path: Path):
+    """T13 step 2 (order): row right-edge contains a captured-Xs-ago stamp
+    (via relative_time filter on `summary.cached_at`) AND a copy-ref chip
+    whose body is `surface:N` and whose title attribute reads
+    `cmux focus surface:N`.
+    """
+    import re
+
+    snap = _snap_surface_row()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    # `captured ... ago` text near the right edge of the row.
+    assert re.search(r'captured\b', row), "row must show a captured-Xs-ago stamp"
+
+    # Copy-ref chip: title="cmux focus surface:1", body literal `surface:1`.
+    assert re.search(
+        r'class="[^"]*chip[^"]*"[^>]*\btitle="cmux focus surface:1"',
+        row, re.S,
+    ), "row must include a copy-ref chip with title=\"cmux focus surface:1\""
+
+
+def test_render_surface_row_preserves_filter_contract(tmp_path: Path):
+    """T13 must preserve the T9+T10 filter contract: surface row root carries
+    data-state (state-bucket filter) and data-search (substring filter)."""
+    import re
+
+    snap = _snap_surface_row()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Some element carries data-state="running" AND data-search="<corpus>"
+    # — these are the contract.
+    m = re.search(
+        r'<(?P<tag>\w+)\b[^>]*\bdata-state="running"[^>]*\bdata-search="[^"]*"'
+        r'|<(?P<tag2>\w+)\b[^>]*\bdata-search="[^"]*"[^>]*\bdata-state="running"',
+        html, re.S,
+    )
+    assert m, "surface row root must carry both data-state and data-search"
+
+
+def test_render_surface_row_identifier_strip_surface_only_in_chip(tmp_path: Path):
+    """T13: the literal `surface:N` token may appear ONLY inside the copy-ref
+    chip (its body + title attribute). Strip chip elements from the row HTML
+    and assert no `surface:` text remains.
+    """
+    import re
+
+    snap = _snap_surface_row()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    # Remove every chip element (open tag through close tag) AND every
+    # title="cmux focus surface:N" attribute (since the chip element-body
+    # regex below isn't precise enough for attribute removal).
+    row_without_chips = re.sub(
+        r'<[^>]*\bclass="[^"]*\bchip\b[^"]*"[^>]*>.*?</[^>]+>',
+        "",
+        row,
+        flags=re.S,
+    )
+    # Also defensively strip standalone "cmux focus surface:N" title attrs.
+    row_without_chips = re.sub(
+        r'\btitle="cmux focus surface:[^"]*"',
+        "",
+        row_without_chips,
+    )
+    leaked = re.findall(r'surface:\w+', row_without_chips)
+    assert not leaked, (
+        f"surface:N literal leaked outside chip elements: {leaked!r}"
+    )
+
+
+def test_render_surface_row_missing_summary_when_not_agent(tmp_path: Path):
+    """T13 step 5: surface that is not classified as an agent renders the
+    text `(not classified as an agent)` — NEVER a bare em-dash."""
+    snap = _snap_surface_row(has_agent=False, is_agent=False)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # The non-agent message must appear somewhere in the row container.
+    assert "(not classified as an agent)" in html, (
+        "non-agent surface must show '(not classified as an agent)' message"
+    )
+
+
+def test_render_surface_row_missing_summary_when_agent_has_no_summary(tmp_path: Path):
+    """T13 step 5: agent surface with no summary at all → '(no screen access)'
+    catch-all. (Skipped-vs-no-screen-access distinction collapses into this
+    fallback because the model does not currently expose a `no_summarize`
+    signal — documented deviation.)"""
+    snap = _snap_surface_row(summary=None, has_agent=True, is_agent=True)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    assert "(no screen access)" in html, (
+        "agent surface without a summary must show '(no screen access)' fallback"
+    )
+
+
+def test_render_surface_row_never_renders_bare_em_dash_for_missing_summary(tmp_path: Path):
+    """T13 step 5: the surface-summary cell must never be a bare `—`. We
+    extract the cell body and assert it carries one of the three documented
+    'why no summary' strings instead.
+    """
+    import re
+
+    # Two scenarios: no-agent surface AND agent-without-summary surface.
+    for snap in (
+        _snap_surface_row(has_agent=False, is_agent=False),
+        _snap_surface_row(summary=None, has_agent=True, is_agent=True),
+    ):
+        html_path, _json_path = render_snapshot(snap, tmp_path)
+        html = html_path.read_text()
+        # Pull the surface-summary cell body.
+        cell_match = re.search(
+            r'<[^>]*class="[^"]*surface-summary[^"]*"[^>]*>(?P<body>.*?)</[^>]+>',
+            html, re.S,
+        )
+        assert cell_match, "surface-summary cell not found"
+        body = cell_match.group("body").strip()
+        # The catch-all messages are wrapped in parens — assert the body is
+        # not a bare em-dash (with or without surrounding whitespace).
+        assert body != "—", (
+            f"summary cell must never be a bare '—'; got: {body!r}"
+        )
+        # And it must contain one of the documented messages.
+        assert any(needle in body for needle in (
+            "(not classified as an agent)",
+            "(summary skipped — no_summarize)",
+            "(no screen access)",
+        )), f"missing 'why no summary' message; got body: {body!r}"

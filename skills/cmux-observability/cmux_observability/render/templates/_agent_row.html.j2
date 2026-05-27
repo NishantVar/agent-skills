@@ -1,32 +1,40 @@
-{# T10: data-search corpus — lowercased once at render-time so JS can do a
-   case-insensitive `.includes(q.toLowerCase())` without per-row work. Combines
-   workspace title, surface title, and (when present) the agent summary text. #}
+{# T13: surface row redesign — flex layout, state pill, mono title,
+   CSS-truncated summary with full text in title=, captured relative time,
+   and a copy-ref chip. Row root is <div class="surface-row"> (replacing the
+   prior <tr>) so the flex layout works without abusing table internals.
+
+   Filter contract (T9 + T10) preserved on the row root:
+     data-state="<state>"   — state-bucket filter
+     data-search="<corpus>" — substring filter; lowercased once at render
+
+   Identifier-strip (T20): the literal `surface:N` token appears ONLY inside
+   the copy-ref chip (body + title attribute). #}
 {%- set _corpus_parts = [ws.title or "", s.title or ""] -%}
 {%- if agent and agent.summary and agent.summary.text -%}
   {%- set _corpus_parts = _corpus_parts + [agent.summary.text] -%}
 {%- endif -%}
 {%- set _search_corpus = (_corpus_parts | join(" ")) | lower -%}
-<tr data-search="{{ _search_corpus }}"{% if agent %} data-state="{{ agent.state }}"{% endif %}>
-  <td><span class="chip">{{ s.ref }}</span></td>
-  <td>{{ s.title }}</td>
-  <td>
-    {% if agent %}
-      <span class="state-{{ agent.state }}">{{ agent.state }}</span>
-      <span class="chip">{{ agent.type }}</span>
-    {% else %}
-      <span class="chip">{{ s.kind }}</span>
-    {% endif %}
-  </td>
-  <td>
-    {% if agent and agent.summary %}
-      {{ agent.summary.text }}
-      {% if agent.summary.cache_hit %}<span class="chip">cache</span>{% endif %}
-    {% elif agent %}
-      <span class="state-unknown">(no summary)</span>
-    {% else %}
-      —
-    {% endif %}
-  </td>
-  <td>{{ "%.1f" % s.cpu_pct if s.cpu_pct is not none else "—" }}%</td>
-  <td>{{ "%.1f MB" % (s.mem_bytes / 1024 / 1024) if s.mem_bytes else "—" }}</td>
-</tr>
+<div class="surface-row" data-search="{{ _search_corpus }}"{% if agent %} data-state="{{ agent.state }}"{% endif %}>
+  {% if agent %}
+    <span class="state-pill state-{{ agent.state }}">{{ agent.state }}</span>
+  {% else %}
+    <span class="state-pill state-unknown">{{ s.kind }}</span>
+  {% endif %}
+  <span class="mono-title">{{ s.title }}</span>
+  {% if agent and agent.summary %}
+    <span class="surface-summary" title="{{ agent.summary.text }}">{{ agent.summary.text | truncated_summary }}</span>
+  {% elif not agent %}
+    <span class="surface-summary">(not classified as an agent)</span>
+  {% else %}
+    {# T13 step 5 deviation: the model exposes no `no_summarize` signal, so
+       the (skipped) vs (no screen access) distinction collapses into the
+       catch-all (no screen access). #}
+    <span class="surface-summary">(no screen access)</span>
+  {% endif %}
+  {% if agent and agent.summary and agent.summary.cached_at %}
+    <span class="surface-captured">captured {{ agent.summary.cached_at | relative_time }}</span>
+  {% else %}
+    <span class="surface-captured"></span>
+  {% endif %}
+  <span class="chip surface-copy-ref" title="cmux focus {{ s.ref }}">{{ s.ref }}</span>
+</div>

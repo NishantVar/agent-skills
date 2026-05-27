@@ -37,14 +37,15 @@
   </header>
   <details class="card-body"{% if _has_needs_input or _has_running %} open{% endif %}>
     <summary>surfaces ({{ ws.surfaces | length }})</summary>
-    <table>
-      <thead><tr><th>surface</th><th>title</th><th>state</th><th>summary</th><th>cpu</th><th>mem</th></tr></thead>
-      <tbody>
-        {% for s in ws.surfaces %}
-          {% set agent = snapshot.agents | selectattr("surface_ref","equalto",s.ref) | list | first %}
-          {% include "_agent_row.html.j2" %}
-        {% endfor %}
-      </tbody>
-    </table>
+    {# T13: surface rows are now flex <div class="surface-row"> entries; the
+       legacy <table>/<tr> wrapper is gone so the flex layout (state pill,
+       mono title, ellipsized summary, captured stamp, copy-ref chip) is
+       not constrained by table-cell box behaviour. #}
+    <div class="surface-row-list">
+      {% for s in ws.surfaces %}
+        {% set agent = snapshot.agents | selectattr("surface_ref","equalto",s.ref) | list | first %}
+        {% include "_agent_row.html.j2" %}
+      {% endfor %}
+    </div>
   </details>
 </div>

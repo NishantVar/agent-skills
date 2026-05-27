@@ -35,6 +35,26 @@ def _relative_time(dt: datetime) -> str:
     return dt.date().isoformat()
 
 
+def _truncated_summary(text: str | None, limit: int = 80) -> str:
+    """T13 step 4 safety guard: trim a summary to the first newline OR `limit`
+    characters, whichever comes first. Appends '…' when truncation occurred.
+
+    Protects the surface-row layout against pathological multi-KB single-line
+    summaries (the visible cell is CSS-truncated, but the rendered HTML still
+    carries the full string until the browser's text-overflow kicks in).
+    """
+    if not text:
+        return ""
+    first_nl = text.find("\n")
+    if first_nl == -1:
+        cut = limit
+    else:
+        cut = min(first_nl, limit)
+    if cut < len(text):
+        return text[:cut] + "…"
+    return text
+
+
 def _env() -> Environment:
     env = Environment(
         loader=FileSystemLoader(str(_HERE / "templates")),
@@ -42,6 +62,7 @@ def _env() -> Environment:
         trim_blocks=True, lstrip_blocks=True,
     )
     env.filters["relative_time"] = _relative_time
+    env.filters["truncated_summary"] = _truncated_summary
     return env
 
 
