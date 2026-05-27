@@ -76,6 +76,24 @@ def _snapshot_to_json(snap: Snapshot) -> str:
     return json.dumps(snap, default=default, indent=2)
 
 
+def _build_surface_dom_ids(snapshot: Snapshot) -> dict[str, str]:
+    """T15: build a stable, DOM-safe mapping from `surface_ref` ("surface:N")
+    to a sanitized id ("sf-0", "sf-1", …) using the flat enumeration of
+    `snapshot.workspaces[*].surfaces`. The raw `surface:N` token leaks a colon
+    (invalid in CSS selectors without escaping) and exposes an internal ref
+    grammar; the `sf-{idx}` form keeps the id DOM-safe and stable per snapshot.
+    Theme chips use the value as `data-target`; the surface-row `<details>`
+    receives `id="surface-{dom_id}"` so `getElementById` resolves the target.
+    """
+    out: dict[str, str] = {}
+    idx = 0
+    for ws in snapshot.workspaces:
+        for s in ws.surfaces:
+            out[s.ref] = f"sf-{idx}"
+            idx += 1
+    return out
+
+
 def render_snapshot(
     snapshot: Snapshot, out_dir: Path,
 ) -> tuple[Path, Path]:
@@ -89,8 +107,23 @@ def render_snapshot(
     css = (_HERE / "style.css").read_text()
     js = (_HERE / "charts.js").read_text()
 
+    surface_dom_ids = _build_surface_dom_ids(snapshot)
+    # Build a quick surface_ref → workspace, surface lookup for theme chips so
+    # _themes.html.j2 can render `surface.title @ workspace.title` labels
+    # without re-scanning the snapshot per member ref.
+    surface_lookup: dict[str, dict] = {}
+    for ws in snapshot.workspaces:
+        for s in ws.surfaces:
+            surface_lookup[s.ref] = {"workspace": ws, "surface": s}
+
     tmpl = _env().get_template("snapshot.html.j2")
-    html = tmpl.render(snapshot=snapshot, inline_css=css, inline_js=js)
+    html = tmpl.render(
+        snapshot=snapshot,
+        inline_css=css,
+        inline_js=js,
+        surface_dom_ids=surface_dom_ids,
+        surface_lookup=surface_lookup,
+    )
     html_path.write_text(html)
     json_path.write_text(_snapshot_to_json(snapshot))
     return html_path, json_path

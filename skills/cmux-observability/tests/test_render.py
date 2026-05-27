@@ -1322,13 +1322,16 @@ def test_render_filter_script_flips_aria_pressed(tmp_path: Path):
     # The token must specifically appear inside the chip-update branch of
     # the filter script, alongside data-filter-active. We grep for a window
     # of text containing both tokens close together.
-    # Pull the last <script> block (the filter state machine).
+    # Pull the filter state-machine <script> block. T15 added an additional
+    # trailing <script> for theme-chip wiring, so we select the block by
+    # content (the one containing `data-filter-active`) rather than position.
     scripts = re.findall(r'<script\b[^>]*>([\s\S]*?)</script>', html)
     assert scripts, "rendered HTML must contain at least one <script> block"
-    filter_script = scripts[-1]
-    assert "data-filter-active" in filter_script, (
+    filter_scripts = [s for s in scripts if "data-filter-active" in s]
+    assert filter_scripts, (
         "filter script must set data-filter-active (baseline T9 wiring)"
     )
+    filter_script = filter_scripts[0]
     assert "aria-pressed" in filter_script, (
         "filter script must set aria-pressed in lockstep with data-filter-active"
     )
@@ -2126,3 +2129,260 @@ def test_render_surface_row_no_disagreement_note_when_cmux_tag(tmp_path: Path):
         r'class="[^"]*surface-disagreement[^"]*"',
         row,
     ), "disagreement note must NOT render when type_source=cmux_tag"
+
+
+# ---------------------------------------------------------------------------
+# T15: theme chips with titles + scroll-to + highlight pulse
+# ---------------------------------------------------------------------------
+
+
+def _snap_themes_fixture(
+    *,
+    workspace_title: str = "Project Alpha",
+    surface_specs: list[tuple[str, str | None]] | None = None,
+    theme_member_refs: list[str] | None = None,
+    theme_label: str = "auth refactor",
+) -> Snapshot:
+    """T15 helper: one workspace with N surfaces (each `(surface_title, agent_state_or_None)`),
+    plus a single theme referencing the given member refs (defaults to all surfaces).
+    """
+    surface_specs = surface_specs or [("worker frontend", "running")]
+    surfaces: list[Surface] = []
+    agents: list[Agent] = []
+    for i, (title, st) in enumerate(surface_specs, start=1):
+        ref = f"surface:{i}"
+        surfaces.append(Surface(
+            ref=ref,
+            pane_ref=f"pane:{i}",
+            workspace_ref="workspace:1",
+            kind="terminal",
+            title=title,
+        ))
+        if st is not None:
+            agents.append(Agent(
+                surface_ref=ref,
+                workspace_ref="workspace:1",
+                type="claude_code",
+                type_source="cmux_tag",
+                type_confidence=1.0,
+                state=st,
+                state_source="cmux_tag",
+            ))
+    workspace = Workspace(
+        ref="workspace:1",
+        title=workspace_title,
+        window_ref="window:1",
+        surfaces=surfaces,
+    )
+    if theme_member_refs is None:
+        theme_member_refs = [s.ref for s in surfaces]
+    theme = Theme(
+        label=theme_label,
+        member_refs=theme_member_refs,
+        why="related work",
+        confidence=0.85,
+    )
+    return Snapshot(
+        schema_version=1,
+        captured_at=datetime(2026, 5, 27, 14, 30, 0, tzinfo=timezone.utc),
+        host="laptop",
+        cmux_version="1.2.3",
+        workspaces=[workspace],
+        agents=agents,
+        themes=[theme],
+        productivity=None,
+        history=None,
+        failures=[],
+    )
+
+
+def test_render_themes_section_absent_when_empty(tmp_path: Path):
+    """T15 step 6: when `snapshot.themes` is empty, the themes <section> must
+    not render at all — no card, no header, no chip artifacts."""
+    snap = _snap_workspace_states(surface_states=["running"])  # themes=[] by default
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # No themes <h2>, no rendered theme-member chip element. Match on the
+    # opening <button> tag specifically so the chip class name appearing in
+    # the always-emitted inline-JS querySelector doesn't false-positive.
+    import re
+    assert "Work themes" not in html, "themes section must not render when themes=[]"
+    assert not re.search(
+        r'<button\b[^>]*\btheme-member-chip\b', html,
+    ), "no theme chip element when themes empty"
+
+
+def test_render_themes_section_present_when_themes(tmp_path: Path):
+    """T15 step 6 positive: when themes are non-empty, the section renders."""
+    snap = _snap_themes_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    assert "Work themes" in html, "themes section must render when themes present"
+
+
+def test_render_themes_chip_uses_titles_not_bare_refs(tmp_path: Path):
+    """T15 step 2: each theme member is rendered as
+    `<button class="chip" data-target="sf-N">{surface.title} @ {workspace.title}</button>`.
+    Labels must use titles — no bare `surface:N` or `workspace:N` literals."""
+    import re
+
+    snap = _snap_themes_fixture(
+        workspace_title="auth-service",
+        surface_specs=[("worker frontend", "running")],
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Extract the themes section so we don't pick up matches elsewhere.
+    sect_m = re.search(
+        r'<h2>Work themes.*?</section>',
+        html, re.S,
+    )
+    assert sect_m, "themes <section> not found"
+    section = sect_m.group(0)
+
+    # A button.chip with data-target="sf-..." carrying titles in its label.
+    btn_m = re.search(
+        r'<button\b[^>]*class="[^"]*chip[^"]*"[^>]*data-target="(?P<target>[^"]+)"[^>]*>(?P<label>.*?)</button>',
+        section, re.S,
+    )
+    assert btn_m, "theme chip must be a <button class='chip' data-target='...'> element"
+    target = btn_m.group("target")
+    label = btn_m.group("label")
+
+    # Stable DOM id is DOM-safe (no colon) — not the raw surface:N ref.
+    assert ":" not in target, f"data-target must be DOM-safe (no colons): got {target!r}"
+    assert target.startswith("sf-"), f"data-target should follow `sf-N` scheme: got {target!r}"
+
+    # Label includes both titles.
+    assert "worker frontend" in label, "chip label must include surface title"
+    assert "auth-service" in label, "chip label must include workspace title"
+
+    # Identifier-strip: no bare `surface:` or `workspace:` literals in the
+    # chip label or any other theme-card body (the diagnostic line + copy-ref
+    # chip live OUTSIDE the themes section).
+    # Within the entire themes section, neither bare ref form should appear.
+    assert "surface:" not in section, "theme section must not leak bare `surface:N` refs"
+    assert "workspace:" not in section, "theme section must not leak bare `workspace:N` refs"
+
+
+def test_render_surface_row_carries_stable_dom_id(tmp_path: Path):
+    """T15 step 3: each surface row's <details> root carries
+    `id="surface-sf-N"` — a sanitized DOM-safe id, NOT the raw `surface:N` ref.
+    The id must match what theme chips target via `data-target`."""
+    import re
+
+    snap = _snap_themes_fixture(
+        surface_specs=[("worker frontend", "running"), ("worker backend", "idle")],
+        theme_member_refs=["surface:2"],  # chip should point at sf-1 (0-indexed second surface)
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Both surface rows carry id="surface-sf-N" (DOM-safe).
+    ids = re.findall(
+        r'<details\b[^>]*class="[^"]*surface-details[^"]*"[^>]*id="(?P<id>[^"]+)"'
+        r'|<details\b[^>]*id="(?P<id2>[^"]+)"[^>]*class="[^"]*surface-details[^"]*"',
+        html, re.S,
+    )
+    flat_ids = [a or b for a, b in ids]
+    assert len(flat_ids) == 2, f"expected 2 surface-details ids, got {flat_ids!r}"
+    for sid in flat_ids:
+        assert sid.startswith("surface-sf-"), f"id must follow `surface-sf-N` scheme: {sid!r}"
+        assert ":" not in sid, f"id must be DOM-safe (no colons): {sid!r}"
+
+    # The theme chip targeting surface:2 should resolve to the second surface
+    # (sf-1 in 0-indexed flat enumeration); the chip's data-target must match
+    # one of the surface row ids minus the "surface-" prefix.
+    chip_m = re.search(
+        r'<button\b[^>]*class="[^"]*chip[^"]*"[^>]*data-target="(?P<target>[^"]+)"',
+        html, re.S,
+    )
+    assert chip_m, "theme chip not found"
+    target = chip_m.group("target")
+    assert f"surface-{target}" in flat_ids, (
+        f"chip data-target={target!r} must point to a surface row id; "
+        f"surface ids: {flat_ids!r}"
+    )
+
+
+def test_render_themes_card_activity_dot_needs_input_wins(tmp_path: Path):
+    """T15 step 4: theme card carries workspace-style activity dot;
+    any member in needs_input → amber (precedence rule mirrors T12)."""
+    import re
+
+    snap = _snap_themes_fixture(
+        surface_specs=[("a", "needs_input"), ("b", "running"), ("c", "idle")],
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # The themes section must include an activity dot data-activity="needs_input".
+    sect_m = re.search(r'<h2>Work themes.*?</section>', html, re.S)
+    assert sect_m, "themes section not found"
+    section = sect_m.group(0)
+    assert re.search(
+        r'class="[^"]*activity-dot[^"]*"[^>]*data-activity="needs_input"',
+        section, re.S,
+    ), "theme card activity dot must be needs_input when any member is needs_input"
+
+
+def test_render_themes_card_activity_dot_unknown_when_no_agents(tmp_path: Path):
+    """T15 step 4 fallthrough: a theme whose members have no agent rows (plain
+    shells) renders the dotted-gray dot (data-activity="unknown")."""
+    import re
+
+    snap = _snap_themes_fixture(
+        surface_specs=[("a", None), ("b", None)],
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    sect_m = re.search(r'<h2>Work themes.*?</section>', html, re.S)
+    assert sect_m, "themes section not found"
+    section = sect_m.group(0)
+    assert re.search(
+        r'class="[^"]*activity-dot[^"]*"[^>]*data-activity="unknown"',
+        section, re.S,
+    ), "theme card activity dot must be unknown when no member has an agent"
+
+
+def test_render_themes_inline_script_has_scroll_and_pulse(tmp_path: Path):
+    """T15 step 5: an inline <script> wires theme chip clicks to
+    scrollIntoView + a transient `.pulse` class on the target row."""
+    snap = _snap_themes_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # The script must reference data-target, scrollIntoView with smooth/center,
+    # and add+remove the `pulse` class.
+    assert "data-target" in html
+    assert "scrollIntoView" in html, "inline JS must call scrollIntoView"
+    assert "behavior" in html and "smooth" in html, "scrollIntoView must use behavior:'smooth'"
+    assert "block" in html and "center" in html, "scrollIntoView must use block:'center'"
+    assert "pulse" in html, "inline JS must add the `pulse` class"
+    # Add then remove (timeout-based).
+    assert "setTimeout" in html, "inline JS must remove `pulse` class via setTimeout"
+
+
+def test_render_themes_css_has_pulse_keyframes_and_reduced_motion(tmp_path: Path):
+    """T15 step 5: a CSS @keyframes drives the pulse, and a
+    `prefers-reduced-motion: reduce` rule overrides the animation."""
+    import re
+
+    snap = _snap_themes_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # @keyframes named (e.g.) surface-pulse.
+    assert re.search(
+        r'@keyframes\s+surface-pulse\b',
+        html, re.S,
+    ), "CSS must declare @keyframes surface-pulse"
+    # Reduced-motion override targeting the pulse selector.
+    assert re.search(
+        r'@media\s*\(\s*prefers-reduced-motion:\s*reduce\s*\)\s*\{[^}]*\.pulse[^}]*animation:\s*none',
+        html, re.S,
+    ), "must include prefers-reduced-motion override that disables the pulse animation"

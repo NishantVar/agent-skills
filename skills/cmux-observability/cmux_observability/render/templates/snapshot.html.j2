@@ -502,6 +502,42 @@
     font-family: var(--font-mono);
     margin-top: var(--space-1);
   }
+  /* T15: theme chip pulse highlight. A theme-member chip click scrolls its
+     target surface row into view and adds `.pulse` to the <details> for
+     200ms. The animation flashes the summary background with the running
+     state color (~18% mix already used by state-pill backgrounds) then
+     fades out. `prefers-reduced-motion: reduce` disables the animation
+     entirely. */
+  @keyframes surface-pulse {
+    0%   { background-color: color-mix(in srgb, var(--state-running) 35%, transparent); }
+    100% { background-color: transparent; }
+  }
+  .surface-details.pulse > summary {
+    animation: surface-pulse 200ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .surface-details.pulse > summary { animation: none; }
+  }
+
+  /* T15: theme card members. The chip list wraps; each chip is a <button>
+     with the standard `.chip` look plus a pointer cursor since clicking
+     navigates the page. */
+  .theme-members {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+  .theme-member-chip {
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+  }
+  .theme-member-chip:focus-visible {
+    outline: 2px solid var(--state-running);
+    outline-offset: 2px;
+  }
+
   /* T14: redaction badge in the collapsed summary row when
      summary.redactions_applied is non-empty. Neutral text "redacted" with the
      applied redaction types in the title= tooltip. */
@@ -738,6 +774,38 @@
 
     window.addEventListener("hashchange", apply);
     apply();
+  })();
+</script>
+<script>
+  // T15: theme chip click handler. Each theme-member chip carries a
+  // data-target attribute whose value resolves (via the `surface-<id>` prefix)
+  // to a surface-row disclosure element. Clicking scrolls the target into
+  // view smoothly + centered, expands the disclosure (so the user lands on
+  // visible content), and adds a transient `.pulse` class for 200ms to flash
+  // the row.
+  // Reference: modern-web-guidance "scroll-target-on-load" — applied the
+  // `Element.scrollIntoView({behavior, block:'center'})` JS pattern (the
+  // CSS-only `scroll-initial-target` declarative variant is unsupported in
+  // Firefox/Safari and is for first-paint targeting, not on-click).
+  (function () {
+    var chips = document.querySelectorAll('.theme-member-chip[data-target]');
+    for (var i = 0; i < chips.length; i++) {
+      (function (chip) {
+        chip.addEventListener("click", function () {
+          var target = chip.getAttribute("data-target");
+          if (!target) return;
+          var el = document.getElementById("surface-" + target);
+          if (!el) return;
+          // Expand the disclosure so the user lands on visible content.
+          if (el.tagName && el.tagName.toLowerCase() === "details") {
+            el.open = true;
+          }
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.classList.add("pulse");
+          setTimeout(function () { el.classList.remove("pulse"); }, 200);
+        });
+      })(chips[i]);
+    }
   })();
 </script>
 </body></html>

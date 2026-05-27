@@ -32,7 +32,12 @@
 {%- set _show_disagreement = agent
       and agent.type_source == "heuristic"
       and agent.state_source == "agent_summary" -%}
-<details class="surface-details" data-search="{{ _search_corpus }}"{% if agent %} data-state="{{ agent.state }}"{% endif %}>
+{# T15: stable, DOM-safe id (`surface-sf-N`) lets theme chips scroll-to a
+   surface via `getElementById`. The raw `surface:N` ref is not used here
+   to avoid a CSS-invalid colon and to keep the internal ref grammar out
+   of the rendered DOM. #}
+{%- set _surface_dom_id = surface_dom_ids.get(s.ref) -%}
+<details class="surface-details"{% if _surface_dom_id %} id="surface-{{ _surface_dom_id }}"{% endif %} data-search="{{ _search_corpus }}"{% if agent %} data-state="{{ agent.state }}"{% endif %}>
   <summary class="surface-row">
     {% if agent %}
       <span class="state-pill state-{{ agent.state }}">{{ agent.state }}</span>
