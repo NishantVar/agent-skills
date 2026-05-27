@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>cmux observability — {{ snapshot.captured_at.isoformat() }}</title>
+<style>{{ inline_css }}</style>
+</head><body>
+<header>
+  <h1>cmux observability</h1>
+  <div class="meta">
+    snapshot {{ snapshot.captured_at.isoformat() }} ·
+    host {{ snapshot.host }} ·
+    cmux {{ snapshot.cmux_version or "unavailable" }}
+  </div>
+</header>
+<main>
+  {% if snapshot.failures %}{% include "_failures.html.j2" %}{% endif %}
+
+  <section>
+    <h2>Counters</h2>
+    <p>
+      <span class="chip">agents: <b>{{ snapshot.agents | length }}</b></span>
+      <span class="chip state-running">running: <b>{{ snapshot.agents | selectattr("state","equalto","running") | list | length }}</b></span>
+      <span class="chip state-needs_input">needs input: <b>{{ snapshot.agents | selectattr("state","equalto","needs_input") | list | length }}</b></span>
+      <span class="chip">workspaces: <b>{{ snapshot.workspaces | length }}</b></span>
+      <span class="chip">surfaces: <b>{{ snapshot.workspaces | map(attribute="surfaces") | map("length") | sum }}</b></span>
+    </p>
+  </section>
+
+  {% if snapshot.workspaces %}
+    <section><h2>Workspaces</h2>
+      {% for ws in snapshot.workspaces %}{% include "_workspace.html.j2" %}{% endfor %}
+    </section>
+  {% else %}
+    <section><h2>Workspaces</h2><p>No agents detected.</p></section>
+  {% endif %}
+
+  {% if snapshot.themes %}
+    {% include "_themes.html.j2" %}
+  {% endif %}
+
+  {% if snapshot.productivity %}
+    {% include "_productivity.html.j2" %}
+  {% endif %}
+
+  {% if snapshot.history %}
+    {% include "_history.html.j2" %}
+  {% endif %}
+</main>
+<script>{{ inline_js }}</script>
+</body></html>

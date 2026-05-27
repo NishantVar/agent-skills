@@ -1,0 +1,12 @@
+<section class="failures">
+  <details>
+    <summary>Issues ({{ snapshot.failures | length }})</summary>
+    <div class="body">
+      <ul>
+        {% for f in snapshot.failures %}
+          <li><b>{{ f.component }}</b>{% if f.target %} <code>{{ f.target }}</code>{% endif %}: {{ f.message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </details>
+</section>

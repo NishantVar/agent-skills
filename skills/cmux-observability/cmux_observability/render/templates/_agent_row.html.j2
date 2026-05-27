@@ -1,0 +1,24 @@
+<tr>
+  <td><span class="chip">{{ s.ref }}</span></td>
+  <td>{{ s.title }}</td>
+  <td>
+    {% if agent %}
+      <span class="state-{{ agent.state }}">{{ agent.state }}</span>
+      <span class="chip">{{ agent.type }}</span>
+    {% else %}
+      <span class="chip">{{ s.kind }}</span>
+    {% endif %}
+  </td>
+  <td>
+    {% if agent and agent.summary %}
+      {{ agent.summary.text }}
+      {% if agent.summary.cache_hit %}<span class="chip">cache</span>{% endif %}
+    {% elif agent %}
+      <span class="state-unknown">(no summary)</span>
+    {% else %}
+      —
+    {% endif %}
+  </td>
+  <td>{{ "%.1f" % s.cpu_pct if s.cpu_pct is not none else "—" }}%</td>
+  <td>{{ "%.1f MB" % (s.mem_bytes / 1024 / 1024) if s.mem_bytes else "—" }}</td>
+</tr>

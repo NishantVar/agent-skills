@@ -1,0 +1,14 @@
+<div class="card">
+  <h3 class="card-title">
+    <span class="chip">{{ ws.ref }}</span> {{ ws.title }}
+  </h3>
+  <table>
+    <thead><tr><th>surface</th><th>title</th><th>state</th><th>summary</th><th>cpu</th><th>mem</th></tr></thead>
+    <tbody>
+      {% for s in ws.surfaces %}
+        {% set agent = snapshot.agents | selectattr("surface_ref","equalto",s.ref) | list | first %}
+        {% include "_agent_row.html.j2" %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

@@ -1,0 +1,9 @@
+<section><h2>Work themes <span class="meta">(best effort)</span></h2>
+{% for t in snapshot.themes %}
+  <div class="card">
+    <h3 class="card-title">{{ t.label }} <span class="chip">conf {{ "%.2f" % t.confidence }}</span></h3>
+    <div class="meta">{{ t.why }}</div>
+    <div>{% for r in t.member_refs %}<span class="chip">{{ r }}</span>{% endfor %}</div>
+  </div>
+{% endfor %}
+</section>

@@ -1,0 +1,8 @@
+<section><h2>History trends</h2>
+{% if snapshot.history.points and snapshot.history.points | length >= 3 %}
+  <p>agents over time: <span class="sparkline" data-sparkline="{{ snapshot.history.points | map(attribute='agents_total') | join(',') }}"></span></p>
+  <p>needs input over time: <span class="sparkline" data-sparkline="{{ snapshot.history.points | map(attribute='agents_needs_input') | join(',') }}"></span></p>
+{% else %}
+  <p class="meta">No trend yet.</p>
+{% endif %}
+</section>

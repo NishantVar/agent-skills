@@ -1,0 +1,17 @@
+<section><h2>Productivity</h2>
+<table>
+  <thead><tr><th>repo</th><th>today</th><th>week</th><th>30d</th><th>last commit</th></tr></thead>
+  <tbody>
+    {% for r in snapshot.productivity.repos %}
+      <tr>
+        <td>{{ r.name }} <span class="meta">{{ r.path }}</span></td>
+        <td>{{ r.commits.today }}</td>
+        <td>{{ r.commits.week }}</td>
+        <td>{{ r.commits["30d"] }}</td>
+        <td>{{ r.last_commit_at.isoformat() if r.last_commit_at else "—" }}</td>
+      </tr>
+    {% endfor %}
+    <tr><td><b>Total</b></td><td><b>{{ snapshot.productivity.totals.today }}</b></td><td><b>{{ snapshot.productivity.totals.week }}</b></td><td><b>{{ snapshot.productivity.totals["30d"] }}</b></td><td></td></tr>
+  </tbody>
+</table>
+</section>
