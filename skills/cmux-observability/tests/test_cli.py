@@ -367,6 +367,126 @@ def test_collect_heuristic_weak_marker_not_promoted(
     assert "surface:1" in workspace_surface_refs
 
 
+# --- v1.1: title-sniff removal regression tests ----------------------------
+
+
+def test_collect_untagged_title_looking_plain_scrollback_no_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reviewer's concrete repro: an untagged terminal titled ``codex shell``
+    with plain-shell scrollback must not trip the T4 invariant assertion.
+    The surface produces no agent and remains in workspace drill-down."""
+    from cmux_observability.collector.cmux import TopResult
+    from cmux_observability.model import Surface, Workspace
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    ws = Workspace(
+        ref="workspace:1", title="WS", window_ref="window:1",
+        surfaces=[Surface(
+            ref="surface:1", pane_ref="pane:1", workspace_ref="workspace:1",
+            kind="terminal", title="codex shell", tty="ttys001",
+        )],
+    )
+
+    monkeypatch.setattr("cmux_observability.cli.fetch_tree", lambda: [ws])
+    monkeypatch.setattr("cmux_observability.cli.fetch_top", lambda: TopResult())
+    monkeypatch.setattr("cmux_observability.cli.cmux_version", lambda: "0.64.10")
+    monkeypatch.setattr(
+        "cmux_observability.cli.discover_repos",
+        lambda cfg, force_rescan=False: ([], []),
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.productivity", lambda repos, cfg: None,
+    )
+
+    plain_tail = (
+        Path(__file__).parent / "fixtures" / "scrollback" / "plain_shell.txt"
+    ).read_text()
+    monkeypatch.setattr(
+        "cmux_observability.cli.read_screen",
+        lambda surface_ref, *, workspace_ref=None, lines=150: plain_tail,
+    )
+
+    cfg = _write_config(tmp_path)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cli.main(["collect", "--config", str(cfg)])
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["ok"] is True
+    assert out["snapshot_preview"]["agents_total"] == 0
+
+    snap, _h, _r = runstate.read(out["run_id"])
+    assert "surface:1" not in {a.surface_ref for a in snap.agents}
+    workspace_surface_refs = {
+        s.ref for w in snap.workspaces for s in w.surfaces
+    }
+    assert "surface:1" in workspace_surface_refs
+
+
+def test_collect_untagged_title_looking_strong_scrollback_heuristic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An untagged terminal titled ``codex shell`` whose scrollback contains
+    strong codex markers is promoted via the heuristic path
+    (type_source=heuristic, confidence>=0.7) — verifying the heuristic
+    catches what the deleted title-sniff fallback used to handle."""
+    from cmux_observability.collector.cmux import TopResult
+    from cmux_observability.model import Surface, Workspace
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    ws = Workspace(
+        ref="workspace:1", title="WS", window_ref="window:1",
+        surfaces=[Surface(
+            ref="surface:1", pane_ref="pane:1", workspace_ref="workspace:1",
+            kind="terminal", title="codex shell", tty="ttys001",
+        )],
+    )
+
+    monkeypatch.setattr("cmux_observability.cli.fetch_tree", lambda: [ws])
+    monkeypatch.setattr("cmux_observability.cli.fetch_top", lambda: TopResult())
+    monkeypatch.setattr("cmux_observability.cli.cmux_version", lambda: "0.64.10")
+    monkeypatch.setattr(
+        "cmux_observability.cli.discover_repos",
+        lambda cfg, force_rescan=False: ([], []),
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.productivity", lambda repos, cfg: None,
+    )
+
+    codex_tail = (
+        Path(__file__).parent / "fixtures" / "scrollback" / "codex.txt"
+    ).read_text()
+    monkeypatch.setattr(
+        "cmux_observability.cli.read_screen",
+        lambda surface_ref, *, workspace_ref=None, lines=150: codex_tail,
+    )
+
+    cfg = _write_config(tmp_path)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cli.main(["collect", "--config", str(cfg)])
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["ok"] is True
+    assert out["snapshot_preview"]["agents_total"] == 1
+    assert out["snapshot_preview"]["agents_tagged"] == 0
+    assert out["snapshot_preview"]["agents_heuristic"] == 1
+
+    snap, _h, _r = runstate.read(out["run_id"])
+    [a] = snap.agents
+    assert a.surface_ref == "surface:1"
+    assert a.type == "codex"
+    assert a.type_source == "heuristic"
+    assert a.type_confidence >= 0.7
+
+
 # --- T4: agents_tagged / agents_heuristic envelope breakdown ---------------
 
 # Two distinct claude markers — drives heuristic confidence >= 0.7.

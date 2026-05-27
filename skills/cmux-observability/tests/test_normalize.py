@@ -1,4 +1,9 @@
-"""Tests for the Snapshot normalize step."""
+"""Tests for the Snapshot normalize step.
+
+v1.1: normalize() only creates agents from cmux tags. Untagged surfaces
+remain regular Surface entries in their Workspace; agent inference for
+untagged surfaces now belongs to the CLI scrollback-heuristic path.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +28,6 @@ def test_normalize_attaches_tag_type_and_state(fixture_dir: Path):
     )
 
     assert snap.host == "laptop"
-    # Both workspaces' tags produce agents — no spurious title-sniff additions.
     assert len(snap.agents) == 2
 
     ws12 = [a for a in snap.agents if a.workspace_ref == "workspace:12"]
@@ -49,9 +53,9 @@ def test_normalize_attaches_tag_type_and_state(fixture_dir: Path):
     assert a15.pid == 90828
 
 
-def test_normalize_sniff_fallback_marks_low_confidence(fixture_dir: Path):
-    """Surfaces with no matching tag fall back to title_sniff; non-agent
-    titles stay in workspace drill-down but do NOT enter the agents list."""
+def test_normalize_does_not_promote_untagged_surfaces(fixture_dir: Path):
+    """No cmux tags = no agents. Untagged surfaces stay in workspace
+    drill-down regardless of title; they are never promoted by normalize."""
     tree = parse_tree((fixture_dir / "cmux_tree_basic.txt").read_text())
     top = parse_top((fixture_dir / "cmux_top_no_tags.txt").read_text())
 
@@ -59,18 +63,18 @@ def test_normalize_sniff_fallback_marks_low_confidence(fixture_dir: Path):
         workspaces=tree, top=top, host="h", cmux_version=None,
         now=datetime.now(timezone.utc),
     )
-    # design_coordinator title is not a known agent type -> not in agents
-    # ... but should appear in workspace drill-down via the surfaces.
+    assert snap.agents == []
+    # Untagged surfaces still appear in workspace drill-down.
     assert any(
         s.title == "design_coordinator"
         for w in snap.workspaces for s in w.surfaces
     )
-    assert not any(a.type == "design_coordinator" for a in snap.agents)
 
 
-def test_normalize_title_sniff_assigns_low_confidence():
-    """A surface whose title matches a known agent hint becomes a title_sniff
-    agent at confidence 0.6 when no cmux tag is present in its workspace."""
+def test_normalize_does_not_promote_untagged_title_match():
+    """A surface whose title looks like a known agent kind (e.g. ``claude_code
+    helper``) is NOT promoted by normalize when no cmux tag covers it. The
+    surface remains in the workspace's surfaces list with is_agent=False."""
     surface = Surface(
         ref="surface:99", pane_ref="pane:99", workspace_ref="workspace:99",
         kind="terminal", title="claude_code helper", tty="ttys099",
@@ -85,14 +89,10 @@ def test_normalize_title_sniff_assigns_low_confidence():
         host="h", cmux_version=None,
         now=datetime(2026, 5, 27, tzinfo=timezone.utc),
     )
-    assert len(snap.agents) == 1
-    a = snap.agents[0]
-    assert a.surface_ref == "surface:99"
-    assert a.type == "claude_code"
-    assert a.type_source == "title_sniff"
-    assert a.type_confidence == 0.6
-    assert a.state == "unknown"
-    assert a.state_source == "unknown"
+    assert snap.agents == []
+    [surf_out] = snap.workspaces[0].surfaces
+    assert surf_out.ref == "surface:99"
+    assert surf_out.is_agent is False
 
 
 def test_normalize_prefers_exact_tag_kind_match_before_generic_agent_title():
@@ -134,11 +134,11 @@ def test_normalize_prefers_exact_tag_kind_match_before_generic_agent_title():
     assert a.pid == 99999
 
 
-def test_normalize_tag_precedence_over_title_sniff():
-    """When a workspace has BOTH a cmux tag AND a surface whose title would
-    title-sniff to the same agent type, the surface is attached via the tag
-    (type_source=cmux_tag, confidence 1.0) and is NOT double-counted via
-    title_sniff."""
+def test_normalize_tag_owns_title_looking_surface_without_double_count():
+    """When a workspace has a cmux tag AND a single surface whose title would
+    once have been title-sniffed, the tag path consumes that surface exactly
+    once — confidence 1.0, type_source=cmux_tag, no duplicate from any
+    legacy fallback."""
     surface = Surface(
         ref="surface:77", pane_ref="pane:77", workspace_ref="workspace:77",
         kind="terminal", title="claude_code worker", tty="ttys077",
@@ -159,13 +159,11 @@ def test_normalize_tag_precedence_over_title_sniff():
         host="h", cmux_version=None,
         now=datetime(2026, 5, 27, tzinfo=timezone.utc),
     )
-    # Exactly one agent — the tag path consumes surface:77 first, and the
-    # title_sniff pass skips it because surface:77 is already in tagged_refs.
     assert len(snap.agents) == 1
     a = snap.agents[0]
     assert a.surface_ref == "surface:77"
     assert a.type == "claude_code"
-    assert a.type_source == "cmux_tag"      # NOT title_sniff
-    assert a.type_confidence == 1.0          # NOT 0.6
+    assert a.type_source == "cmux_tag"
+    assert a.type_confidence == 1.0
     assert a.state == "running"
     assert a.pid == 12345
