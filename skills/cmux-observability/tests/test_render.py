@@ -904,6 +904,21 @@ def test_render_nonstate_counters_remain_div(tmp_path: Path):
         assert not button_pat.search(html), (
             f"non-state counter {label!r} must NOT have been converted to <button>"
         )
+        # Reviewer follow-up tightening: non-state counters must NOT carry a
+        # `data-state` attribute. The filter state machine keys off
+        # `data-state`, so allowing it here would silently make these counters
+        # interactive filter chips and shift the toggling contract.
+        bare_div_pat = re.compile(
+            r'<div\b(?P<attrs>[^>]*\bclass="counter[^"]*"[^>]*)>[\s\S]*?<small[^>]*>\s*'
+            + label,
+            re.S,
+        )
+        m = bare_div_pat.search(html)
+        assert m is not None, f"non-state counter {label!r} <div> not found"
+        assert "data-state=" not in m.group("attrs"), (
+            f"non-state counter {label!r} must NOT carry data-state — "
+            f"that attribute marks a counter as an interactive filter chip."
+        )
 
 
 def _snap_workspace_states(
