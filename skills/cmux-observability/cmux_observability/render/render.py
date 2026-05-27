@@ -14,12 +14,35 @@ from ..model import Snapshot
 _HERE = Path(__file__).parent
 
 
+def _relative_time(dt: datetime) -> str:
+    """Render a datetime as a short relative string: "14s ago", "3m ago",
+    "2h ago", else ISO date. Compares against `datetime.now()` in the same
+    tz-awareness as `dt` so subtraction never raises.
+    """
+    if dt is None:
+        return ""
+    now = datetime.now(dt.tzinfo) if dt.tzinfo is not None else datetime.now()
+    delta = now - dt
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return f"{max(seconds, 0)}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return dt.date().isoformat()
+
+
 def _env() -> Environment:
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader(str(_HERE / "templates")),
         autoescape=select_autoescape(["html", "j2"]),
         trim_blocks=True, lstrip_blocks=True,
     )
+    env.filters["relative_time"] = _relative_time
+    return env
 
 
 def _snapshot_to_json(snap: Snapshot) -> str:

@@ -70,30 +70,110 @@
       scroll-behavior: auto !important;
     }
   }
+
+  /* T8: hero strip. Sticky to the top of the viewport so the counters and
+     search box stay visible as the user scrolls the workspace list. */
+  .hero {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-sans);
+  }
+  .hero-counters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    align-items: flex-start;
+  }
+  .hero-counters .counter {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.1;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--contrast-strong);
+  }
+  .hero-counters .counter small {
+    margin-top: var(--space-1);
+    font-size: 0.72rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .hero-counters .counter .counter-sub {
+    margin-top: var(--space-1);
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .hero-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--space-1);
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .hero-right .hero-search {
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    min-width: 14rem;
+  }
+  .hero-right .hero-refresh {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
 </style>
 <style>{{ inline_css | safe }}</style>
 </head><body>
-<header>
-  <h1>cmux observability</h1>
-  <div class="meta">
-    snapshot {{ snapshot.captured_at.isoformat() }} ·
-    host {{ snapshot.host }} ·
-    cmux {{ snapshot.cmux_version or "unavailable" }}
+{# T8: hero strip — sticky top bar with 7 big-number counters on the left and
+   the search box + captured-at + refresh hint on the right. The search input
+   is a placeholder DOM target; live filtering is wired in T10. #}
+{% set _agents_total = snapshot.agents | length %}
+{% set _agents_tagged = snapshot.agents | selectattr("type_source","equalto","cmux_tag") | list | length %}
+{% set _agents_heuristic = snapshot.agents | selectattr("type_source","equalto","heuristic") | list | length %}
+{% set _running = snapshot.agents | selectattr("state","equalto","running") | list | length %}
+{% set _needs_input = snapshot.agents | selectattr("state","equalto","needs_input") | list | length %}
+{% set _idle = snapshot.agents | selectattr("state","equalto","idle") | list | length %}
+{% set _unknown = snapshot.agents | selectattr("state","equalto","unknown") | list | length %}
+{% set _ws_total = snapshot.workspaces | length %}
+{% set _surfaces_total = snapshot.workspaces | map(attribute="surfaces") | map("length") | sum %}
+<header class="hero">
+  <div class="hero-counters">
+    <div class="counter">{{ _ws_total }}<small>workspaces</small></div>
+    <div class="counter">{{ _surfaces_total }}<small>surfaces</small></div>
+    <div class="counter">
+      {{ _agents_total }}<small>agents</small>
+      <span class="counter-sub">{{ _agents_tagged }} tagged · {{ _agents_heuristic }} heuristic</span>
+    </div>
+    <div class="counter">{{ _running }}<small>running</small></div>
+    <div class="counter">{{ _needs_input }}<small>needs_input</small></div>
+    <div class="counter">{{ _idle }}<small>idle</small></div>
+    <div class="counter">{{ _unknown }}<small>unknown</small></div>
+  </div>
+  <div class="hero-right">
+    <input class="hero-search" type="search" placeholder="filter surfaces…" aria-label="Filter surfaces">
+    <div class="hero-captured">captured {{ snapshot.captured_at | relative_time }} · host {{ snapshot.host }} · cmux {{ snapshot.cmux_version or "unavailable" }}</div>
+    <div class="hero-refresh">{{ "re-run: cmux-observability collect && finalize" | safe }}</div>
   </div>
 </header>
 <main>
   {% if snapshot.failures %}{% include "_failures.html.j2" %}{% endif %}
-
-  <section>
-    <h2>Counters</h2>
-    <p>
-      <span class="chip">agents: <b>{{ snapshot.agents | length }}</b></span>
-      <span class="chip state-running">running: <b>{{ snapshot.agents | selectattr("state","equalto","running") | list | length }}</b></span>
-      <span class="chip state-needs_input">needs input: <b>{{ snapshot.agents | selectattr("state","equalto","needs_input") | list | length }}</b></span>
-      <span class="chip">workspaces: <b>{{ snapshot.workspaces | length }}</b></span>
-      <span class="chip">surfaces: <b>{{ snapshot.workspaces | map(attribute="surfaces") | map("length") | sum }}</b></span>
-    </p>
-  </section>
 
   {% if snapshot.workspaces %}
     <section><h2>Workspaces</h2>
