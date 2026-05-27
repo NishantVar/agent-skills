@@ -108,10 +108,18 @@ def _rehydrate(d: dict) -> Snapshot:
             state_source=a["state_source"],
             pid=a.get("pid"),
             summary=(
-                Summary(**{
-                    **summary,
-                    "cached_at": datetime.fromisoformat(summary["cached_at"]),
-                })
+                Summary(
+                    text=summary["text"],
+                    state_hint=summary["state_hint"],
+                    needs_input_reason=summary.get("needs_input_reason"),
+                    confidence=summary["confidence"],
+                    cache_hit=summary["cache_hit"],
+                    cached_at=datetime.fromisoformat(summary["cached_at"]),
+                    prompt_version=summary["prompt_version"],
+                    screen_hash=summary["screen_hash"],
+                    redactions_applied=summary.get("redactions_applied", []),
+                    redaction_summary=summary.get("redaction_summary", ""),
+                )
                 if summary else None
             ),
         ))
