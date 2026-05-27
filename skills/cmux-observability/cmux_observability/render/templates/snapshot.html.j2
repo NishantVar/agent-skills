@@ -3,7 +3,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>cmux observability — {{ snapshot.captured_at.isoformat() }}</title>
-<style>{{ inline_css }}</style>
+<style>{{ inline_css | safe }}</style>
 </head><body>
 <header>
   <h1>cmux observability</h1>
@@ -47,5 +47,5 @@
     {% include "_history.html.j2" %}
   {% endif %}
 </main>
-<script>{{ inline_js }}</script>
+<script>{{ inline_js | safe }}</script>
 </body></html>

@@ -172,6 +172,23 @@ def test_render_populated_snapshot_exercises_all_partials(tmp_path: Path):
     assert "card-title" in html           # the replacement class is wired in
 
 
+def test_render_inlines_trusted_css_and_js_unescaped(tmp_path: Path):
+    snap = _snap_empty()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # CSS selector survives intact (not entity-encoded)
+    assert "details>summary" in html
+    assert "details&gt;summary" not in html
+
+    # JS source survives intact
+    assert 'var blocks = ["' in html
+    assert "&#34;" not in html
+
+    # Sparkline span selector in JS must not be entity-encoded
+    assert "&lt;span data-sparkline" not in html
+
+
 def test_render_escapes_user_provided_strings(tmp_path: Path):
     snap = _snap_populated(
         summary_text="<script>alert(1)</script>",
