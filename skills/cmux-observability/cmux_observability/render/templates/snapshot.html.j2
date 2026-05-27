@@ -71,6 +71,18 @@
     }
   }
 
+  /* Reviewer follow-up #2 (P2 layout): the legacy bundled style.css pins
+     `main { max-width: 1080px }`, which defeats the T12 1280px / 1600px
+     responsive grid breakpoints — the grid never expands past 1080px even
+     on wide monitors. We bump the cap to 1800px on the dashboard <main>;
+     this leaves comfortable gutters at the 1600px 3-column breakpoint
+     while preventing the dashboard from stretching uncomfortably wide on
+     4K displays. Selector specificity `main.dashboard-main` (0,1,1) beats
+     the legacy `main` (0,0,1) regardless of source order. */
+  main.dashboard-main {
+    max-width: 1800px;
+  }
+
   /* T8: hero strip. Sticky to the top of the viewport so the counters and
      search box stay visible as the user scrolls the workspace list. */
   .hero {
@@ -276,6 +288,19 @@
     gap: var(--space-2);
     flex-wrap: wrap;
   }
+  /* Reviewer follow-up #3 (P3): the legacy bundled style.css ships a global
+     `header { padding: 12px 18px; border-bottom: 1px solid var(--border) }`,
+     so the workspace card's <header class="card-header"> would inherit
+     page-header chrome (extra padding + an internal divider line). Reset
+     both to zero so the card-header stays compact. Selector specificity
+     (.card-header) ties with the global `header`; because the inline
+     <style> renders BEFORE style.css in the document but this rule lives
+     in the same inline block as the rest of the dashboard chrome, we keep
+     the reset broad (any `.card-header`) for future card variants. */
+  .card-header {
+    padding: 0;
+    border-bottom: 0;
+  }
   .workspace-grid .card-title {
     margin: 0;
     display: flex;
@@ -351,10 +376,10 @@
     {# T7-T10 follow-up (P2): state-bucket chips are <button type="button">
        so they're keyboard-focusable and Enter/Space activate the existing
        click handler natively. The 3 non-interactive counters above stay <div>. #}
-    <button type="button" class="counter" data-state="running">{{ _running }}<small>running</small></button>
-    <button type="button" class="counter" data-state="needs_input">{{ _needs_input }}<small>needs_input</small></button>
-    <button type="button" class="counter" data-state="idle">{{ _idle }}<small>idle</small></button>
-    <button type="button" class="counter" data-state="unknown">{{ _unknown }}<small>unknown</small></button>
+    <button type="button" class="counter" data-state="running" aria-pressed="false">{{ _running }}<small>running</small></button>
+    <button type="button" class="counter" data-state="needs_input" aria-pressed="false">{{ _needs_input }}<small>needs_input</small></button>
+    <button type="button" class="counter" data-state="idle" aria-pressed="false">{{ _idle }}<small>idle</small></button>
+    <button type="button" class="counter" data-state="unknown" aria-pressed="false">{{ _unknown }}<small>unknown</small></button>
   </div>
   <div class="hero-right">
     <input class="hero-search" id="hero-search" type="search" placeholder="filter surfaces…" aria-label="Filter surfaces">
@@ -362,7 +387,7 @@
     <div class="hero-refresh">{{ "re-run: cmux-observability collect && finalize" | safe }}</div>
   </div>
 </header>
-<main>
+<main class="dashboard-main">
   {% if snapshot.failures %}{% include "_failures.html.j2" %}{% endif %}
 
   {# T11: blocked-work banner — included AFTER the hero (above main loop)
@@ -469,13 +494,18 @@
       for (var i = 0; i < state.states.length; i++) activeSet[state.states[i]] = true;
       var q = (state.query || "").toLowerCase();
 
-      // Reflect chip state.
+      // Reflect chip state. Reviewer follow-up #2 (P2 a11y): keep
+      // `aria-pressed` in lockstep with `data-filter-active` so screen-reader
+      // and keyboard users can perceive which buckets are toggled — the
+      // visual ring driven by data-filter-active is invisible to them.
       for (var c = 0; c < chips.length; c++) {
         var st = chips[c].getAttribute("data-state");
         if (activeSet[st]) {
           chips[c].setAttribute("data-filter-active", "true");
+          chips[c].setAttribute("aria-pressed", "true");
         } else {
           chips[c].removeAttribute("data-filter-active");
+          chips[c].setAttribute("aria-pressed", "false");
         }
       }
 
