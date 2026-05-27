@@ -229,3 +229,81 @@ def test_partial_failure_no_git_renders_no_repos(
     final = json.loads(cp.stdout)
     # Reading the rendered HTML must not raise; content is permissive.
     Path(final["html"]).read_text()
+
+
+def test_full_pipeline_with_summaries_and_themes(
+    tmp_home: Path, fake_cmux, fixture_dir: Path,
+) -> None:
+    """End-to-end exercise of the 5-step JSON contract: collect → record
+    summaries → themes-payload → record themes → finalize. Confirms that
+    an agent-authored summary and a theme label both land in the rendered
+    HTML when the pending list is non-empty."""
+    py = _resolve_interpreter()
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_home)
+    env["PYTHONPATH"] = str(SKILL_ROOT)
+    # Aligned tree/top fixtures so the pipeline produces ≥1 agent; the
+    # redaction fixture provides scrollback for read-screen.
+    env["CMUX_FIXTURE_TREE"] = str(fixture_dir / "cmux_tree_with_tagged_ws.txt")
+    env["CMUX_FIXTURE_TOP"] = str(fixture_dir / "cmux_top_with_tags.txt")
+    env["CMUX_FIXTURE_READ_SCREEN"] = str(fixture_dir / "redaction_secrets.txt")
+
+    # ---- collect ---------------------------------------------------------
+    cp = _run_cli(py, ["collect"], env=env)
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+    payload = json.loads(cp.stdout)
+    run_id = payload["run_id"]
+    pending = payload.get("pending_summaries", [])
+    # Sanity guard: a fixture regression must turn the test red, not green.
+    assert pending, "expected at least one pending summary from aligned fixture"
+
+    # ---- record-summaries -----------------------------------------------
+    summaries = {
+        "summaries": [
+            {
+                "surface_ref": p["surface_ref"],
+                "summary": "writing tests for the parser",
+                "state_hint": p["cmux_state"],
+                "needs_input_reason": None,
+                "confidence": 0.85,
+            }
+            for p in pending
+        ],
+    }
+    cp = _run_cli(py, ["record-summaries", "--run-id", run_id], env=env,
+                  stdin=json.dumps(summaries))
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+
+    # ---- themes-payload --------------------------------------------------
+    cp = _run_cli(py, ["themes-payload", "--run-id", run_id], env=env)
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+    tp = json.loads(cp.stdout)
+    if tp.get("omit"):
+        themes = {"themes": []}
+    else:
+        themes = {"themes": [{
+            "label": "parser work",
+            "member_refs": [p["surface_ref"] for p in pending],
+            "why": "all agents are running parser-related work in the cmux tree",
+            "confidence": 0.8,
+        }]}
+
+    # ---- record-themes ---------------------------------------------------
+    cp = _run_cli(py, ["record-themes", "--run-id", run_id], env=env,
+                  stdin=json.dumps(themes))
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+
+    # ---- finalize --------------------------------------------------------
+    cp = _run_cli(py, ["finalize", "--run-id", run_id, "--no-open"], env=env)
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+    final = json.loads(cp.stdout)
+    html = Path(final["html"]).read_text()
+
+    assert "writing tests for the parser" in html, (
+        "agent-authored summary text missing from rendered HTML"
+    )
+    if not tp.get("omit"):
+        assert "parser work" in html, (
+            "theme label missing from rendered HTML"
+        )
