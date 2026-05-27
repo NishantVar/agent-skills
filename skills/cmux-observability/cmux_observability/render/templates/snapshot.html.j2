@@ -190,6 +190,100 @@
     font-family: var(--font-mono);
     font-size: 0.75rem;
   }
+
+  /* T12: workspace grid — responsive columns. Single column on small screens,
+     two columns at 1280px (typical wide laptop), three at 1600px (large
+     external monitor). Fixed pixel breakpoints (per spec) keep card widths
+     predictable; intrinsic auto-fit was rejected because the card body is a
+     dense table whose minimum width fights with minmax(). */
+  .workspace-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+    padding: 0 var(--space-4) var(--space-4);
+  }
+  @media (min-width: 1280px) {
+    .workspace-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  @media (min-width: 1600px) {
+    .workspace-grid {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+  }
+
+  /* T12: workspace card header — title row carrying basename, optional muted
+     full path, activity dot, and surface count. The dot itself is a small
+     circle driven by the --state-* tokens; dotted-gray case keys off
+     data-activity="unknown" and switches to a dotted border per the design
+     token --state-unknown-border-style. */
+  .workspace-grid .card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    font-family: var(--font-sans);
+    color: var(--text);
+  }
+  .workspace-grid .card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .workspace-grid .card-title {
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    font-size: 1rem;
+  }
+  .ws-title-basename {
+    font-weight: 600;
+    color: var(--contrast-strong);
+  }
+  .ws-path-full {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .activity-dot {
+    display: inline-block;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: var(--radius-pill);
+    background: var(--state-unknown);
+    border: 2px solid transparent;
+  }
+  .activity-dot[data-activity="running"] {
+    background: var(--state-running);
+  }
+  .activity-dot[data-activity="needs_input"] {
+    background: var(--state-needs-input);
+  }
+  .activity-dot[data-activity="idle"] {
+    background: var(--state-idle);
+  }
+  .activity-dot[data-activity="unknown"] {
+    background: transparent;
+    border: 2px var(--state-unknown-border-style) var(--state-unknown);
+  }
+  .surface-count {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .workspace-grid .card-body > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
 </style>
 <style>{{ inline_css | safe }}</style>
 </head><body>
@@ -233,8 +327,11 @@
   {% include "_blocked.html.j2" %}
 
   {% if snapshot.workspaces %}
-    <section><h2>Workspaces</h2>
-      {% for ws in snapshot.workspaces %}{% include "_workspace.html.j2" %}{% endfor %}
+    <section>
+      <h2>Workspaces</h2>
+      <div class="workspace-grid">
+        {% for ws in snapshot.workspaces %}{% include "_workspace.html.j2" %}{% endfor %}
+      </div>
     </section>
   {% else %}
     <section><h2>Workspaces</h2><p>No agents detected.</p></section>

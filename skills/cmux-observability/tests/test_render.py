@@ -789,3 +789,272 @@ def test_render_blocked_banner_two_cards_in_capture_order(tmp_path: Path):
     # in the inline style block.
     assert "border-left" in html
     assert "var(--state-needs-input)" in html
+
+
+def _snap_workspace_states(
+    *,
+    ws_title: str = "Project A",
+    surface_states: list[str | None] | None = None,
+) -> Snapshot:
+    """T12 helper: one workspace with N surfaces; each surface either has an
+    agent in the given state, or has no agent (`None`) to simulate a plain
+    shell. Returns a Snapshot ready for rendering.
+    """
+    surface_states = surface_states or []
+    surfaces: list[Surface] = []
+    agents: list[Agent] = []
+    for i, st in enumerate(surface_states, start=1):
+        ref = f"surface:{i}"
+        surfaces.append(Surface(
+            ref=ref,
+            pane_ref=f"pane:{i}",
+            workspace_ref="workspace:1",
+            kind="terminal",
+            title=f"surface {i}",
+        ))
+        if st is not None:
+            agents.append(Agent(
+                surface_ref=ref,
+                workspace_ref="workspace:1",
+                type="claude_code",
+                type_source="cmux_tag",
+                type_confidence=1.0,
+                state=st,
+                state_source="cmux_tag",
+            ))
+    workspace = Workspace(
+        ref="workspace:1",
+        title=ws_title,
+        window_ref="window:1",
+        surfaces=surfaces,
+    )
+    return Snapshot(
+        schema_version=1,
+        captured_at=datetime(2026, 5, 27, 14, 30, 0, tzinfo=timezone.utc),
+        host="laptop",
+        cmux_version="1.2.3",
+        workspaces=[workspace],
+        agents=agents,
+        themes=[],
+        productivity=None,
+        history=None,
+        failures=[],
+    )
+
+
+def test_render_workspace_grid_responsive_breakpoints(tmp_path: Path):
+    """T12: the workspace grid container ships a responsive CSS grid:
+    1fr at baseline, 1fr 1fr at min-width 1280px, 1fr 1fr 1fr at 1600px.
+    """
+    snap = _snap_workspace_states(surface_states=["running"])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Baseline single-column track
+    import re
+    assert re.search(
+        r'\.workspace-grid\s*\{[^}]*grid-template-columns:\s*1fr\s*;',
+        html, re.S,
+    ), "workspace grid must default to 1fr (mobile baseline)"
+
+    # 2-col @ 1280px
+    assert re.search(
+        r'@media\s*\(\s*min-width:\s*1280px\s*\)\s*\{[^}]*\.workspace-grid[^}]*grid-template-columns:\s*1fr\s+1fr\s*;',
+        html, re.S,
+    ), "workspace grid must switch to 1fr 1fr at min-width 1280px"
+
+    # 3-col @ 1600px
+    assert re.search(
+        r'@media\s*\(\s*min-width:\s*1600px\s*\)\s*\{[^}]*\.workspace-grid[^}]*grid-template-columns:\s*1fr\s+1fr\s+1fr\s*;',
+        html, re.S,
+    ), "workspace grid must switch to 1fr 1fr 1fr at min-width 1600px"
+
+    # Grid container wraps the workspaces section.
+    assert re.search(
+        r'class="[^"]*workspace-grid[^"]*"', html,
+    ), "workspaces must be wrapped in .workspace-grid container"
+
+
+def test_render_workspace_card_activity_dot_needs_input_wins(tmp_path: Path):
+    """T12 precedence: any needs_input surface → amber dot."""
+    snap = _snap_workspace_states(
+        surface_states=["needs_input", "running", "idle"],
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Activity dot exists on the workspace card with data-activity="needs_input".
+    import re
+    assert re.search(
+        r'class="[^"]*activity-dot[^"]*"[^>]*data-activity="needs_input"',
+        html, re.S,
+    ), "activity dot must carry data-activity=\"needs_input\" when any surface needs_input"
+
+
+def test_render_workspace_card_activity_dot_running_when_no_needs_input(tmp_path: Path):
+    """T12 precedence: no needs_input, any running → green dot."""
+    snap = _snap_workspace_states(surface_states=["running", "idle"])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    import re
+    assert re.search(
+        r'class="[^"]*activity-dot[^"]*"[^>]*data-activity="running"',
+        html, re.S,
+    ), "activity dot must carry data-activity=\"running\" when no needs_input but some running"
+
+
+def test_render_workspace_card_activity_dot_idle_when_only_idle(tmp_path: Path):
+    """T12 precedence: only idle agents → gray dot."""
+    snap = _snap_workspace_states(surface_states=["idle", "idle"])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    import re
+    assert re.search(
+        r'class="[^"]*activity-dot[^"]*"[^>]*data-activity="idle"',
+        html, re.S,
+    ), "activity dot must carry data-activity=\"idle\" when all agents are idle"
+
+
+def test_render_workspace_card_activity_dot_unknown_when_no_agents(tmp_path: Path):
+    """T12 precedence fallthrough: no agents (only plain shells) → dotted-gray
+    dot via data-activity="unknown"."""
+    snap = _snap_workspace_states(surface_states=[None, None])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    import re
+    assert re.search(
+        r'class="[^"]*activity-dot[^"]*"[^>]*data-activity="unknown"',
+        html, re.S,
+    ), "activity dot must carry data-activity=\"unknown\" when no agents present"
+
+
+def test_render_workspace_card_details_open_when_needs_input(tmp_path: Path):
+    """T12: <details> wrapping the card body is `open` when any surface is
+    needs_input or running."""
+    snap = _snap_workspace_states(surface_states=["needs_input"])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    import re
+    # `<details open ...>` or `<details ... open>` on the workspace card.
+    assert re.search(
+        r'<details\b[^>]*\bopen\b[^>]*class="[^"]*card-body[^"]*"'
+        r'|<details\b[^>]*class="[^"]*card-body[^"]*"[^>]*\bopen\b',
+        html, re.S,
+    ), "workspace card-body <details> must carry open when any surface needs_input"
+
+
+def test_render_workspace_card_details_open_when_running(tmp_path: Path):
+    """T12: <details> is open when at least one surface is running."""
+    snap = _snap_workspace_states(surface_states=["running", "idle"])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    import re
+    assert re.search(
+        r'<details\b[^>]*\bopen\b[^>]*class="[^"]*card-body[^"]*"'
+        r'|<details\b[^>]*class="[^"]*card-body[^"]*"[^>]*\bopen\b',
+        html, re.S,
+    ), "workspace card-body <details> must carry open when any surface running"
+
+
+def test_render_workspace_card_details_closed_when_idle_only(tmp_path: Path):
+    """T12: <details> is NOT open when no surface is needs_input or running."""
+    snap = _snap_workspace_states(surface_states=["idle", "idle"])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    import re
+    # Find the workspace card-body details element and assert no `open` token.
+    m = re.search(
+        r'<details\b([^>]*)class="[^"]*card-body[^"]*"([^>]*)>',
+        html, re.S,
+    )
+    assert m, "workspace card-body <details> must exist"
+    pre, post = m.group(1), m.group(2)
+    assert " open" not in pre and " open" not in post and not pre.strip().endswith("open") and not post.strip().endswith("open"), (
+        "workspace card-body <details> must NOT carry open when no needs_input/running"
+    )
+
+
+def test_render_workspace_card_details_closed_when_no_agents(tmp_path: Path):
+    """T12: a workspace with only plain shells (no agents) renders <details>
+    closed — there's nothing demanding the user's attention."""
+    snap = _snap_workspace_states(surface_states=[None, None])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    import re
+    m = re.search(
+        r'<details\b([^>]*)class="[^"]*card-body[^"]*"([^>]*)>',
+        html, re.S,
+    )
+    assert m, "workspace card-body <details> must exist"
+    pre, post = m.group(1), m.group(2)
+    assert " open" not in pre and " open" not in post, (
+        "workspace card-body <details> must NOT carry open when no agents"
+    )
+
+
+def test_render_workspace_card_title_path_basename_and_muted_full_path(tmp_path: Path):
+    """T12: when workspace title looks like a filesystem path, render basename
+    prominently and the full path muted below."""
+    snap = _snap_workspace_states(
+        ws_title="/home/u/repos/my-project",
+        surface_states=["running"],
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Basename appears as prominent element.
+    assert "my-project" in html
+    # Full path also appears (muted secondary line).
+    assert "/home/u/repos/my-project" in html
+    # Muted full-path element carries a `ws-path-full` class hook.
+    import re
+    assert re.search(
+        r'class="[^"]*ws-path-full[^"]*"[^>]*>[^<]*/home/u/repos/my-project',
+        html, re.S,
+    ), "muted full path must use .ws-path-full class hook"
+    # Basename element marked.
+    assert re.search(
+        r'class="[^"]*ws-title-basename[^"]*"[^>]*>[^<]*my-project',
+        html, re.S,
+    ), "basename must use .ws-title-basename class hook"
+
+
+def test_render_workspace_card_title_non_path_renders_as_is(tmp_path: Path):
+    """T12: a non-path title renders without a muted full-path line."""
+    snap = _snap_workspace_states(
+        ws_title="Project Maya",
+        surface_states=["running"],
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    assert "Project Maya" in html
+    # No ws-path-full muted line for non-path titles.
+    import re
+    assert not re.search(
+        r'class="[^"]*ws-path-full[^"]*"', html, re.S,
+    ), "non-path title must not render .ws-path-full muted line"
+
+
+def test_render_workspace_card_surface_count_rendered(tmp_path: Path):
+    """T12: surface count (NOT agent count) appears near the activity dot."""
+    snap = _snap_workspace_states(
+        surface_states=["running", "idle", None],  # 3 surfaces, 2 agents
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # The surface-count element must show 3.
+    import re
+    m = re.search(
+        r'class="[^"]*surface-count[^"]*"[^>]*>\s*3\b',
+        html, re.S,
+    )
+    assert m, "surface count (3) must render via .surface-count class hook"
