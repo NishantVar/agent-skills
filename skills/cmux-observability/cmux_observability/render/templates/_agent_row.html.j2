@@ -1,4 +1,12 @@
-<tr{% if agent %} data-state="{{ agent.state }}"{% endif %}>
+{# T10: data-search corpus — lowercased once at render-time so JS can do a
+   case-insensitive `.includes(q.toLowerCase())` without per-row work. Combines
+   workspace title, surface title, and (when present) the agent summary text. #}
+{%- set _corpus_parts = [ws.title or "", s.title or ""] -%}
+{%- if agent and agent.summary and agent.summary.text -%}
+  {%- set _corpus_parts = _corpus_parts + [agent.summary.text] -%}
+{%- endif -%}
+{%- set _search_corpus = (_corpus_parts | join(" ")) | lower -%}
+<tr data-search="{{ _search_corpus }}"{% if agent %} data-state="{{ agent.state }}"{% endif %}>
   <td><span class="chip">{{ s.ref }}</span></td>
   <td>{{ s.title }}</td>
   <td>

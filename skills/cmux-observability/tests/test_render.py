@@ -448,3 +448,139 @@ def test_render_hero_click_filter_and_url_hash_state(tmp_path: Path):
         "unknown",
     ):
         assert token in html, f"inline filter script missing token: {token!r}"
+
+
+def test_render_hero_search_live_filter_and_url_hash(tmp_path: Path):
+    """T10: hero search box live-filters surface rows by substring against a
+    per-row `data-search` corpus (lowercased workspace title + surface title +
+    summary text). The query syncs to URL hash as `q=<encoded>` and composes
+    with the T9 `filter=` state filter using AND.
+
+    Render-snapshot assertions only — DOM behaviour is exercised by the
+    inline JS at runtime; we verify the JS source plus the data hooks the
+    JS reads/writes are present in the rendered HTML.
+    """
+    import re
+
+    snap = _snap_populated(
+        summary_text="writing pytest fixtures for maya project",
+        ws_title="Project Maya",
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # The search input has an id the script targets.
+    assert re.search(r'<input[^>]*id="hero-search"[^>]*type="search"', html) or \
+           re.search(r'<input[^>]*type="search"[^>]*id="hero-search"', html), (
+        "hero search <input> must carry id=\"hero-search\""
+    )
+
+    # Surface rows expose a lowercased search corpus via data-search.
+    # The populated fixture has ws.title="Project Maya", surface.title=
+    # "claude_code worker", summary.text="writing pytest fixtures for maya
+    # project". Corpus must be lowercased so JS does `.includes(q.toLowerCase())`.
+    row_match = re.search(r'<tr[^>]*data-search="([^"]*)"', html)
+    assert row_match, "surface <tr> missing data-search attribute"
+    corpus = row_match.group(1)
+    # Lowercased once at render-time:
+    assert corpus == corpus.lower(), f"data-search corpus must be lowercased: {corpus!r}"
+    # Must contain the three fields lowercased.
+    assert "project maya" in corpus, f"workspace title missing from corpus: {corpus!r}"
+    assert "claude_code worker" in corpus, f"surface title missing from corpus: {corpus!r}"
+    assert "writing pytest fixtures for maya project" in corpus, (
+        f"summary text missing from corpus: {corpus!r}"
+    )
+
+    # Inline script must carry the load-bearing tokens proving the wiring.
+    for token in (
+        "q=",                  # hash format: #filter=...&q=...
+        "input",               # the input event listener
+        "data-search",         # the per-row corpus selector key
+        "hashchange",          # still listens for hash changes
+        "encodeURIComponent",  # safely sync query into the hash
+        "decodeURIComponent",  # safely read query out of the hash
+        "toLowerCase",         # case-insensitive substring match
+        "includes",            # substring match
+    ):
+        assert token in html, f"inline search script missing token: {token!r}"
+
+    # AND-composition: the rendered script must combine the state filter and
+    # the query. We look for a pattern proving both gates are checked on the
+    # same row visibility decision. Accept either explicit `&&`/`and` joining,
+    # or sequential early-continue branches. Conservative check: both
+    # `q.length` (or `query`) and `data-state`/`activeSet` appear in the
+    # row-visibility loop.
+    # We assert the script mentions both gates near each other (within ~400
+    # chars of the data-hidden write).
+    hide_writes = [m.start() for m in re.finditer(r'data-hidden', html)]
+    assert hide_writes, "expected at least one data-hidden write in the script"
+    # Find the script section and assert both `data-state` and `data-search`
+    # (or `dataset.search`) are referenced — proving the row decision reads
+    # both attributes.
+    script_block = re.search(r'<script>(?:(?!</script>).)*data-hidden(?:(?!</script>).)*</script>',
+                              html, re.S)
+    assert script_block, "filter script block not found"
+    body = script_block.group(0)
+    assert "data-state" in body or "activeSet" in body, (
+        "filter script must reference state filter in visibility decision"
+    )
+    assert "data-search" in body or "dataset.search" in body, (
+        "filter script must reference search corpus in visibility decision"
+    )
+
+
+def test_render_hero_search_corpus_handles_missing_summary(tmp_path: Path):
+    """T10: rows without a summary still get a data-search corpus (workspace
+    + surface title only) — the JS must not blow up when summary is absent."""
+    import re
+
+    snap = _snap_hero_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Every surface row carries data-search, even those without a summary.
+    rows = re.findall(r'<tr\b[^>]*>', html)
+    # Filter to rows that look like surface rows (have a data-state OR are
+    # inside a surface table — easier: assert at least the populated-fixture
+    # count of rows carry data-search).
+    rows_with_search = [r for r in rows if 'data-search="' in r]
+    # Fixture has 41 surfaces, all in workspaces — all should carry corpus.
+    assert len(rows_with_search) == 41, (
+        f"expected 41 surface rows with data-search, got {len(rows_with_search)}"
+    )
+    # Each corpus is non-empty (workspace + surface title at minimum).
+    for r in rows_with_search:
+        m = re.search(r'data-search="([^"]*)"', r)
+        assert m and m.group(1), f"empty data-search on row: {r!r}"
+
+
+def test_render_hero_search_corpus_escapes_html(tmp_path: Path):
+    """T10: data-search corpus must be HTML-attribute-safe — Jinja autoescape
+    on the corpus string must protect against double-quote injection or
+    `<script>` insertion via workspace/summary text."""
+    import re
+
+    snap = _snap_populated(
+        summary_text='" onmouseover="alert(1)',
+        ws_title="<script>x</script>",
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # data-search must NOT contain a raw unescaped double-quote breakout or
+    # raw <script>. We matched the attribute via [^"]* so absence of a raw "
+    # inside is structurally guaranteed; the assertions below additionally
+    # confirm the dangerous chars survive as entity references.
+    row = re.search(r'<tr[^>]*data-search="([^"]*)"', html)
+    assert row, "missing data-search on surface row"
+    corpus_attr = row.group(1)
+    # Raw < / > / " MUST be entity-encoded inside the attribute value.
+    assert "<script>" not in corpus_attr, (
+        f"raw <script> reached corpus: {corpus_attr!r}"
+    )
+    assert "&lt;script&gt;" in corpus_attr, (
+        f"workspace title should appear entity-encoded in corpus: {corpus_attr!r}"
+    )
+    assert "&#34;" in corpus_attr or "&quot;" in corpus_attr, (
+        f"double-quote breakout from summary should be entity-encoded: {corpus_attr!r}"
+    )
