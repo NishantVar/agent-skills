@@ -36,3 +36,15 @@ description: >-
 - **Require:** Always use `send` for outgoing messages. Never call `cmux set-buffer`, `cmux paste-buffer`, or `cmux send-key` directly — the helper alone passes `--workspace`, applies the `[from: <me>]` prefix, and uses a per-op buffer name to avoid concurrent-sender interleaving.
 - **Avoid:** Never have this skill call `tfork` directly. When a spawn is needed, the helper returns a `peer_unknown` handoff with a pre-written `payload_file`; the calling agent invokes `tfork`. Same rule in reverse.
 - **Deprecated:** `--my-name` and `--bootstrap-suggested-name` still work as one-release aliases for `--my-title` / `--bootstrap-suggested-title` (with a stderr warning). Update call sites; the aliases will be removed.
+- **Require:** When forking an agent via tfork that you'll message, pass `--title <t>` to tfork — the new tab is renamed before tfork returns, so `send --peer <t>` resolves on the first try.
+
+### Red Flags
+
+Skip these — SKILL.md is the complete interface.
+
+| Thought | Reality |
+|---|---|
+| "`agent_msg.py list` first" | `send` returns `peer_*` handoffs with everything you need. |
+| "Check `--help` for the right flag" | All flags are listed in Parameters. |
+| "Read agent_msg.py to understand `send`" | SKILL.md is the contract. |
+| "`cmux identify` to know my surface first" | The helper handles it. |

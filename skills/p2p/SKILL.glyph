@@ -4,6 +4,7 @@ skill p2p(my_title = "" <"REQUIRED on first send for this agent EXCEPT on inline
     require single_stable_title
     require always_use_send_verb
     require honor_handoff_json
+    require ask_tfork_for_title
     avoid skill_calls_skill
 
     flow:
@@ -51,3 +52,14 @@ const always_use_send_verb = """All outgoing messages go through `agent_msg.py s
 const honor_handoff_json = """When the helper returns `ok: false`, the JSON contains an explicit `agent_instruction` field. Follow it verbatim — do not improvise around it. The handoff carries `code`, `human_message`, `agent_instruction`, `action_required`, `handoff_skill`, `rerun_argv`, and `retryable`, plus per-code extras."""
 
 const skill_calls_skill = """This skill never invokes the tfork skill itself. When a spawn is needed, send returns a `peer_unknown` handoff with `handoff_skill: \"tfork\"` and a pre-written `payload_file`; the calling agent invokes the tfork skill using whatever delayed-input mechanism that skill currently exposes (p2p does not prescribe a flag). Same rule in reverse: tfork never calls p2p."""
+
+const ask_tfork_for_title = """When forking an agent via tfork that you'll message, pass `--title <t>` to tfork — the new tab is renamed before tfork returns, so `send --peer <t>` resolves on the first try."""
+
+// red_flags renders as the ### Red Flags section in SKILL.md. Hand-mirrored
+// for now; the compile pipeline does not yet emit it automatically.
+const red_flags = """| Thought | Reality |
+|---|---|
+| "`agent_msg.py list` first" | `send` returns `peer_*` handoffs with everything you need. |
+| "Check `--help` for the right flag" | All flags are listed in Parameters. |
+| "Read agent_msg.py to understand `send`" | SKILL.md is the contract. |
+| "`cmux identify` to know my surface first" | The helper handles it. |"""

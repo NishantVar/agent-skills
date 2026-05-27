@@ -15,6 +15,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
   Optional cmux surface ref (surface:N) or tab title the new pane attaches next to; omit to anchor on the caller's own pane. Ignored when placement is new-workspace.
   Default: none.
 - **type_override**: Optional classification override: agent or command. Omit to let the binary classify by what it observed after the fork. Default: none.
+- **title**: Optional cmux tab title for the new pane — renamed right after fork so it's immediately p2p-addressable. Pass a snake_case title (e.g. `worker_42`) for any agent you'll message. cmux allows duplicates in a workspace; collisions surface in `note`, not failures. Default: none.
 
 ## Context
 
@@ -25,7 +26,18 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 ## Constraints
 
 - **Must:** Infer only the front-door parameters from the user's request — command, placement, anchor, and type_override — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns.
-- **Require:** tfork only forks. Never message or brief the forked agent from this skill; return the surface ref and let the p2p skill own agent-to-agent messaging.
+- **Require:** tfork only forks. Never message or brief the forked agent from this skill. When the user asks to communicate with, brief, or message the forked agent, load the p2p skill and use it with the session ref (or `--title`) returned from the fork — p2p owns all agent-to-agent messaging.
+
+### Red Flags
+
+Skip these — SKILL.md is the complete interface.
+
+| Thought | Reality |
+|---|---|
+| "Run `--help` first" | All flags are listed in Parameters. |
+| "Read fork_terminal.py to understand it" | SKILL.md is the contract. |
+| "`cmux identify` / `ls` to check surfaces first" | The binary resolves the caller's surface itself. |
+| "Peek at the registry first" | The binary handles it; result reports the label. |
 
 ## Steps
 
@@ -35,8 +47,10 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
    a. Insert --anchor {anchor} into the invocation, before the -- separator.
 4. If the user explicitly specified agent or command as the type:
    a. Insert --type {type_override} into the invocation, before the -- separator.
-5. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
-6. Decide which of the following applies and follow only that path:
+5. If the fork is an agent you'll p2p:
+   a. Pick a snake_case title and insert --title {title} before the -- separator. p2p can route to it on the first send.
+6. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
+7. Decide which of the following applies and follow only that path:
    If the JSON result has ok set to true:
    a. Follow the report-success procedure.
    Otherwise:
@@ -46,7 +60,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 
 1. Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed.
 2. If the result's type is agent:
-   a. Hand the session field — the new cmux surface ref — to the p2p skill for messaging the forked agent.
+   a. Record the session field — the new cmux surface ref — as the address for this forked agent. When the user asks to communicate with, brief, or message that agent (now or later in the conversation), load the p2p skill and use it with this session ref to talk to the agent.
 3. If the result's verified field is false:
    a. tfork could not confirm the command ran cleanly. Point the user at the session surface so they can inspect the pane themselves, and do not re-run the command.
 4. If the result's note mentions 'correct if intended':
