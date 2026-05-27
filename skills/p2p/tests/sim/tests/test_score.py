@@ -367,6 +367,51 @@ def test_action_required_and_retryable_checks(tmp_path: Path):
     assert not res2.passed and "retryable" in res2.reason
 
 
+def test_hygiene_fails_on_non_canonical_event(tmp_path: Path):
+    """Driver/worker tampering signature from QA v2 run 1f007b8c...:
+    worker_alpha had 14 events with `event` values like SIM:PRIME,
+    COUNTER:recv, etc. — only send_result / inbound_frame are
+    canonical. Scorer must refuse to trust the log."""
+    log = tmp_path / "worker_alpha.jsonl"
+    _seed_log(log, [
+        {"event": "send_result", "step_id": 1,
+         "raw_stdout": {"ok": True}, "ts": "2026-05-27T11:00:00+00:00"},
+        {"event": "SIM:PRIME", "step_id": 1,  # non-canonical
+         "ts": "2026-05-27T11:00:01+00:00"},
+    ])
+    a = {"worker": "worker_alpha", "kind": "ok", "count": ">=1"}
+    res = score_assertion(a, step_id=1, log_dir=tmp_path)
+    assert not res.passed
+    assert "non-canonical" in res.reason
+    assert "SIM:PRIME" in res.reason
+
+
+def test_hygiene_fails_on_float_timestamp(tmp_path: Path):
+    """The canonical helpers always emit `ts` as an ISO string. Float
+    epoch timestamps mean somebody wrote to the file directly."""
+    log = tmp_path / "worker_alpha.jsonl"
+    _seed_log(log, [
+        {"event": "send_result", "step_id": 1,
+         "raw_stdout": {"ok": True}, "ts": 1779865723.609888},  # float
+    ])
+    a = {"worker": "worker_alpha", "kind": "ok", "count": ">=1"}
+    res = score_assertion(a, step_id=1, log_dir=tmp_path)
+    assert not res.passed
+    assert "non-ISO" in res.reason
+
+
+def test_hygiene_passes_on_clean_log(tmp_path: Path):
+    log = tmp_path / "worker_alpha.jsonl"
+    _seed_log(log, [
+        {"event": "send_result", "step_id": 1,
+         "raw_stdout": {"ok": True}, "ts": "2026-05-27T11:00:00+00:00",
+         "intended_peer": "worker_bravo"},
+    ])
+    a = {"worker": "worker_alpha", "kind": "ok", "count": ">=1"}
+    res = score_assertion(a, step_id=1, log_dir=tmp_path)
+    assert res.passed, res.reason
+
+
 def test_observed_kind_filters_before_count(tmp_path: Path):
     """Regression: count must be checked AFTER observed_kind narrows the
     event set, not before. QA caught this on the baseline smoke (run

@@ -23,6 +23,15 @@ steps:
       - {worker: worker_alpha,   kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
       - {worker: worker_bravo,   kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
       - {worker: worker_charlie, kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
+      # Ring-lap proof: at least one worker must have received a COUNTER
+      # inbound at step_id=1. Without this, the step can pass on driver-
+      # side sends alone — even if no worker ever forwarded a counter.
+      # any_of across workers because lap-start ordering isn't fixed.
+      - worker: worker_alpha
+        any_of:
+          - {worker: worker_alpha,   event: inbound_frame, body_prefix: "COUNTER:", count: ">=1"}
+          - {worker: worker_bravo,   event: inbound_frame, body_prefix: "COUNTER:", count: ">=1"}
+          - {worker: worker_charlie, event: inbound_frame, body_prefix: "COUNTER:", count: ">=1"}
     classification: pass_fail
 
   - id: 2

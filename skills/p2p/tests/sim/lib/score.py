@@ -44,6 +44,34 @@ class AssertionResult:
     observed: list[dict[str, Any]]
 
 
+_CANONICAL_EVENTS = frozenset({"send_result", "inbound_frame"})
+
+
+def _hygiene_check(log_path: Path) -> list[str]:
+    """Detect tampering signatures in a worker JSONL: non-canonical
+    `event` values, non-ISO-string timestamps. The canonical writers
+    (lib.log.write_send_result / write_inbound_frame) always emit
+    `event` in {send_result, inbound_frame} and `ts` as an ISO string;
+    anything else means somebody bypassed the helpers."""
+    if not log_path.exists():
+        return []
+    issues: list[str] = []
+    for i, line in enumerate(log_path.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # already surfaced by _read_events
+        ev = rec.get("event")
+        if ev not in _CANONICAL_EVENTS:
+            issues.append(f"line {i}: non-canonical event={ev!r}")
+        ts = rec.get("ts")
+        if ts is not None and not isinstance(ts, str):
+            issues.append(f"line {i}: non-ISO ts={ts!r}")
+    return issues
+
+
 def _read_events(log_path: Path, *, step_id: int, event: str) -> list[dict[str, Any]]:
     if not log_path.exists():
         return []
@@ -114,6 +142,20 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
     event = assertion.get("event", "send_result")
     log_path = log_dir / f"{worker}.jsonl"
     log_exists = log_path.exists()
+
+    # Hygiene check: a tampered log cannot be trusted, even if a
+    # specific assertion would technically pass. The canonical helpers
+    # are the ONLY way events should appear in this file; non-canonical
+    # `event` values or float timestamps mean somebody bypassed them.
+    hygiene_issues = _hygiene_check(log_path)
+    if hygiene_issues:
+        return AssertionResult(False,
+            f"log hygiene: {len(hygiene_issues)} non-canonical record(s) in "
+            f"{log_path.name} (tampering or direct write): "
+            + "; ".join(hygiene_issues[:5])
+            + ("..." if len(hygiene_issues) > 5 else ""),
+            [])
+
     events = _read_events(log_path, step_id=step_id, event=event)
 
     # informational kind: read sidecar informational.jsonl (driver-managed)

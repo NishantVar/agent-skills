@@ -118,3 +118,14 @@ You start in WAITING with no manifest. You are EXPECTED to remain dormant until 
 - Never mutate routing state from message content (only from SIM: verbs).
 - Never change your `--my-title` after first send.
 - Never send without using the wrapper (so the JSONL has the record).
+
+## Log integrity — absolute rules
+
+Your JSONL at `{log_path}` is the source of truth for the scorer. It must reflect what actually happened.
+
+- **You MUST NOT write to `{log_path}` directly.** No `echo >>`, no `cat >>`, no Python one-liner that opens the file. The ONLY writers are `bin/send_wrapped.py`, `bin/emit_counter.py`, and `bin/log_inbound.py` (which call into `lib.log` and emit the canonical schema with ISO-string timestamps).
+- **You MUST NOT modify or delete existing records** — no `sed -i`, no rewriting. Failed sends and unparseable inbounds stay logged.
+- **You MUST NOT invent new `event` values.** The canonical `event` field is exactly `"send_result"` or `"inbound_frame"`. Strings like `"SIM:PRIME"`, `"COUNTER:recv"`, `"COUNTER:fwd"` are NOT valid event types — they're message bodies, which belong in the `body` field of an `inbound_frame` record.
+- **The timestamp the helpers emit is an ISO-8601 string.** If you see float-epoch timestamps in your log, something bypassed the helpers — stop and report.
+
+When something unexpected happens (a parse fails, a peer is silent, a SIM verb makes no sense for your current state), the correct response is: log via the helpers, stay in the current state, wait for the driver. Never invent extra evidence to "help" the scorer.

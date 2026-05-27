@@ -45,3 +45,35 @@ After all steps: write `run_summary.json` (schema in spec §7.3) and:
 ## Cleanup contract
 
 You own and may close all panes/workspaces this sim created. This is the user-authorized exception to "never shut down teammates." Run cleanup unconditionally at end (pass or fail).
+
+## Log integrity — absolute rules
+
+The per-worker JSONL files (`runs/{run_id}/<title>.jsonl`) are the ONLY source of truth for the scorer. They must reflect what actually happened on the wire. Violations of these rules invalidate the entire run — a falsely-passing run is strictly worse than a correctly-failing run.
+
+- **You MUST NOT write to any `*.jsonl` file under `runs/{run_id}/` directly** — no `echo >>`, no `cat >>`, no `python3 -c 'open(...).write(...)'`, no editor invocation. The ONLY writers are `bin/send_wrapped.py`, `bin/emit_counter.py`, and `bin/log_inbound.py` (which call into `lib.log`).
+- **You MUST NOT modify or delete existing JSONL records.** No `sed -i`, no rewriting, no truncation, no "remove the failed entry and retry" — failed sends MUST stay in the log. If a send failed and you retry, both attempts appear in the log; that is correct.
+- **You MUST NOT inject synthetic events to satisfy assertions.** If an assertion would fail because the canonical artifact is missing, the assertion fails. Record the anomaly in `driver_notes` (see below) and let the scorer return FAIL for that step. A FAIL with honest artifacts is a useful finding; a PASS with fabricated artifacts is a defect in the harness itself.
+- **You MUST NOT instruct workers to bypass their helpers either** — the same rules apply to them via `worker_prompt.md.tmpl`.
+
+When you are blocked from making an assertion pass through legitimate means (e.g. cmux lacks a primitive, a race didn't fire as expected, a worker is unresponsive), the response is: record an anomaly note describing the limitation, score the step honestly, continue to the next step.
+
+### `close_pane` is human-in-the-loop
+
+cmux has no `close-pane` primitive. When the catalog calls for `close_pane` (step 8's silent_kill `pre_actions`, step 3/10 `cleanup` blocks), you DO NOT simulate the close via workspace-move + manifest deletion + rename. Instead:
+
+1. Print a clear ASK to your own pane: `"OPERATOR: please close pane <surface_ref> (title=<title>) for step <N> <phase>. Reply 'closed' when done."`.
+2. Wait for the operator to confirm.
+3. Then proceed.
+
+This applies to both pre-action kills and cleanup-block closes. The cmux limitation itself is filed as a follow-up against the p2p/cmux integration; the harness does not work around it via simulation.
+
+### `driver_notes` schema
+
+Write anomalies to `runs/{run_id}/driver_notes.jsonl` (one JSON object per line):
+
+```json
+{"step_id": N, "phase": "pre_actions|actions|post_recovery_actions|cleanup",
+ "note": "<short description>", "ts": "<ISO timestamp>"}
+```
+
+This is the ONLY file under `runs/{run_id}/` you may write to directly. It is documentation, not evidence; the scorer never reads it.
