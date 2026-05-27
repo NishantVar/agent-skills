@@ -161,10 +161,10 @@
       {{ _agents_total }}<small>agents</small>
       <span class="counter-sub">{{ _agents_tagged }} tagged · {{ _agents_heuristic }} heuristic</span>
     </div>
-    <div class="counter">{{ _running }}<small>running</small></div>
-    <div class="counter">{{ _needs_input }}<small>needs_input</small></div>
-    <div class="counter">{{ _idle }}<small>idle</small></div>
-    <div class="counter">{{ _unknown }}<small>unknown</small></div>
+    <div class="counter" data-state="running">{{ _running }}<small>running</small></div>
+    <div class="counter" data-state="needs_input">{{ _needs_input }}<small>needs_input</small></div>
+    <div class="counter" data-state="idle">{{ _idle }}<small>idle</small></div>
+    <div class="counter" data-state="unknown">{{ _unknown }}<small>unknown</small></div>
   </div>
   <div class="hero-right">
     <input class="hero-search" type="search" placeholder="filter surfaces…" aria-label="Filter surfaces">
@@ -196,4 +196,97 @@
   {% endif %}
 </main>
 <script>{{ inline_js | safe }}</script>
+<script>
+  // T9: hero counter click-filter with URL-hash state.
+  // Single source of truth is `location.hash`, formatted as `#filter=a,b,c`.
+  // Counter chips with `data-state` attributes toggle membership in that set
+  // on click. Surface rows carrying `data-state` are hidden via
+  // `data-hidden="true"` when their state is not in the active set.
+  // Empty filter (no hash, or `#filter=`) means show all rows.
+  // Reference: modern-web-guidance "stack-drill-down" — browser history
+  // stays in sync so deep links and back/forward navigation work coherently.
+  (function () {
+    var STATES = ["running", "needs_input", "idle", "unknown"];
+    var chips = Array.prototype.slice.call(
+      document.querySelectorAll('.counter[data-state]')
+    );
+    var rows = Array.prototype.slice.call(
+      document.querySelectorAll('tr[data-state]')
+    );
+
+    function parseHash() {
+      var h = (location.hash || "").replace(/^#/, "");
+      if (h.indexOf("filter=") !== 0) return [];
+      var raw = h.slice("filter=".length);
+      if (!raw) return [];
+      return raw.split(",")
+        .map(function (s) { return s.trim(); })
+        .filter(function (s) { return STATES.indexOf(s) !== -1; });
+    }
+
+    function writeHash(active) {
+      if (active.length === 0) {
+        // Clearing the hash keeps deep-links clean. Use history.replaceState
+        // so we don't pollute the back stack with empty-filter entries.
+        if (location.hash) {
+          history.replaceState(null, "", location.pathname + location.search);
+        }
+        return;
+      }
+      var next = "#filter=" + active.join(",");
+      if (location.hash !== next) {
+        location.hash = next;
+      }
+    }
+
+    function apply() {
+      var active = parseHash();
+      var activeSet = {};
+      for (var i = 0; i < active.length; i++) activeSet[active[i]] = true;
+
+      for (var c = 0; c < chips.length; c++) {
+        var st = chips[c].getAttribute("data-state");
+        if (activeSet[st]) {
+          chips[c].setAttribute("data-filter-active", "true");
+        } else {
+          chips[c].removeAttribute("data-filter-active");
+        }
+      }
+
+      var hideAny = active.length > 0;
+      for (var r = 0; r < rows.length; r++) {
+        var rs = rows[r].getAttribute("data-state");
+        if (hideAny && !activeSet[rs]) {
+          rows[r].setAttribute("data-hidden", "true");
+        } else {
+          rows[r].removeAttribute("data-hidden");
+        }
+      }
+    }
+
+    function toggle(state) {
+      var active = parseHash();
+      var idx = active.indexOf(state);
+      if (idx === -1) {
+        active.push(state);
+      } else {
+        active.splice(idx, 1);
+      }
+      writeHash(active);
+      apply();
+    }
+
+    for (var i = 0; i < chips.length; i++) {
+      (function (chip) {
+        chip.style.cursor = "pointer";
+        chip.addEventListener("click", function () {
+          toggle(chip.getAttribute("data-state"));
+        });
+      })(chips[i]);
+    }
+
+    window.addEventListener("hashchange", apply);
+    apply();
+  })();
+</script>
 </body></html>

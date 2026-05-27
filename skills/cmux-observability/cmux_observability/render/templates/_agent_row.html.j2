@@ -1,4 +1,4 @@
-<tr>
+<tr{% if agent %} data-state="{{ agent.state }}"{% endif %}>
   <td><span class="chip">{{ s.ref }}</span></td>
   <td>{{ s.title }}</td>
   <td>

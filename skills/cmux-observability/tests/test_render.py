@@ -319,9 +319,11 @@ def test_render_hero_strip_counters_and_layout(tmp_path: Path):
     def _has_counter(value: int, label: str) -> bool:
         # The template renders counters as: <div class="counter">N<small>label</small></div>
         # Search for the value adjacent to the label, tolerating whitespace.
+        # T9 added a `data-state=...` attribute after the class on the four
+        # state counters, so allow any attributes between class and `>`.
         import re
         pat = re.compile(
-            r'class="counter[^"]*">\s*' + str(value) + r'\s*<small[^>]*>\s*' + re.escape(label),
+            r'class="counter[^"]*"[^>]*>\s*' + str(value) + r'\s*<small[^>]*>\s*' + re.escape(label),
             re.S,
         )
         return bool(pat.search(html))
@@ -368,3 +370,81 @@ def test_relative_time_filter_registered_and_buckets():
     out = rt(old)
     assert "ago" not in out
     assert old.date().isoformat() in out
+
+
+def test_render_hero_click_filter_and_url_hash_state(tmp_path: Path):
+    """T9: hero counter chips for the four state buckets are clickable;
+    clicks compose OR-filter via location.hash, toggling `data-filter-active`
+    on chips and `data-hidden` on rows whose state isn't in the active set.
+
+    Render-snapshot assertions only — DOM behaviour is exercised by the
+    inline JS at runtime; we verify the JS source plus the data hooks the
+    JS reads/writes are present in the rendered HTML.
+    """
+    snap = _snap_hero_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # The four state counters carry data-state="<name>" so the JS can match
+    # them when reading/writing location.hash.
+    import re
+    for state in ("running", "needs_input", "idle", "unknown"):
+        pat = re.compile(
+            r'class="counter[^"]*"[^>]*data-state="' + state + r'"'
+            r'|data-state="' + state + r'"[^>]*class="counter[^"]*"',
+            re.S,
+        )
+        assert pat.search(html), f"counter chip missing data-state=\"{state}\""
+
+    # Workspace/surface/agents counters MUST NOT carry data-state — only
+    # the four state buckets are filter triggers.
+    for non_state_label in ("workspaces", "surfaces", "agents"):
+        # Find the counter block and assert no data-state attribute on it.
+        block = re.search(
+            r'class="counter[^"]*">[^<]*<small[^>]*>\s*' + non_state_label,
+            html,
+            re.S,
+        )
+        # We only care that the non-state counter chip does not carry a
+        # data-state attribute; the regex above pins the chip's open tag.
+        # Look back at the matched chip's opening to verify.
+        chip_open = re.search(
+            r'<div class="counter[^"]*"[^>]*>[^<]*<small[^>]*>\s*' + non_state_label,
+            html,
+            re.S,
+        )
+        assert chip_open, f"counter chip for {non_state_label} not found"
+        assert "data-state=" not in chip_open.group(0), (
+            f"non-state counter {non_state_label!r} should not carry data-state"
+        )
+
+    # Surface rows expose their state via data-state so the JS can hide/show.
+    # Fixture has agents on surfaces 1..17; row 1 is running.
+    assert re.search(r'<tr[^>]*data-state="running"', html), (
+        "agent row missing data-state=\"running\""
+    )
+    assert re.search(r'<tr[^>]*data-state="needs_input"', html), (
+        "agent row missing data-state=\"needs_input\""
+    )
+    assert re.search(r'<tr[^>]*data-state="idle"', html), (
+        "agent row missing data-state=\"idle\""
+    )
+    assert re.search(r'<tr[^>]*data-state="unknown"', html), (
+        "agent row missing data-state=\"unknown\""
+    )
+
+    # Inline <script> block carries the filter logic. We do not pin exact
+    # source — only the load-bearing tokens that prove the wiring exists.
+    for token in (
+        "location.hash",          # reads URL hash
+        "hashchange",             # listens for URL hash changes
+        "data-filter-active",     # toggles on counter chips
+        "data-hidden",            # toggles on filtered-out rows
+        "data-state",             # selector key
+        "filter=",                # hash format: #filter=running,needs_input
+        "running",
+        "needs_input",
+        "idle",
+        "unknown",
+    ):
+        assert token in html, f"inline filter script missing token: {token!r}"
