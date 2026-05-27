@@ -138,6 +138,58 @@
     font-family: var(--font-mono);
     font-size: 0.72rem;
   }
+
+  /* T11: blocked-work banner — one card per needs_input surface, with an
+     amber left-border (var(--state-needs-input)) and a subtly elevated
+     background. Drops in after the hero and before the workspace grid. */
+  .blocked-banner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+  .blocked-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--state-needs-input);
+    border-radius: var(--radius-md);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    font-family: var(--font-sans);
+    color: var(--text);
+  }
+  .blocked-card .blocked-workspace {
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .blocked-card .blocked-surface-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--contrast-strong);
+  }
+  .blocked-card .blocked-summary {
+    font-size: 0.95rem;
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+  .blocked-card .blocked-reason {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .blocked-card .blocked-stamp {
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .blocked-card .blocked-ref {
+    align-self: flex-start;
+    margin-top: var(--space-1);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
 </style>
 <style>{{ inline_css | safe }}</style>
 </head><body>
@@ -174,6 +226,11 @@
 </header>
 <main>
   {% if snapshot.failures %}{% include "_failures.html.j2" %}{% endif %}
+
+  {# T11: blocked-work banner — included AFTER the hero (above main loop)
+     and BEFORE the workspace grid. The partial self-renders only when
+     at least one agent is in `needs_input` state. #}
+  {% include "_blocked.html.j2" %}
 
   {% if snapshot.workspaces %}
     <section><h2>Workspaces</h2>

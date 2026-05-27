@@ -584,3 +584,208 @@ def test_render_hero_search_corpus_escapes_html(tmp_path: Path):
     assert "&#34;" in corpus_attr or "&quot;" in corpus_attr, (
         f"double-quote breakout from summary should be entity-encoded: {corpus_attr!r}"
     )
+
+
+def _snap_blocked_fixture(needs_input_count: int) -> Snapshot:
+    """T11: fixture with N needs_input surfaces (each in its own workspace) plus
+    a couple of running surfaces interleaved. Agents are appended to
+    snapshot.agents in capture order so the banner can rely on that ordering.
+    """
+    workspaces: list[Workspace] = []
+    agents: list[Agent] = []
+    # First, a couple of running surfaces (not blocked) — these must NOT appear
+    # in the blocked banner.
+    for i in range(1, 3):
+        surf = Surface(
+            ref=f"surface:R{i}",
+            pane_ref=f"pane:R{i}",
+            workspace_ref=f"workspace:R{i}",
+            kind="terminal",
+            title=f"running surface {i}",
+        )
+        ws = Workspace(
+            ref=f"workspace:R{i}",
+            title=f"Running WS {i}",
+            window_ref=f"window:R{i}",
+            surfaces=[surf],
+        )
+        workspaces.append(ws)
+        agents.append(Agent(
+            surface_ref=surf.ref,
+            workspace_ref=ws.ref,
+            type="claude_code",
+            type_source="cmux_tag",
+            type_confidence=1.0,
+            state="running",
+            state_source="cmux_tag",
+            summary=Summary(
+                text="running work",
+                state_hint="running",
+                needs_input_reason=None,
+                confidence=0.9,
+                cache_hit=False,
+                cached_at=datetime(2026, 5, 27, 14, 29, 0, tzinfo=timezone.utc),
+                prompt_version=1,
+                screen_hash="aaaa",
+            ),
+        ))
+
+    # Now the needs_input surfaces, in capture order.
+    for i in range(1, needs_input_count + 1):
+        surf = Surface(
+            ref=f"surface:N{i}",
+            pane_ref=f"pane:N{i}",
+            workspace_ref=f"workspace:N{i}",
+            kind="terminal",
+            title=f"blocked surface {i}",
+        )
+        ws = Workspace(
+            ref=f"workspace:N{i}",
+            title=f"Blocked WS {i}",
+            window_ref=f"window:N{i}",
+            surfaces=[surf],
+        )
+        workspaces.append(ws)
+        agents.append(Agent(
+            surface_ref=surf.ref,
+            workspace_ref=ws.ref,
+            type="claude_code",
+            type_source="cmux_tag",
+            type_confidence=1.0,
+            state="needs_input",
+            state_source="cmux_tag",
+            summary=Summary(
+                text=f"long detailed summary for blocked surface {i} with no truncation expected",
+                state_hint="needs_input",
+                needs_input_reason=f"awaiting permission for action {i}",
+                confidence=0.9,
+                cache_hit=False,
+                cached_at=datetime(2026, 5, 27, 14, 29, 0, tzinfo=timezone.utc),
+                prompt_version=1,
+                screen_hash=f"bbbb{i}",
+            ),
+        ))
+
+    return Snapshot(
+        schema_version=1,
+        captured_at=datetime(2026, 5, 27, 14, 30, 0, tzinfo=timezone.utc),
+        host="laptop",
+        cmux_version="1.2.3",
+        workspaces=workspaces,
+        agents=agents,
+        themes=[],
+        productivity=None,
+        history=None,
+        failures=[],
+    )
+
+
+def test_render_blocked_banner_absent_when_no_needs_input(tmp_path: Path):
+    """T11: with zero needs_input surfaces, the blocked-work banner must not
+    render at all (no markers, no `surface:N` literal outside chips elsewhere
+    related to needs_input)."""
+    import re
+
+    snap = _snap_blocked_fixture(needs_input_count=0)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # No banner <section> rendered (CSS rules for .blocked-banner may still
+    # live in the inline <style>; what must NOT exist is the runtime markup).
+    assert not re.search(r'<section[^>]*class="[^"]*blocked-banner', html), (
+        "blocked-banner <section> must not render when no needs_input agents"
+    )
+    assert not re.search(r'<article[^>]*class="[^"]*blocked-card', html), (
+        "blocked-card <article> must not render when no needs_input agents"
+    )
+
+
+def test_render_blocked_banner_two_cards_in_capture_order(tmp_path: Path):
+    """T11: with two needs_input surfaces, the banner renders two cards in
+    capture order, each carrying workspace title, surface title, full summary
+    text, needs_input_reason (italic), relative_time stamp, and a copy-ref chip.
+
+    The `surface:N` literal must appear ONLY inside chip elements (chip body +
+    its title attribute) — NOT in card headings or bodies. T20 audits this
+    globally; we honor it here from the start.
+    """
+    import re
+
+    snap = _snap_blocked_fixture(needs_input_count=2)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Banner section is present.
+    assert "blocked-banner" in html
+    # Two cards rendered.
+    cards = re.findall(r'<article[^>]*class="[^"]*blocked-card[^"]*"', html)
+    assert len(cards) == 2, f"expected 2 blocked cards, got {len(cards)}"
+
+    # Extract the banner section so we can pin assertions to it.
+    banner_match = re.search(
+        r'<section[^>]*class="[^"]*blocked-banner[^"]*"[^>]*>(.*?)</section>',
+        html, re.S,
+    )
+    assert banner_match, "blocked banner section not found"
+    banner = banner_match.group(1)
+
+    # Capture-order: surface:N1 appears before surface:N2 in the banner.
+    pos_n1 = banner.find("surface:N1")
+    pos_n2 = banner.find("surface:N2")
+    assert pos_n1 != -1 and pos_n2 != -1, "both surface refs must appear in banner"
+    assert pos_n1 < pos_n2, "capture order N1 before N2 must be preserved"
+
+    # Workspace titles present.
+    assert "Blocked WS 1" in banner
+    assert "Blocked WS 2" in banner
+    # Surface titles present.
+    assert "blocked surface 1" in banner
+    assert "blocked surface 2" in banner
+    # Full summary text (no truncation).
+    assert "long detailed summary for blocked surface 1 with no truncation expected" in banner
+    assert "long detailed summary for blocked surface 2 with no truncation expected" in banner
+    # needs_input_reason rendered in italic (<em> or <i>).
+    assert re.search(
+        r'<(?:em|i)[^>]*>[^<]*awaiting permission for action 1', banner
+    ), "needs_input_reason for card 1 must be in <em>/<i>"
+    assert re.search(
+        r'<(?:em|i)[^>]*>[^<]*awaiting permission for action 2', banner
+    ), "needs_input_reason for card 2 must be in <em>/<i>"
+    # "captured Xs ago" stamp — relative_time on snapshot.captured_at against
+    # now() yields ISO date for May 2026 from current "now". Either ago or ISO.
+    assert "captured" in banner
+    # Running surfaces must NOT appear in the banner.
+    assert "running surface" not in banner
+    assert "Running WS" not in banner
+
+    # Identifier-strip rule: `surface:N` literal MUST appear ONLY inside chip
+    # elements (chip body + title attribute) within the banner.
+    # Find every occurrence of `surface:N` in the banner and confirm it lives
+    # inside a chip element.
+    # Strategy: remove all chip elements from the banner and assert no
+    # `surface:` remains.
+    banner_without_chips = re.sub(
+        r'<[^>]*class="[^"]*\bchip\b[^"]*"[^>]*>[^<]*</[^>]+>',
+        "",
+        banner,
+    )
+    # Also remove standalone title="cmux focus surface:N" attributes if they
+    # sit on non-chip elements (defensive — by spec the title sits on the chip
+    # itself, removed above).
+    leaked = re.findall(r'surface:\w+', banner_without_chips)
+    assert not leaked, (
+        f"surface:N literal leaked outside chip elements: {leaked!r}"
+    )
+
+    # The chip must carry title="cmux focus surface:N".
+    assert re.search(
+        r'title="cmux focus surface:N1"', banner
+    ), "chip for card 1 must carry title=\"cmux focus surface:N1\""
+    assert re.search(
+        r'title="cmux focus surface:N2"', banner
+    ), "chip for card 2 must carry title=\"cmux focus surface:N2\""
+
+    # Amber left-border via the --state-needs-input token must be referenced
+    # in the inline style block.
+    assert "border-left" in html
+    assert "var(--state-needs-input)" in html
