@@ -433,6 +433,91 @@
   .surface-copy-ref {
     flex: 0 0 auto;
   }
+
+  /* T14: click-to-expand surface row. <details class="surface-details">
+     wraps a <summary class="surface-row"> (collapsed flex view) and a
+     <div class="surface-expanded"> panel revealed when the user toggles.
+     <details>+<summary> is keyboard-accessible by default — Enter/Space
+     toggles, screen readers expose aria-expanded — so no JS is needed.
+     The summary marker is suppressed via `list-style: none` and
+     `::-webkit-details-marker { display: none }` for the cleaner flex
+     layout; the existing copy-ref chip + state pill still telegraph
+     interactivity. */
+  details.surface-details {
+    /* Reset the default <details> border-box so the inner flex row stays
+       flush with neighbouring rows. The shared .surface-row + .surface-row
+       border-top rule (above) continues to separate adjacent disclosures. */
+  }
+  details.surface-details > summary.surface-row {
+    list-style: none;
+    cursor: pointer;
+  }
+  details.surface-details > summary.surface-row::-webkit-details-marker {
+    display: none;
+  }
+  details.surface-details > summary.surface-row:focus-visible {
+    outline: 2px solid var(--state-running);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+  .surface-expanded {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3) var(--space-2) calc(var(--space-2) + 2.5rem);
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+  .surface-expanded-summary {
+    white-space: pre-wrap;
+    color: var(--text);
+  }
+  .surface-expanded-row {
+    color: var(--text);
+  }
+  .surface-expanded-label {
+    color: var(--muted);
+    font-weight: 600;
+    margin-right: var(--space-1);
+  }
+  .surface-expanded-cwd {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+  .surface-expanded-typeinfo {
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+  .surface-disagreement {
+    color: var(--state-needs-input);
+    font-size: 0.8rem;
+    font-style: italic;
+  }
+  /* Spec: diagnostic line is muted + small (low-contrast). This is the second
+     allowed home for bare `workspace:N` / `surface:N` refs (the copy-ref chip
+     is the first); no other row content may render bare refs. */
+  .surface-diagnostic {
+    color: var(--muted);
+    font-size: 0.75em;
+    font-family: var(--font-mono);
+    margin-top: var(--space-1);
+  }
+  /* T14: redaction badge in the collapsed summary row when
+     summary.redactions_applied is non-empty. Neutral text "redacted" with the
+     applied redaction types in the title= tooltip. */
+  .surface-redaction-badge {
+    flex: 0 0 auto;
+    display: inline-block;
+    padding: 0 var(--space-2);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--state-needs-input);
+    background: color-mix(in srgb, var(--state-needs-input) 14%, transparent);
+    color: var(--state-needs-input);
+  }
 </style>
 <style>{{ inline_css | safe }}</style>
 </head><body>

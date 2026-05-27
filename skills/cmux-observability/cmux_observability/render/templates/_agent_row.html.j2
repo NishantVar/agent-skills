@@ -1,40 +1,86 @@
-{# T13: surface row redesign — flex layout, state pill, mono title,
-   CSS-truncated summary with full text in title=, captured relative time,
-   and a copy-ref chip. Row root is <div class="surface-row"> (replacing the
-   prior <tr>) so the flex layout works without abusing table internals.
+{# T13 + T14: surface row.
 
-   Filter contract (T9 + T10) preserved on the row root:
-     data-state="<state>"   — state-bucket filter
-     data-search="<corpus>" — substring filter; lowercased once at render
+   Root is <details class="surface-details"> wrapping a collapsed <summary
+   class="surface-row"> (flex layout: state pill, mono title, ellipsized
+   summary, captured stamp, optional redaction badge, copy-ref chip) and an
+   expanded <div class="surface-expanded"> panel below.
 
-   Identifier-strip (T20): the literal `surface:N` token appears ONLY inside
-   the copy-ref chip (body + title attribute). #}
+   <details>+<summary> is keyboard-accessible by default (Enter/Space toggles,
+   ATs expose the open/closed state via aria-expanded) — no extra JS for the
+   toggle.
+
+   Filter contract (T9 + T10): data-state and data-search live on the OUTER
+   <details> so the `[data-hidden="true"] { display: none; }` rule hides the
+   whole disclosure when filters reject it, and the JS filter (which
+   iterates `[data-search]`) keeps working unchanged.
+
+   Identifier-strip (T20): the literal `surface:N` and `workspace:N` tokens
+   appear ONLY inside (a) the copy-ref chip and (b) the muted diagnostic
+   line at the bottom of the expanded panel. These are the two allowed homes.
+#}
 {%- set _corpus_parts = [ws.title or "", s.title or ""] -%}
 {%- if agent and agent.summary and agent.summary.text -%}
   {%- set _corpus_parts = _corpus_parts + [agent.summary.text] -%}
 {%- endif -%}
 {%- set _search_corpus = (_corpus_parts | join(" ")) | lower -%}
-<div class="surface-row" data-search="{{ _search_corpus }}"{% if agent %} data-state="{{ agent.state }}"{% endif %}>
-  {% if agent %}
-    <span class="state-pill state-{{ agent.state }}">{{ agent.state }}</span>
-  {% else %}
-    <span class="state-pill state-unknown">{{ s.kind }}</span>
-  {% endif %}
-  <span class="mono-title">{{ s.title }}</span>
-  {% if agent and agent.summary %}
-    <span class="surface-summary" title="{{ agent.summary.text }}">{{ agent.summary.text | truncated_summary }}</span>
-  {% elif not agent %}
-    <span class="surface-summary">(not classified as an agent)</span>
-  {% else %}
-    {# T13 step 5 deviation: the model exposes no `no_summarize` signal, so
-       the (skipped) vs (no screen access) distinction collapses into the
-       catch-all (no screen access). #}
-    <span class="surface-summary">(no screen access)</span>
-  {% endif %}
-  {% if agent and agent.summary and agent.summary.cached_at %}
-    <span class="surface-captured">captured {{ agent.summary.cached_at | relative_time }}</span>
-  {% else %}
-    <span class="surface-captured"></span>
-  {% endif %}
-  <span class="chip surface-copy-ref" title="cmux focus {{ s.ref }}">{{ s.ref }}</span>
-</div>
+{%- set _has_redactions = agent and agent.summary and agent.summary.redactions_applied -%}
+{# T14: disagreement note fires only when cmux did NOT tag this row (heuristic
+   type_source) AND the summarizer's hint drove the state (agent_summary
+   state_source). The other direction (cmux_tag with a heuristic that would
+   have disagreed) needs a parallel heuristic re-run on cached state we don't
+   keep — skipped as documented in the worker report. #}
+{%- set _show_disagreement = agent
+      and agent.type_source == "heuristic"
+      and agent.state_source == "agent_summary" -%}
+<details class="surface-details" data-search="{{ _search_corpus }}"{% if agent %} data-state="{{ agent.state }}"{% endif %}>
+  <summary class="surface-row">
+    {% if agent %}
+      <span class="state-pill state-{{ agent.state }}">{{ agent.state }}</span>
+    {% else %}
+      <span class="state-pill state-unknown">{{ s.kind }}</span>
+    {% endif %}
+    <span class="mono-title">{{ s.title }}</span>
+    {% if agent and agent.summary %}
+      <span class="surface-summary" title="{{ agent.summary.text }}">{{ agent.summary.text | truncated_summary }}</span>
+    {% elif not agent %}
+      <span class="surface-summary">(not classified as an agent)</span>
+    {% else %}
+      {# T13 step 5 deviation (preserved): no `no_summarize` signal in the
+         model, so the (skipped) vs (no screen access) distinction collapses
+         into the catch-all (no screen access). #}
+      <span class="surface-summary">(no screen access)</span>
+    {% endif %}
+    {% if agent and agent.summary and agent.summary.cached_at %}
+      <span class="surface-captured">captured {{ agent.summary.cached_at | relative_time }}</span>
+    {% else %}
+      <span class="surface-captured"></span>
+    {% endif %}
+    {% if _has_redactions %}
+      <span class="surface-redaction-badge" title="{{ agent.summary.redactions_applied | join(', ') }}">redacted</span>
+    {% endif %}
+    <span class="chip surface-copy-ref" title="cmux focus {{ s.ref }}">{{ s.ref }}</span>
+  </summary>
+  <div class="surface-expanded">
+    {% if agent and agent.summary %}
+      <div class="surface-expanded-summary">{{ agent.summary.text }}</div>
+      {% if agent.summary.needs_input_reason %}
+        <div class="surface-expanded-row"><span class="surface-expanded-label">needs input:</span> {{ agent.summary.needs_input_reason }}</div>
+      {% endif %}
+    {% endif %}
+    {% if s.cwd %}
+      <div class="surface-expanded-row"><span class="surface-expanded-label">cwd:</span> <span class="surface-expanded-cwd">{{ s.cwd }}</span></div>
+    {% endif %}
+    {% if agent %}
+      <div class="surface-expanded-row surface-expanded-typeinfo"><span class="surface-expanded-label">type:</span> {{ agent.type }} · {{ agent.type_source }} · confidence {{ "%.2f"|format(agent.type_confidence) }}</div>
+    {% endif %}
+    {% if _show_disagreement %}
+      <div class="surface-disagreement">heuristic classified this row; state driven by agent_summary hint (no cmux tag)</div>
+    {% endif %}
+    {% if agent %}
+      {%- set _pid = agent.pid if agent.pid is not none else "?" -%}
+      {%- set _pv = agent.summary.prompt_version if agent.summary else "—" -%}
+      {%- set _sh = (agent.summary.screen_hash[:7] if (agent.summary and agent.summary.screen_hash) else "—") -%}
+      <div class="surface-diagnostic">{{ agent.workspace_ref }} · {{ agent.surface_ref }} · {{ _pid }} · {{ agent.type_source }} · {{ _pv }} · {{ _sh }}</div>
+    {% endif %}
+  </div>
+</details>

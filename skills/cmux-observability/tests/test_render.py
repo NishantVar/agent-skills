@@ -1404,10 +1404,16 @@ def _snap_surface_row(
 
 
 def _surface_row_html(html: str) -> str:
-    """Extract the inner HTML of the surface row whose data-state="running"."""
+    """Extract the inner HTML of the surface row whose data-state="running".
+
+    T14: the row root is now `<details class="surface-details">` (was a flat
+    `<div class="surface-row">` in T13), so the tag alternation includes
+    `details` and the non-greedy `</(?P=tag)>` correctly pairs with the
+    matching `</details>`.
+    """
     import re
     m = re.search(
-        r'<(?P<tag>tr|div|li|article)\b(?P<attrs>[^>]*\bdata-state="running"[^>]*)>'
+        r'<(?P<tag>tr|div|li|article|details)\b(?P<attrs>[^>]*\bdata-state="running"[^>]*)>'
         r'(?P<inner>.*?)</(?P=tag)>',
         html, re.S,
     )
@@ -1644,10 +1650,11 @@ def test_render_surface_row_preserves_filter_contract(tmp_path: Path):
     assert m, "surface row root must carry both data-state and data-search"
 
 
-def test_render_surface_row_identifier_strip_surface_only_in_chip(tmp_path: Path):
-    """T13: the literal `surface:N` token may appear ONLY inside the copy-ref
-    chip (its body + title attribute). Strip chip elements from the row HTML
-    and assert no `surface:` text remains.
+def test_render_surface_row_identifier_strip_surface_only_in_chip_and_diagnostic(tmp_path: Path):
+    """T13 + T14: the literal `surface:N` token may appear ONLY inside the
+    copy-ref chip (body + title attribute) AND the diagnostic line at the
+    bottom of the T14 expanded panel. Strip both, then assert no
+    `surface:` or `workspace:` text remains.
     """
     import re
 
@@ -1659,21 +1666,33 @@ def test_render_surface_row_identifier_strip_surface_only_in_chip(tmp_path: Path
     # Remove every chip element (open tag through close tag) AND every
     # title="cmux focus surface:N" attribute (since the chip element-body
     # regex below isn't precise enough for attribute removal).
-    row_without_chips = re.sub(
+    row_stripped = re.sub(
         r'<[^>]*\bclass="[^"]*\bchip\b[^"]*"[^>]*>.*?</[^>]+>',
         "",
         row,
         flags=re.S,
     )
     # Also defensively strip standalone "cmux focus surface:N" title attrs.
-    row_without_chips = re.sub(
+    row_stripped = re.sub(
         r'\btitle="cmux focus surface:[^"]*"',
         "",
-        row_without_chips,
+        row_stripped,
     )
-    leaked = re.findall(r'surface:\w+', row_without_chips)
-    assert not leaked, (
-        f"surface:N literal leaked outside chip elements: {leaked!r}"
+    # T14: the diagnostic line is the second allowed home for bare refs;
+    # strip its container element so the leak-check ignores it.
+    row_stripped = re.sub(
+        r'<[^>]*\bclass="[^"]*\bsurface-diagnostic\b[^"]*"[^>]*>.*?</[^>]+>',
+        "",
+        row_stripped,
+        flags=re.S,
+    )
+    leaked_surface = re.findall(r'surface:\w+', row_stripped)
+    assert not leaked_surface, (
+        f"surface:N literal leaked outside chip + diagnostic line: {leaked_surface!r}"
+    )
+    leaked_workspace = re.findall(r'workspace:\w+', row_stripped)
+    assert not leaked_workspace, (
+        f"workspace:N literal leaked outside chip + diagnostic line: {leaked_workspace!r}"
     )
 
 
@@ -1736,3 +1755,374 @@ def test_render_surface_row_never_renders_bare_em_dash_for_missing_summary(tmp_p
             "(summary skipped — no_summarize)",
             "(no screen access)",
         )), f"missing 'why no summary' message; got body: {body!r}"
+
+
+# ---------------------------------------------------------------------------
+# T14: click-to-expand surface row with diagnostic line and redaction badge.
+# ---------------------------------------------------------------------------
+
+
+def _snap_surface_row_full(
+    *,
+    summary_text: str = "the full untruncated summary text " * 5,
+    needs_input_reason: str | None = "awaiting user approval on plan",
+    cwd: str | None = "/home/u/proj",
+    type_source: str = "cmux_tag",
+    type_confidence: float = 0.95,
+    state_source: str = "cmux_tag",
+    redactions_applied: list[str] | None = None,
+    state: str = "running",
+    pid: int | None = 42,
+    prompt_version: int = 3,
+    screen_hash: str = "abcdef1234567890",
+) -> Snapshot:
+    """T14 helper: a populated single-surface fixture suitable for asserting
+    the expanded-panel contents and the diagnostic line.
+    """
+    surface = Surface(
+        ref="surface:1",
+        pane_ref="pane:1",
+        workspace_ref="workspace:1",
+        kind="terminal",
+        title="claude_code worker",
+        cwd=cwd,
+        is_agent=True,
+    )
+    workspace = Workspace(
+        ref="workspace:1",
+        title="Project A",
+        window_ref="window:1",
+        surfaces=[surface],
+    )
+    summary = Summary(
+        text=summary_text,
+        state_hint=state,
+        needs_input_reason=needs_input_reason,
+        confidence=0.9,
+        cache_hit=False,
+        cached_at=datetime(2026, 5, 27, 14, 29, 0, tzinfo=timezone.utc),
+        prompt_version=prompt_version,
+        screen_hash=screen_hash,
+        redactions_applied=list(redactions_applied or []),
+        redaction_summary=", ".join(redactions_applied or []),
+    )
+    agent = Agent(
+        surface_ref="surface:1",
+        workspace_ref="workspace:1",
+        type="claude_code",
+        type_source=type_source,
+        type_confidence=type_confidence,
+        state=state,
+        state_source=state_source,
+        pid=pid,
+        summary=summary,
+    )
+    return Snapshot(
+        schema_version=1,
+        captured_at=datetime(2026, 5, 27, 14, 30, 0, tzinfo=timezone.utc),
+        host="laptop",
+        cmux_version="1.2.3",
+        workspaces=[workspace],
+        agents=[agent],
+        themes=[],
+        productivity=None,
+        history=None,
+        failures=[],
+    )
+
+
+def test_render_surface_row_is_details_with_summary_root(tmp_path: Path):
+    """T14 step 1: the surface row root is `<details class="surface-details">`
+    with `<summary class="surface-row">` as the collapsed view. <details>
+    + <summary> is keyboard-accessible by default (Enter/Space) and ATs
+    expose the expanded state — no extra JS for the toggle.
+    """
+    import re
+
+    snap = _snap_surface_row_full()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Root element is a <details> with the surface-details class hook AND the
+    # filter-contract attributes (data-state + data-search).
+    assert re.search(
+        r'<details\b[^>]*class="[^"]*surface-details[^"]*"[^>]*\bdata-state="running"',
+        html, re.S,
+    ), "row root must be <details class=\"surface-details\" ... data-state=\"running\">"
+
+    # The collapsed view is the <summary class="surface-row"> child.
+    assert re.search(
+        r'<summary\b[^>]*class="[^"]*surface-row[^"]*"',
+        html, re.S,
+    ), "<details> must contain <summary class=\"surface-row\"> as the collapsed view"
+
+
+def test_render_surface_row_filter_contract_on_details_root(tmp_path: Path):
+    """T14: data-state and data-search MUST live on the outer <details> so the
+    `[data-hidden="true"] { display: none; }` rule still hides the whole row,
+    and so the JS filter (which iterates `[data-search]`) keeps working.
+    """
+    import re
+
+    snap = _snap_surface_row_full()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Both attributes on the same <details> element (either order).
+    pat = re.compile(
+        r'<details\b[^>]*\bdata-state="running"[^>]*\bdata-search="[^"]*"'
+        r'|<details\b[^>]*\bdata-search="[^"]*"[^>]*\bdata-state="running"',
+        re.S,
+    )
+    assert pat.search(html), (
+        "<details> root must carry both data-state and data-search "
+        "(filter contract preserved from T9 + T10)"
+    )
+
+    # And the data-hidden display:none rule is still present (inherited from
+    # T7-T10 follow-up CSS) — same broad attribute selector hides any element.
+    assert re.search(
+        r'\[data-hidden="true"\]\s*\{\s*[^}]*display\s*:\s*none',
+        html, re.S,
+    ), "[data-hidden=\"true\"] { display: none } rule must still be defined"
+
+
+def test_render_surface_row_expanded_panel_renders_full_summary_and_metadata(tmp_path: Path):
+    """T14 step 1: the expanded panel renders the FULL summary text (not the
+    template-truncated version), `needs_input_reason`, `cwd` (when known),
+    and `type_source + type_confidence` as small text.
+    """
+    import re
+
+    long_summary = (
+        "this is the full untruncated summary that exceeds the 80-char "
+        "ellipsis budget enforced on the collapsed row by truncated_summary"
+    )
+    snap = _snap_surface_row_full(
+        summary_text=long_summary,
+        needs_input_reason="awaiting user approval on plan",
+        cwd="/home/u/proj",
+        type_source="cmux_tag",
+        type_confidence=0.95,
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    # Extract the expanded-panel container (a non-summary element under
+    # <details>). We key off `surface-expanded` as the documented class hook.
+    # Match the OUTER <div class="surface-expanded"> precisely (class anchored
+    # so .surface-expanded-summary is not a false positive); body runs to the
+    # end of the extracted row (the helper already stopped at the matching
+    # </details> close).
+    panel_match = re.search(
+        r'<div\b[^>]*\bclass="surface-expanded"[^>]*>(?P<body>.*)\Z',
+        row, re.S,
+    )
+    assert panel_match, "expanded panel (class=\"surface-expanded\") not found"
+    panel = panel_match.group("body")
+
+    # Full untruncated summary text appears in the expanded panel.
+    assert long_summary in panel, (
+        "expanded panel must show the FULL untruncated summary text"
+    )
+    # needs_input_reason rendered when present.
+    assert "awaiting user approval on plan" in panel, (
+        "expanded panel must render needs_input_reason when present"
+    )
+    # cwd rendered when known.
+    assert "/home/u/proj" in panel, "expanded panel must render cwd when known"
+    # type_source + type_confidence appear together.
+    assert "cmux_tag" in panel, "expanded panel must render type_source"
+    assert "0.95" in panel, "expanded panel must render type_confidence"
+
+
+def test_render_surface_row_diagnostic_line_renders_all_fields(tmp_path: Path):
+    """T14 step 2: a single muted diagnostic line at the bottom of the
+    expanded panel renders the 6 fields (run_id omitted — Snapshot dataclass
+    does not expose it). Bare refs `workspace:N` and `surface:N` are allowed
+    here per spec (second allowed home, after the copy-ref chip).
+    """
+    import re
+
+    snap = _snap_surface_row_full(
+        type_source="cmux_tag",
+        prompt_version=3,
+        screen_hash="abcdef1234567890",
+        pid=42,
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    diag_match = re.search(
+        r'<[^>]*\bclass="[^"]*surface-diagnostic[^"]*"[^>]*>(?P<body>.*?)</[^>]+>',
+        row, re.S,
+    )
+    assert diag_match, "diagnostic line (class=\"surface-diagnostic\") not found"
+    body = diag_match.group("body")
+
+    # 6 fields rendered (run_id omitted — documented deviation).
+    assert "workspace:1" in body, "diagnostic must include workspace_ref"
+    assert "surface:1" in body, "diagnostic must include surface_ref"
+    assert "42" in body, "diagnostic must include pid"
+    assert "cmux_tag" in body, "diagnostic must include type_source"
+    assert "3" in body, "diagnostic must include prompt_version"
+    # screen_hash is truncated to ~7 chars for readability; the prefix must appear.
+    assert "abcdef1" in body, "diagnostic must include screen_hash prefix"
+
+
+def test_render_surface_row_diagnostic_line_pid_unknown_renders_question_mark(tmp_path: Path):
+    """T14 step 2: when `agent.pid` is None the diagnostic still renders, with
+    `?` as the placeholder so the line stays uniform across rows."""
+    import re
+
+    snap = _snap_surface_row_full(pid=None)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    diag_match = re.search(
+        r'<[^>]*\bclass="[^"]*surface-diagnostic[^"]*"[^>]*>(?P<body>.*?)</[^>]+>',
+        row, re.S,
+    )
+    assert diag_match, "diagnostic line not found"
+    body = diag_match.group("body")
+    assert "?" in body, "diagnostic must render '?' for unknown pid"
+
+
+def test_render_surface_row_diagnostic_line_is_muted_low_contrast(tmp_path: Path):
+    """T14 step 2: the diagnostic line is muted via `color: var(--muted)` and
+    `font-size: 0.75em;` per spec — small + low-contrast."""
+    import re
+
+    snap = _snap_surface_row_full()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    style_block = re.search(
+        r'\.surface-diagnostic\b[^{}]*\{(?P<decls>[^}]*)\}',
+        html, re.S,
+    )
+    assert style_block, "inline <style> must define a .surface-diagnostic rule"
+    decls = style_block.group("decls")
+    assert re.search(r'color\s*:\s*var\(\s*--muted', decls), (
+        f".surface-diagnostic must use color: var(--muted); got: {decls!r}"
+    )
+    assert re.search(r'font-size\s*:\s*0\.75em', decls), (
+        f".surface-diagnostic must use font-size: 0.75em; got: {decls!r}"
+    )
+
+
+def test_render_surface_row_redaction_badge_renders_when_redactions_applied(tmp_path: Path):
+    """T14 step 3: when `agent.summary.redactions_applied` is non-empty,
+    the collapsed row carries a `redacted` badge (inside `<summary>`) with
+    a tooltip listing the redaction types.
+    """
+    import re
+
+    snap = _snap_surface_row_full(
+        redactions_applied=["SK_TOKEN:1", "EMAIL:2"],
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    # Badge appears inside the <summary> (collapsed view).
+    summary_match = re.search(
+        r'<summary\b[^>]*class="[^"]*surface-row[^"]*"[^>]*>(?P<body>.*?)</summary>',
+        row, re.S,
+    )
+    assert summary_match, "<summary class=\"surface-row\"> not found"
+    summary_body = summary_match.group("body")
+
+    badge_match = re.search(
+        r'<[^>]*\bclass="[^"]*surface-redaction-badge[^"]*"[^>]*>(?P<body>.*?)</[^>]+>',
+        summary_body, re.S,
+    )
+    assert badge_match, (
+        "collapsed row must include a redaction badge "
+        "(class=\"surface-redaction-badge\") when redactions_applied is non-empty"
+    )
+    assert "redacted" in badge_match.group("body").lower(), (
+        f"badge text must say 'redacted'; got: {badge_match.group('body')!r}"
+    )
+    # Tooltip carries the redaction types.
+    title_match = re.search(
+        r'class="[^"]*surface-redaction-badge[^"]*"[^>]*\btitle="([^"]*)"',
+        summary_body, re.S,
+    )
+    assert title_match, "redaction badge must carry a title= tooltip"
+    title = title_match.group(1)
+    assert "SK_TOKEN:1" in title and "EMAIL:2" in title, (
+        f"badge tooltip must list redaction types; got: {title!r}"
+    )
+
+
+def test_render_surface_row_no_redaction_badge_when_empty(tmp_path: Path):
+    """T14 step 3: when `redactions_applied` is empty, no badge is rendered."""
+    import re
+
+    snap = _snap_surface_row_full(redactions_applied=[])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    assert not re.search(
+        r'class="[^"]*surface-redaction-badge[^"]*"',
+        row,
+    ), "redaction badge must NOT render when redactions_applied is empty"
+
+
+def test_render_surface_row_disagreement_note_when_heuristic_and_agent_summary_state(tmp_path: Path):
+    """T14 step 1: when `type_source == "heuristic"` AND `state_source ==
+    "agent_summary"` (i.e. the summarizer's hint drove the state on a row
+    cmux did not tag as a known agent), render a disagreement note in the
+    expanded panel. (cmux_tag-vs-heuristic disagreement in the other
+    direction is skipped — see worker report.)
+    """
+    import re
+
+    snap = _snap_surface_row_full(
+        type_source="heuristic",
+        state_source="agent_summary",
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    # Match the OUTER <div class="surface-expanded"> precisely (class anchored
+    # so .surface-expanded-summary is not a false positive); body runs to the
+    # end of the extracted row (the helper already stopped at the matching
+    # </details> close).
+    panel_match = re.search(
+        r'<div\b[^>]*\bclass="surface-expanded"[^>]*>(?P<body>.*)\Z',
+        row, re.S,
+    )
+    assert panel_match, "expanded panel not found"
+    panel = panel_match.group("body")
+    # Disagreement note carries a stable class hook so future tests + screen
+    # readers can find it. Body text mentions both signals.
+    assert re.search(
+        r'class="[^"]*surface-disagreement[^"]*"',
+        panel, re.S,
+    ), "expanded panel must include a disagreement note when heuristic + agent_summary"
+
+
+def test_render_surface_row_no_disagreement_note_when_cmux_tag(tmp_path: Path):
+    """T14 step 1 (negative): when `type_source == "cmux_tag"`, the
+    disagreement note must NOT render — cmux tagged this row authoritatively."""
+    import re
+
+    snap = _snap_surface_row_full(
+        type_source="cmux_tag",
+        state_source="agent_summary",
+    )
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    row = _surface_row_html(html)
+
+    assert not re.search(
+        r'class="[^"]*surface-disagreement[^"]*"',
+        row,
+    ), "disagreement note must NOT render when type_source=cmux_tag"
