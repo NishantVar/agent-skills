@@ -1,10 +1,16 @@
 from datetime import datetime, timezone
 
+import cmux_observability.model as M
 from cmux_observability.errors import Failure
-from cmux_observability.model import (
-    Agent, Snapshot, Summary, Surface, Theme, Workspace,
-    Productivity, HistoryPoint, HistorySeries, RepoStats,
-)
+from cmux_observability.model import Agent, Snapshot, Summary, Theme
+
+
+def test_model_exports_expected_dataclasses():
+    for name in (
+        "Agent", "Snapshot", "Summary", "Surface", "Theme", "Workspace",
+        "Productivity", "HistoryPoint", "HistorySeries", "RepoStats",
+    ):
+        assert hasattr(M, name)
 
 
 def test_snapshot_construction_with_minimal_fields():
