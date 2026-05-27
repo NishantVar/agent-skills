@@ -157,7 +157,13 @@ def cmd_collect(args: argparse.Namespace) -> int:
     with connect(db_path) as conn:
         migrate(conn)
         pv = (cfg.summarizer.prompt_version if cfg.summarizer else 1)
-        pending = pending_for_agent(snap, conn, screens, prompt_version=pv)
+        cap = args.max_scrollback_bytes if args.max_scrollback_bytes is not None else (
+            cfg.summarizer.max_scrollback_bytes if cfg.summarizer else 4096
+        )
+        pending = pending_for_agent(
+            snap, conn, screens, prompt_version=pv,
+            max_scrollback_bytes=cap,
+        )
 
     screen_hashes = {p["surface_ref"]: p["screen_hash"] for p in pending}
     redactions_by_surface = {
@@ -300,6 +306,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_arg(pc)
     pc.add_argument("--run-id", help="Provide to resume; new id minted if omitted")
     pc.add_argument("--rescan", action="store_true")
+    pc.add_argument(
+        "--max-scrollback-bytes", type=int, default=None,
+        help="Per-surface byte cap on scrollback shipped to the summarizer "
+             "(default 4096; trailer counts against the cap).",
+    )
     pc.set_defaults(func=cmd_collect)
 
     ps = sub.add_parser("record-summaries")

@@ -46,6 +46,29 @@ def _cache_lookup(
     )
 
 
+DEFAULT_MAX_SCROLLBACK_BYTES = 4096
+
+
+def _truncate_scrollback(redacted: str, cap: int) -> str:
+    """Cap `redacted` to at most `cap` bytes of UTF-8, keeping the tail.
+
+    If the original fits, return it unchanged. Otherwise return the last bytes
+    of the input followed by a trailer that records the pre-truncation byte
+    length. The trailer counts against the cap so the final payload is ≤ cap.
+    """
+    raw = redacted.encode("utf-8")
+    if len(raw) <= cap:
+        return redacted
+    trailer = f"\n…[truncated, original {len(raw)} bytes]\n"
+    trailer_bytes = trailer.encode("utf-8")
+    body_budget = cap - len(trailer_bytes)
+    if body_budget <= 0:
+        # Cap too small to fit even the trailer; emit only the trailer tail.
+        return trailer_bytes[-cap:].decode("utf-8", errors="ignore")
+    body = raw[-body_budget:].decode("utf-8", errors="ignore")
+    return body + trailer
+
+
 def _is_summary_eligible(agent) -> bool:
     # cmux_tag agents are summarized when active; heuristic agents always
     # flow through (the summarizer is how we learn their real state).
@@ -81,6 +104,7 @@ def attach_cached_summaries(
 def pending_for_agent(
     snap: Snapshot, conn: sqlite3.Connection,
     screens: dict[str, str], prompt_version: int,
+    max_scrollback_bytes: int = DEFAULT_MAX_SCROLLBACK_BYTES,
 ) -> list[dict]:
     """Return JSON-ready payload listing agents that still need a summary.
 
@@ -119,7 +143,7 @@ def pending_for_agent(
             "cmux_state": agent.state,
             "title": title,
             "cwd": cwd,
-            "scrollback": redacted,
+            "scrollback": _truncate_scrollback(redacted, max_scrollback_bytes),
             "screen_hash": h,
             "redactions_applied": applied,
             "prompt_version": prompt_version,

@@ -35,6 +35,7 @@ class SummarizerConfig:
     read_screen_lines: int = 150     # hard cap 300 in CLI validation
     prompt_version: int = 1
     themes_enabled: bool = True
+    max_scrollback_bytes: int = 4096
 
 
 @dataclass
@@ -91,6 +92,7 @@ def load(path: Path | None = None) -> Config:
             read_screen_lines=summ.get("read_screen_lines", 150),
             prompt_version=summ.get("prompt_version", 1),
             themes_enabled=summ.get("themes_enabled", True),
+            max_scrollback_bytes=summ.get("max_scrollback_bytes", 4096),
         ),
         render=RenderConfig(
             open_browser=rend.get("open_browser", True),

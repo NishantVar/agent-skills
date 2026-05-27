@@ -167,6 +167,108 @@ def test_prompt_version_bump_invalidates_cache(tmp_path):
     assert len(bumped) == 1
 
 
+def _snap_with_scrollback(raw: str) -> tuple[Snapshot, dict[str, str]]:
+    surface = Surface(
+        ref="surface:1", pane_ref="pane:1", workspace_ref="workspace:1",
+        kind="terminal", title="claude_code", tty="ttys001",
+        cwd="/home/u/repo", is_agent=True,
+    )
+    ws = Workspace(ref="workspace:1", title="Project A", window_ref="window:1",
+                   surfaces=[surface])
+    agent = Agent(
+        surface_ref="surface:1", workspace_ref="workspace:1",
+        type="claude_code", type_source="cmux_tag", type_confidence=1.0,
+        state="running", state_source="cmux_tag", pid=42,
+    )
+    snap = Snapshot(
+        schema_version=1,
+        captured_at=datetime.now(timezone.utc),
+        host="h", cmux_version="x",
+        workspaces=[ws], agents=[agent], themes=[],
+        productivity=None, history=None, failures=[],
+    )
+    return snap, {"surface:1": raw}
+
+
+def test_scrollback_default_cap_truncates_to_4096_bytes(tmp_path):
+    raw = "A" * 100_000  # 100 KB; no redaction patterns
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+    payload = pending[0]["scrollback"]
+    payload_bytes = payload.encode("utf-8")
+    assert len(payload_bytes) == 4096
+    # Trailer carries the ORIGINAL byte count (post-redaction == 100_000 here).
+    assert "\n…[truncated, original 100000 bytes]\n" in payload
+    # Tail preservation: the content (before the trailer) is the LAST bytes of
+    # the input — for an all-'A' input that's still all 'A's, so assert the
+    # non-trailer prefix is composed of input bytes.
+    trailer = "\n…[truncated, original 100000 bytes]\n"
+    body = payload[: -len(trailer)]
+    assert body.endswith("A" * 10)
+    assert "B" not in body
+
+
+def test_scrollback_under_cap_no_trailer(tmp_path):
+    raw = "x" * 500  # well under 4096
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+    payload = pending[0]["scrollback"]
+    assert payload == raw
+    assert "truncated" not in payload
+
+
+def test_scrollback_configurable_cap(tmp_path):
+    raw = "Z" * 10_000
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(
+            snap, conn, screens, prompt_version=1,
+            max_scrollback_bytes=512,
+        )
+    payload = pending[0]["scrollback"]
+    assert len(payload.encode("utf-8")) == 512
+    assert "\n…[truncated, original 10000 bytes]\n" in payload
+
+
+def test_scrollback_tail_preserved_not_head(tmp_path):
+    # Distinct head and tail so we can prove the tail is what survives.
+    raw = ("HEAD-MARKER-" * 1000) + ("TAIL-DISTINCT-" * 1000)
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+    payload = pending[0]["scrollback"]
+    trailer_orig_len = len(raw.encode("utf-8"))
+    trailer = f"\n…[truncated, original {trailer_orig_len} bytes]\n"
+    body = payload[: -len(trailer)]
+    assert "TAIL-DISTINCT" in body
+    assert "HEAD-MARKER" not in body
+
+
+def test_scrollback_truncation_runs_after_redaction(tmp_path):
+    # A small Slack token must be redacted; truncated payload must contain the
+    # redaction marker, never the raw token.
+    secret = "xoxb-123456789012-987654321098-AbCdEfGhIjKlMnOpQrSt"
+    raw = ("filler " * 1000) + secret + ("\nmore filler " * 1000)
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(
+            snap, conn, screens, prompt_version=1,
+            max_scrollback_bytes=2048,
+        )
+    payload = pending[0]["scrollback"]
+    assert secret not in payload
+    # Marker is in the redacted text; once truncated to the tail it may or may
+    # not survive depending on position, but the raw secret must never appear.
+    assert pending[0]["redactions_applied"]  # redaction did fire
+
+
 def test_malformed_and_unknown_summary_entries_produce_non_fatal_failures(tmp_path):
     snap, raw_screen = _snap_with_one_running_agent()
     screens = {"surface:1": raw_screen}
