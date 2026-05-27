@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .collector.cmux import TopResult, TagLine
+from .collector.cmux import TopResult
 from .model import Agent, Snapshot, Workspace
 
 
@@ -62,12 +62,14 @@ def normalize(
         used: set[str] = set()
         for tag in tags:
             picked = None
+            # Pass A: exact tag.kind match in the surface title.
             for s in ws.surfaces:
                 if s.ref in used:
                     continue
-                if tag.kind in s.title.lower() or "agent" in s.title.lower():
+                if tag.kind in s.title.lower():
                     picked = s
                     break
+            # Pass B: fall back to the first unused surface.
             if picked is None:
                 for s in ws.surfaces:
                     if s.ref not in used:
