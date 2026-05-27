@@ -190,26 +190,13 @@ def test_discovery_bad_dot_git_file_records_failure(tmp_home):
     assert len(bad_failures) == 1, failures
 
 
-def test_discovery_mdfind_seed_under_hard_pruned_dir_currently_leaks(tmp_home, monkeypatch):
-    """CHARACTERIZATION TEST — pins current (buggy) behavior.
-
-    `discover_repos` filters `find`-scanner output through `_HARD_PRUNES`
-    (via `find -prune`) but filters `mdfind` seed candidates only through
-    `_is_under(allowed_roots)` and the user-configured
-    `cfg.productivity.exclude`. A repo inside a hard-pruned directory like
-    `Library/` therefore leaks into `repos` when reached via `mdfind`,
-    even though the equivalent `find`-scanner path would prune it.
-
-    This test pins the current behavior so it can't silently get worse.
-    When `discover_repos` is updated to apply `_HARD_PRUNES` to mdfind
-    candidates too (see `discovery.py` mdfind branch ~line 183), flip the
-    `not any(...)` to `not any(...)` semantically — i.e. invert the
-    assertion and rename — and the matching `find`-scanner behavior in
-    `test_discovery_prunes_excluded_dirs` will keep coverage symmetrical.
-
-    TODO(T18 follow-up): escalate to Reviewer — either apply hard-prunes
-    to the mdfind branch of `discover_repos`, or accept this delta as
-    documented behavior.
+def test_discovery_mdfind_seed_under_hard_pruned_dir_is_excluded(tmp_home, monkeypatch):
+    """`mdfind` seed candidates whose path contains a `_HARD_PRUNES`
+    component (e.g. `Library/`, `node_modules/`) must be dropped before
+    reaching `rev-parse`, matching the `find`-scanner's `-prune`
+    behavior. No repo under such a directory may appear in `repos`, and
+    no `Failure` is emitted for the silently-skipped candidate (hard
+    prunes are a normal filter, not an error).
     """
     pruned_repo = tmp_home / "Library" / "Application Support" / "leaky_repo"
     _mk_repo(pruned_repo)
@@ -242,15 +229,12 @@ def test_discovery_mdfind_seed_under_hard_pruned_dir_currently_leaks(tmp_home, m
         render=None,
     )
     repos, failures = discover_repos(cfg)
-    # CURRENT (buggy) behavior: the Library-rooted repo DOES leak through.
-    # Flip this assertion (and the test name) when discover_repos applies
-    # _HARD_PRUNES to mdfind seed candidates.
-    assert any("Library" in r.parts for r in repos), (
-        "expected current buggy behavior — mdfind seed under Library leaks; "
-        "if this test now fails because the bug is fixed, invert the assertion "
-        "to `assert not any(...)` and rename to "
-        "`test_discovery_mdfind_seed_under_hard_pruned_dir_is_excluded`."
-    )
+    assert not any("Library" in r.parts for r in repos), repos
+    # Hard-prune skip is a normal filter, not a discovery failure.
+    assert not any(
+        f.component == "discovery" and "Library" in (f.target or "")
+        for f in failures
+    ), failures
 
 
 def test_cache_with_stale_generated_at_triggers_rescan(tmp_home, monkeypatch):

@@ -148,6 +148,17 @@ def _excluded(path: Path, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(s, os.path.expanduser(p)) for p in patterns)
 
 
+def _has_hard_prune_component(path: Path) -> bool:
+    """True iff any component of `path` matches a `_HARD_PRUNES` entry.
+
+    The `find`-scanner's `-prune` argv already drops these directories at
+    the source. This helper applies the same filter to `mdfind` seed
+    candidates and to post-`rev-parse` toplevels so the two discovery
+    branches yield the same set of repos.
+    """
+    return any(part in _HARD_PRUNES for part in path.parts)
+
+
 def _normalize_via_rev_parse(dot_git: Path) -> tuple[Path | None, str | None]:
     """Given a `.git` path (file or dir), return the working-tree top via
     `git -C <parent> rev-parse --show-toplevel`. Returns (None, err) on failure."""
@@ -185,7 +196,7 @@ def discover_repos(
         if seeded:
             mdfind_used = True
             for s in seeded:
-                if _is_under(s, allowed_roots):
+                if _is_under(s, allowed_roots) and not _has_hard_prune_component(s):
                     candidates.add(s)
 
     for root_str in cfg.productivity.repo_paths:
@@ -212,6 +223,8 @@ def discover_repos(
         if _excluded(toplevel, cfg.productivity.exclude):
             continue
         if not _is_under(toplevel, allowed_roots):
+            continue
+        if _has_hard_prune_component(toplevel):
             continue
         repos.add(toplevel.resolve())
 
