@@ -791,6 +791,121 @@ def test_render_blocked_banner_two_cards_in_capture_order(tmp_path: Path):
     assert "var(--state-needs-input)" in html
 
 
+def test_render_filter_css_hides_data_hidden_rows(tmp_path: Path):
+    """T7-T10 follow-up (P1): the inline stylesheet must include a rule that
+    hides any element carrying `data-hidden="true"`. Use a broad attribute
+    selector so future non-<tr> row containers benefit as well."""
+    import re
+
+    snap = _snap_hero_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # `[data-hidden="true"] { display: none; }` — whitespace permissive.
+    pat = re.compile(
+        r'\[data-hidden="true"\]\s*\{\s*[^}]*display\s*:\s*none',
+        re.S,
+    )
+    assert pat.search(html), (
+        "inline <style> must define [data-hidden=\"true\"] { display: none }"
+    )
+
+
+def test_render_active_chip_styling_present(tmp_path: Path):
+    """T7-T10 follow-up (P1): chips toggled active by the filter JS must have
+    visible styling. The inline <style> block must reference
+    `.counter[data-filter-active="true"]`."""
+    snap = _snap_hero_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    assert '.counter[data-filter-active="true"]' in html, (
+        "inline <style> must style .counter[data-filter-active=\"true\"]"
+    )
+
+
+def test_render_state_counters_are_buttons(tmp_path: Path):
+    """T7-T10 follow-up (P2): the four clickable state-bucket counters must
+    render as <button type="button" class="counter" data-state="..."> so they
+    are keyboard-focusable and Enter/Space activate them natively."""
+    import re
+
+    snap = _snap_hero_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    for state in ("running", "needs_input", "idle", "unknown"):
+        # button open tag carrying type="button", class="counter…", data-state=state
+        # Tolerate attribute ordering: class first OR data-state first.
+        pat = re.compile(
+            r'<button\b[^>]*\btype="button"[^>]*\bclass="counter[^"]*"[^>]*\bdata-state="'
+            + state + r'"'
+            r'|<button\b[^>]*\bclass="counter[^"]*"[^>]*\btype="button"[^>]*\bdata-state="'
+            + state + r'"'
+            r'|<button\b[^>]*\bdata-state="' + state
+            + r'"[^>]*\bclass="counter[^"]*"[^>]*\btype="button"'
+            r'|<button\b[^>]*\btype="button"[^>]*\bdata-state="' + state
+            + r'"[^>]*\bclass="counter[^"]*"',
+            re.S,
+        )
+        assert pat.search(html), (
+            f"state counter for {state!r} must render as <button type=\"button\" "
+            f"class=\"counter\" data-state=\"{state}\">"
+        )
+        # And the old <div class="counter" data-state="..."> form must be gone.
+        old = re.compile(
+            r'<div\b[^>]*\bclass="counter[^"]*"[^>]*\bdata-state="' + state + r'"'
+            r'|<div\b[^>]*\bdata-state="' + state + r'"[^>]*\bclass="counter[^"]*"',
+            re.S,
+        )
+        assert not old.search(html), (
+            f"state counter for {state!r} must NOT remain a <div>"
+        )
+
+
+def test_render_counter_focus_visible_style_present(tmp_path: Path):
+    """T7-T10 follow-up (P2): the inline <style> block must define a
+    `.counter:focus-visible` rule so keyboard users see a focus outline."""
+    snap = _snap_hero_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    assert ".counter:focus-visible" in html, (
+        "inline <style> must define .counter:focus-visible rule"
+    )
+
+
+def test_render_nonstate_counters_remain_div(tmp_path: Path):
+    """T7-T10 follow-up (P2): only the four state counters become <button>;
+    the three non-interactive counters (workspaces, surfaces, agents) stay
+    as <div class="counter"> — they have no click handler and shouldn't be
+    focusable."""
+    import re
+
+    snap = _snap_hero_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    for label in ("workspaces", "surfaces", "agents"):
+        # Confirm the chip is a <div ...><small>label</small></div>, NOT a button.
+        div_pat = re.compile(
+            r'<div\b[^>]*\bclass="counter[^"]*"[^>]*>[\s\S]*?<small[^>]*>\s*'
+            + label,
+            re.S,
+        )
+        assert div_pat.search(html), (
+            f"non-state counter {label!r} must remain a <div class=\"counter\">"
+        )
+        button_pat = re.compile(
+            r'<button\b[^>]*\bclass="counter[^"]*"[^>]*>[\s\S]*?<small[^>]*>\s*'
+            + label,
+            re.S,
+        )
+        assert not button_pat.search(html), (
+            f"non-state counter {label!r} must NOT have been converted to <button>"
+        )
+
+
 def _snap_workspace_states(
     *,
     ws_title: str = "Project A",

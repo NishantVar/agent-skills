@@ -94,6 +94,11 @@
     gap: var(--space-4);
     align-items: flex-start;
   }
+  /* T7-T10 follow-up (P2): .counter is used for both <div> (workspaces /
+     surfaces / agents — non-interactive) and <button type="button"> (the four
+     state-bucket chips — clickable + keyboard-focusable). The reset below
+     normalises the button so it looks identical to the div in the resting
+     state; per-element rules below override layout/visual specifics. */
   .hero-counters .counter {
     display: flex;
     flex-direction: column;
@@ -102,6 +107,42 @@
     font-size: 1.5rem;
     font-weight: 600;
     color: var(--contrast-strong);
+    /* Button reset (no-op for the <div> counters). */
+    border: 0;
+    background: transparent;
+    font-family: inherit;
+    padding: 0;
+    text-align: inherit;
+    border-radius: var(--radius-sm);
+  }
+  .hero-counters button.counter {
+    cursor: pointer;
+  }
+  .hero-counters .counter:focus-visible {
+    outline: 2px solid var(--state-running);
+    outline-offset: 2px;
+  }
+  /* T7-T10 follow-up (P1): rows whose state/query gate has rejected them
+     carry data-hidden="true". The broad attribute selector (not tr-scoped)
+     lets future non-<tr> row containers benefit without revisiting CSS. */
+  [data-hidden="true"] { display: none; }
+  /* Active-chip styling: inset ring keyed off each chip's data-state so the
+     ring color matches the bucket the user toggled. Per-state (rather than
+     a single static color) preserves the meaning of each chip. */
+  .counter[data-filter-active="true"] {
+    background: var(--bg);
+  }
+  .counter[data-state="running"][data-filter-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--state-running);
+  }
+  .counter[data-state="needs_input"][data-filter-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--state-needs-input);
+  }
+  .counter[data-state="idle"][data-filter-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--state-idle);
+  }
+  .counter[data-state="unknown"][data-filter-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--state-unknown);
   }
   .hero-counters .counter small {
     margin-top: var(--space-1);
@@ -307,10 +348,13 @@
       {{ _agents_total }}<small>agents</small>
       <span class="counter-sub">{{ _agents_tagged }} tagged · {{ _agents_heuristic }} heuristic</span>
     </div>
-    <div class="counter" data-state="running">{{ _running }}<small>running</small></div>
-    <div class="counter" data-state="needs_input">{{ _needs_input }}<small>needs_input</small></div>
-    <div class="counter" data-state="idle">{{ _idle }}<small>idle</small></div>
-    <div class="counter" data-state="unknown">{{ _unknown }}<small>unknown</small></div>
+    {# T7-T10 follow-up (P2): state-bucket chips are <button type="button">
+       so they're keyboard-focusable and Enter/Space activate the existing
+       click handler natively. The 3 non-interactive counters above stay <div>. #}
+    <button type="button" class="counter" data-state="running">{{ _running }}<small>running</small></button>
+    <button type="button" class="counter" data-state="needs_input">{{ _needs_input }}<small>needs_input</small></button>
+    <button type="button" class="counter" data-state="idle">{{ _idle }}<small>idle</small></button>
+    <button type="button" class="counter" data-state="unknown">{{ _unknown }}<small>unknown</small></button>
   </div>
   <div class="hero-right">
     <input class="hero-search" id="hero-search" type="search" placeholder="filter surfaces…" aria-label="Filter surfaces">
