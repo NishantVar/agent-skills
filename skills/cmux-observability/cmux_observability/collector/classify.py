@@ -14,9 +14,9 @@ Marker regexes were derived from live ``cmux read-screen`` output:
   trailer, the ``xhigh``/``Context NN% left`` status line, and the literal
   ``codex`` substring).
 * ``gemini`` — Gemini CLI markers (``✦`` sparkle bullet, ``gemini-N.N``
-  model tag, ``Using gemini`` line, and the literal ``gemini`` substring).
-  Marker set is best-effort pending Reviewer confirmation; documented in the
-  T1 sign-off packet.
+  model tag, ``Using gemini`` line). Best-effort: no live Gemini surface was
+  available for sampling. qa_lead validates against live Gemini scrollback at
+  the Phase-1 mid-checkpoint smoke.
 
 Tie-break order on equal marker counts: ``claude_code`` > ``codex`` >
 ``gemini``. Counts always dominate; tie-break is only consulted when two or
