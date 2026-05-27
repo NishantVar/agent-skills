@@ -3,6 +3,74 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>cmux observability — {{ snapshot.captured_at.isoformat() }}</title>
+<style>
+  /* T7: theme tokens — light defaults, dark via prefers-color-scheme.
+     Drives the dashboard's chrome; state tokens are consumed by chips/badges. */
+  :root {
+    color-scheme: light dark;
+
+    /* Font stacks */
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    /* Surface + text tokens (light) */
+    --bg: #ffffff;
+    --surface: #f6f7f9;
+    --text: #15181d;
+    --muted: #6b7280;
+    --border: #dfe3ea;
+
+    /* Spacing scale (4-pt grid) */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+
+    /* Radii */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-pill: 999px;
+
+    /* Contrast helper */
+    --contrast-strong: #000000;
+
+    /* State tokens */
+    --state-running: #1d7a3a;          /* green */
+    --state-needs-input: #b1601e;      /* amber */
+    --state-idle: #6b7280;             /* muted gray */
+    --state-unknown: #9aa3ad;          /* dotted gray, paired with dotted border */
+    --state-unknown-border-style: dotted;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --surface: #181b22;
+      --text: #e6e8ec;
+      --muted: #8a8f99;
+      --border: #2a2f38;
+      --contrast-strong: #ffffff;
+
+      --state-running: #4fc279;
+      --state-needs-input: #d2a247;
+      --state-idle: #8a8f99;
+      --state-unknown: #6e7682;
+    }
+  }
+
+  /* T7: respect users who opt out of motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>
 <style>{{ inline_css | safe }}</style>
 </head><body>
 <header>

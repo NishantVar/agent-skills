@@ -189,6 +189,33 @@ def test_render_inlines_trusted_css_and_js_unescaped(tmp_path: Path):
     assert "&lt;span data-sparkline" not in html
 
 
+def test_render_inline_theme_tokens_and_dark_mode(tmp_path: Path):
+    """T7: snapshot.html.j2 ships an inline <style> block with theme tokens
+    (light + dark + state) and a prefers-reduced-motion override."""
+    snap = _snap_empty()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Mandatory state tokens
+    for token in (
+        "--state-running",
+        "--state-needs-input",
+        "--state-idle",
+        "--state-unknown",
+    ):
+        assert token in html, f"missing state token: {token}"
+
+    # Mandatory surface/text/spacing tokens
+    for token in ("--bg", "--surface", "--text", "--muted", "--border"):
+        assert token in html, f"missing surface token: {token}"
+
+    # Dark theme media query present
+    assert "@media (prefers-color-scheme: dark)" in html
+
+    # Reduced-motion override present
+    assert "prefers-reduced-motion: reduce" in html
+
+
 def test_render_escapes_user_provided_strings(tmp_path: Path):
     snap = _snap_populated(
         summary_text="<script>alert(1)</script>",
