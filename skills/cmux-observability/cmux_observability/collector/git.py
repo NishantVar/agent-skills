@@ -47,6 +47,10 @@ def commit_counts(
     counts: dict[str, int] = {}
     for w in _WINDOWS:
         start = _window_start(w, now)
+        # `--since-as-filter` (Git 2.39+) applies the date predicate per-commit
+        # rather than halting the walk at the first older commit. The fixture
+        # builds a non-monotonic commit-date chain (bob May 25 precedes
+        # month-alice May 7 in parent order), which `--since` would stop on.
         args = ["log", f"--since-as-filter={start.isoformat()}", "--pretty=oneline"]
         # `git log --author` accepts repeated flags with OR semantics.
         for a in authors:

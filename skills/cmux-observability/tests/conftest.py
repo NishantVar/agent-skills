@@ -17,6 +17,14 @@ def fixture_dir() -> Path:
 
 
 @pytest.fixture
+def fixed_now() -> datetime:
+    """A pinned wall-clock for productivity tests. Anchors window math to a
+    known instant so `today`/`week`/`30d` boundaries don't depend on when the
+    suite runs (midnight, DST transitions, etc.)."""
+    return datetime(2026, 5, 27, 12, 0, 0)
+
+
+@pytest.fixture
 def tmp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A fake $HOME with the three XDG-ish subtrees we use."""
     home = tmp_path / "home"
@@ -32,9 +40,10 @@ def _run(cwd: Path, *args: str) -> None:
 
 
 @pytest.fixture
-def tmp_git_repo(tmp_path: Path) -> Path:
+def tmp_git_repo(tmp_path: Path, fixed_now: datetime) -> Path:
     """A git repo with three commits by `alice@example.com` and one by
-    `bob@example.com`, spaced across today, this week, and 30d windows."""
+    `bob@example.com`, spaced across today, this week, and 30d windows
+    relative to `fixed_now` (not wall-clock time)."""
     repo = tmp_path / "tmp_repo"
     repo.mkdir()
     _run(repo, "git", "init", "-q", "-b", "main")
@@ -57,11 +66,10 @@ def tmp_git_repo(tmp_path: Path) -> Path:
         subprocess.run(["git", "commit", "-q", "-m", msg], cwd=repo, check=True,
                        env=env, capture_output=True)
 
-    now = datetime.now()
-    commit(now - timedelta(hours=2), "today-commit-by-alice")
-    commit(now - timedelta(days=3), "week-commit-by-alice")
-    commit(now - timedelta(days=20), "month-commit-by-alice")
-    commit(now - timedelta(days=2), "this-week-bob",
+    commit(fixed_now - timedelta(hours=2), "today-commit-by-alice")
+    commit(fixed_now - timedelta(days=3), "week-commit-by-alice")
+    commit(fixed_now - timedelta(days=20), "month-commit-by-alice")
+    commit(fixed_now - timedelta(days=2), "this-week-bob",
            email="bob@example.com", name="Bob")
     return repo
 
