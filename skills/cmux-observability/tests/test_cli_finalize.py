@@ -156,3 +156,76 @@ def test_no_cmux_collect_then_finalize(tmp_path: Path) -> None:
     assert not runstate_file.exists(), (
         f"runstate file should be discarded after finalize: {runstate_file}"
     )
+
+
+def test_partial_failure_read_screen_renders_no_screen_access(
+    tmp_home: Path, fake_cmux, fixture_dir: Path,
+) -> None:
+    """When `cmux read-screen` fails for a running surface, `collect` records a
+    non-fatal Failure(component="read_screen", target=ref) and `finalize` still
+    renders the dashboard with the no-summary fallback for that row."""
+    py = _resolve_interpreter()
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_home)
+    env["PYTHONPATH"] = str(SKILL_ROOT)
+    env["CMUX_FIXTURE_TREE"] = str(fixture_dir / "cmux_tree_with_tagged_ws.txt")
+    env["CMUX_FIXTURE_TOP"] = str(fixture_dir / "cmux_top_with_tags.txt")
+    env["CMUX_FAIL"] = "read-screen:1"
+
+    cp = _run_cli(py, ["collect"], env=env)
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+    payload = json.loads(cp.stdout)
+    run_id = payload["run_id"]
+
+    # The aligned fixture must yield at least one agent and at least one
+    # read_screen failure — otherwise the partial-failure path is not
+    # exercised (pending_summaries is naturally empty here because
+    # read-screen failed for every running surface, so there's nothing to
+    # summarise; the failures list is the load-bearing signal).
+    assert payload["snapshot_preview"]["agents_total"] >= 1, (
+        f"expected ≥1 agent from aligned with-tags fixture; got payload={payload}"
+    )
+    read_screen_failures = [
+        f for f in payload["snapshot_preview"]["failures"]
+        if f["component"] == "read_screen"
+    ]
+    assert read_screen_failures, (
+        "expected ≥1 component='read_screen' failure from CMUX_FAIL; "
+        f"got failures={payload['snapshot_preview']['failures']}"
+    )
+
+    cp = _run_cli(py, ["finalize", "--run-id", run_id, "--no-open"], env=env)
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+    final = json.loads(cp.stdout)
+    html = Path(final["html"]).read_text().lower()
+    # Either "(no summary)" or "(no screen access)" satisfies the contract:
+    # the row must render *something* for the missing-summary case.
+    assert ("no summary" in html) or ("no screen access" in html), (
+        "agent row missing both fallback literals"
+    )
+
+
+def test_partial_failure_no_git_renders_no_repos(
+    tmp_home: Path, fake_cmux, fixture_dir: Path,
+) -> None:
+    """`collect --rescan` + `finalize` must not crash when $HOME contains no
+    git repositories. The productivity section may render as totals-zero or
+    be absent entirely; neither path should error."""
+    py = _resolve_interpreter()
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_home)
+    env["PYTHONPATH"] = str(SKILL_ROOT)
+    env["CMUX_FIXTURE_TREE"] = str(fixture_dir / "cmux_tree_basic.txt")
+    env["CMUX_FIXTURE_TOP"] = str(fixture_dir / "cmux_top_no_tags.txt")
+
+    cp = _run_cli(py, ["collect", "--rescan"], env=env)
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+    run_id = json.loads(cp.stdout)["run_id"]
+
+    cp = _run_cli(py, ["finalize", "--run-id", run_id, "--no-open"], env=env)
+    assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
+    final = json.loads(cp.stdout)
+    # Reading the rendered HTML must not raise; content is permissive.
+    Path(final["html"]).read_text()
