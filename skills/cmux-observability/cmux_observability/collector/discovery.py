@@ -4,8 +4,12 @@ Authoritative source: a deterministic `find` scanner with prune rules.
 macOS `mdfind` may seed/accelerate, but Spotlight is never authoritative
 because it can skip hidden folders or have partial indexes.
 
-Cache: JSON file with `generated_at`, `mdfind_used`, `repos`. TTL controlled
-by `DiscoveryConfig.cache_ttl_seconds`. `--rescan` (CLI) deletes the file.
+Cache: JSON file with `generated_at`, `mdfind_used`, `inputs`, `repos`. The
+`inputs` block fingerprints the discovery config so a cache produced for
+different `repo_paths` / `exclude` / `max_depth` / `use_mdfind_seed` is not
+reused. TTL controlled by `DiscoveryConfig.cache_ttl_seconds`, evaluated
+against the stored `generated_at` (not file mtime). `--rescan` (CLI) deletes
+the file.
 """
 
 from __future__ import annotations
@@ -36,24 +40,64 @@ def _cache_path(cfg: Config) -> Path:
     return _expand(cfg.discovery.cache_path)
 
 
-def _cache_fresh(path: Path, ttl: int) -> bool:
+def _inputs_fingerprint(cfg: Config) -> dict:
+    return {
+        "repo_paths": list(cfg.productivity.repo_paths),
+        "exclude": list(cfg.productivity.exclude),
+        "max_depth": cfg.discovery.max_depth,
+        "use_mdfind_seed": cfg.discovery.use_mdfind_seed,
+    }
+
+
+def _load_cache_if_valid(path: Path, cfg: Config) -> list[Path] | None:
+    """Return cached repo paths only if the cache file exists, is well-formed
+    JSON, carries an `inputs` block that matches the current config, and its
+    `generated_at` is within `cache_ttl_seconds`. Otherwise return None so the
+    caller rescans."""
     if not path.exists():
-        return False
-    return (time.time() - path.stat().st_mtime) < ttl
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    generated_at = data.get("generated_at")
+    if not isinstance(generated_at, (int, float)):
+        return None
+    if (time.time() - generated_at) >= cfg.discovery.cache_ttl_seconds:
+        return None
+    if data.get("inputs") != _inputs_fingerprint(cfg):
+        return None
+    repos = data.get("repos")
+    if not isinstance(repos, list):
+        return None
+    return [Path(p) for p in repos]
 
 
-def _load_cache(path: Path) -> list[Path]:
-    data = json.loads(path.read_text())
-    return [Path(p) for p in data.get("repos", [])]
-
-
-def _save_cache(path: Path, repos: list[Path], mdfind_used: bool) -> None:
+def _save_cache(path: Path, repos: list[Path], mdfind_used: bool, cfg: Config) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "generated_at": time.time(),
         "mdfind_used": mdfind_used,
+        "inputs": _inputs_fingerprint(cfg),
         "repos": [str(r) for r in repos],
     }, indent=2))
+
+
+def _is_under(path: Path, roots: list[Path]) -> bool:
+    """True iff `path` (after best-effort resolve) lies under any of `roots`."""
+    try:
+        rp = path.resolve()
+    except (OSError, RuntimeError):
+        rp = path
+    for r in roots:
+        try:
+            rp.relative_to(r)
+            return True
+        except ValueError:
+            continue
+    return False
 
 
 def _run_mdfind_seed() -> list[Path]:
@@ -127,8 +171,12 @@ def discover_repos(
     failures: list[Failure] = []
     cache = _cache_path(cfg)
 
-    if not force_rescan and _cache_fresh(cache, cfg.discovery.cache_ttl_seconds):
-        return _load_cache(cache), failures
+    if not force_rescan:
+        cached = _load_cache_if_valid(cache, cfg)
+        if cached is not None:
+            return cached, failures
+
+    allowed_roots = [_expand(p) for p in cfg.productivity.repo_paths]
 
     candidates: set[Path] = set()
     mdfind_used = False
@@ -136,7 +184,9 @@ def discover_repos(
         seeded = _run_mdfind_seed()
         if seeded:
             mdfind_used = True
-            candidates.update(seeded)
+            for s in seeded:
+                if _is_under(s, allowed_roots):
+                    candidates.add(s)
 
     for root_str in cfg.productivity.repo_paths:
         root = _expand(root_str)
@@ -159,11 +209,12 @@ def discover_repos(
                 message=err or "rev-parse failed",
             ))
             continue
-        # exclude can also match the resolved toplevel
         if _excluded(toplevel, cfg.productivity.exclude):
+            continue
+        if not _is_under(toplevel, allowed_roots):
             continue
         repos.add(toplevel.resolve())
 
     out = sorted(repos)
-    _save_cache(cache, out, mdfind_used)
+    _save_cache(cache, out, mdfind_used, cfg)
     return out, failures

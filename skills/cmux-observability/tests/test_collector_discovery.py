@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -46,6 +47,12 @@ def test_discovery_cache_hit_skips_find_scanner(tmp_home, monkeypatch):
     cache_path.write_text(json.dumps({
         "generated_at": time.time(),
         "mdfind_used": False,
+        "inputs": {
+            "repo_paths": [str(tmp_home)],
+            "exclude": [],
+            "max_depth": 6,
+            "use_mdfind_seed": False,
+        },
         "repos": [str(tmp_home / "fake_repo")],
     }))
 
@@ -86,3 +93,99 @@ def test_discovery_handles_dot_git_file_worktrees(tmp_home):
     assert str(real.resolve()) in refs or str(real) in refs
     # The worktree's toplevel resolves to itself, not to `real`.
     assert any("feature_worktree" in str(r) for r in repos)
+
+
+def test_mdfind_seed_outside_configured_roots_is_ignored(tmp_home, monkeypatch):
+    inside_root = tmp_home / "projects"
+    inside_repo = inside_root / "inside"
+    _mk_repo(inside_repo)
+    outside_repo = tmp_home / "elsewhere" / "outside"
+    _mk_repo(outside_repo)
+
+    import cmux_observability.collector.discovery as discovery_mod
+    monkeypatch.setattr(sys, "platform", "darwin")
+    # mdfind reports both inside-root and outside-root .git paths
+    monkeypatch.setattr(
+        discovery_mod, "_run_mdfind_seed",
+        lambda: [inside_repo / ".git", outside_repo / ".git"],
+    )
+    # Disable the find scanner so mdfind is the only candidate source.
+    monkeypatch.setattr(
+        discovery_mod, "_run_find_scan", lambda root, depth: [],
+    )
+
+    cfg = Config(
+        productivity=ProductivityConfig(
+            repo_paths=[str(inside_root)],
+            exclude=[],
+            author_emails=[],
+        ),
+        discovery=DiscoveryConfig(
+            use_mdfind_seed=True,
+            max_depth=6,
+            cache_ttl_seconds=3600,
+            cache_path=str(tmp_home / ".local" / "share" / "cmux-observability" / "repo_discovery.json"),
+        ),
+        summarizer=None,
+        render=None,
+    )
+    repos, failures = discover_repos(cfg)
+    refs = [r.resolve() for r in repos]
+    assert inside_repo.resolve() in refs
+    assert outside_repo.resolve() not in refs
+
+
+def test_cache_with_mismatched_inputs_triggers_rescan(tmp_home, monkeypatch):
+    cache_path = tmp_home / ".local" / "share" / "cmux-observability" / "repo_discovery.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps({
+        "generated_at": time.time(),
+        "mdfind_used": False,
+        "inputs": {
+            "repo_paths": [str(tmp_home / "different_root")],
+            "exclude": [],
+            "max_depth": 6,
+            "use_mdfind_seed": False,
+        },
+        "repos": [str(tmp_home / "cached_only")],
+    }))
+
+    calls: list = []
+    import cmux_observability.collector.discovery as discovery_mod
+    monkeypatch.setattr(
+        discovery_mod, "_run_find_scan",
+        lambda root, depth: calls.append((str(root), depth)) or [],
+    )
+
+    repos, failures = discover_repos(_cfg(tmp_home))
+    assert calls != [], "find scanner should run when cached inputs do not match"
+    assert all("cached_only" not in str(r) for r in repos)
+
+
+def test_cache_with_stale_generated_at_triggers_rescan(tmp_home, monkeypatch):
+    cache_path = tmp_home / ".local" / "share" / "cmux-observability" / "repo_discovery.json"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    # generated_at is well outside the 3600-second TTL even though the
+    # file mtime is fresh (we just wrote it).
+    cache_path.write_text(json.dumps({
+        "generated_at": time.time() - 100000,
+        "mdfind_used": False,
+        "inputs": {
+            "repo_paths": [str(tmp_home)],
+            "exclude": [],
+            "max_depth": 6,
+            "use_mdfind_seed": False,
+        },
+        "repos": [str(tmp_home / "stale_only")],
+    }))
+
+    calls: list = []
+    import cmux_observability.collector.discovery as discovery_mod
+    monkeypatch.setattr(
+        discovery_mod, "_run_find_scan",
+        lambda root, depth: calls.append((str(root), depth)) or [],
+    )
+
+    repos, failures = discover_repos(_cfg(tmp_home))
+    assert calls != [], "find scanner should run when generated_at is past TTL"
+    assert all("stale_only" not in str(r) for r in repos)
