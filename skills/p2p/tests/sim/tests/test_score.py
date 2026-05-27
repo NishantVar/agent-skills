@@ -367,6 +367,44 @@ def test_action_required_and_retryable_checks(tmp_path: Path):
     assert not res2.passed and "retryable" in res2.reason
 
 
+def test_observed_kind_filters_before_count(tmp_path: Path):
+    """Regression: count must be checked AFTER observed_kind narrows the
+    event set, not before. QA caught this on the baseline smoke (run
+    fbc3d78b...): step 1 asserted count=3 bootstrap sends, but the
+    scorer counted all 14 ok sends because observed_kind was checked
+    per-event, after the count assertion."""
+    log = tmp_path / "sim_driver.jsonl"
+    bootstrap = {"event": "send_result", "step_id": 1,
+                 "raw_stdout": {"ok": True}, "observed_kind": "bootstrap",
+                 "peer_status": "live", "resolved_by": "title_in_workspace",
+                 "intended_peer": "worker_alpha"}
+    message = {"event": "send_result", "step_id": 1,
+               "raw_stdout": {"ok": True}, "observed_kind": "message",
+               "peer_status": "live", "resolved_by": "title_in_workspace",
+               "intended_peer": "worker_alpha"}
+    _seed_log(log, [bootstrap] * 3 + [message] * 11)
+    a = {"worker": "sim_driver", "kind": "ok",
+         "observed_kind": "bootstrap", "peer_status": "live",
+         "resolved_by": "title_in_workspace", "count": ">=3"}
+    res = score_assertion(a, step_id=1, log_dir=tmp_path)
+    assert res.passed, res.reason
+
+
+def test_peer_status_filters_before_count(tmp_path: Path):
+    log = tmp_path / "worker_alpha.jsonl"
+    live = {"event": "send_result", "step_id": 1,
+            "raw_stdout": {"ok": True}, "observed_kind": "message",
+            "peer_status": "live", "intended_peer": "worker_bravo"}
+    stale = {"event": "send_result", "step_id": 1,
+             "raw_stdout": {"ok": True}, "observed_kind": "message",
+             "peer_status": "stale", "intended_peer": "worker_bravo"}
+    _seed_log(log, [live] * 2 + [stale] * 3)
+    a = {"worker": "worker_alpha", "kind": "ok",
+         "peer_status": "stale", "count": 3}
+    res = score_assertion(a, step_id=1, log_dir=tmp_path)
+    assert res.passed, res.reason
+
+
 def test_read_events_skips_malformed_json_line(tmp_path: Path):
     log = tmp_path / "worker_alpha.jsonl"
     log.write_text(

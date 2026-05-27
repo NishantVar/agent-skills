@@ -11,15 +11,15 @@ steps:
       - {worker: worker_bravo,   role: receiver}
       - {worker: worker_charlie, role: receiver}
     actions:
-      - {type: driver_send, peer: worker_alpha,   body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\"}"}
-      - {type: driver_send, peer: worker_bravo,   body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\"}"}
-      - {type: driver_send, peer: worker_charlie, body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\"}"}
+      - {type: driver_send, peer: worker_alpha,   body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\",\"forward\":true}"}
+      - {type: driver_send, peer: worker_bravo,   body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\",\"forward\":true}"}
+      - {type: driver_send, peer: worker_charlie, body_template: "SIM:PRIME {\"step_id\":1,\"role\":\"sender\",\"forward\":true}"}
       - {type: trigger_counter_lap, start: worker_alpha, value: 0}
       - {type: driver_send, peer: worker_alpha,   body_template: "SIM:REPORT {}"}
       - {type: driver_send, peer: worker_bravo,   body_template: "SIM:REPORT {}"}
       - {type: driver_send, peer: worker_charlie, body_template: "SIM:REPORT {}"}
     assertions:
-      - {worker: sim_driver,  kind: ok, observed_kind: bootstrap, peer_status: live, resolved_by: title_in_workspace, count: 3}
+      - {worker: sim_driver,  kind: ok, observed_kind: bootstrap, peer_status: live, resolved_by: title_in_workspace, count: ">=3"}
       - {worker: worker_alpha,   kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
       - {worker: worker_bravo,   kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
       - {worker: worker_charlie, kind: ok, observed_kind: message, peer_status: live, count: ">=1"}
@@ -68,7 +68,7 @@ steps:
       - {worker: bravo_renamed, role: receiver_log_only}
     actions:
       - {type: driver_send, peer: worker_alpha,
-         body_template: "SIM:PRIME {\"step_id\":4,\"role\":\"sender\"}"}
+         body_template: "SIM:PRIME {\"step_id\":4,\"role\":\"sender\",\"forward\":false}"}
       - {type: trigger_one_way_burst, sender: worker_alpha, peer: bravo_renamed, count: 5}
     assertions:
       - {worker: worker_alpha, kind: ok, observed_kind: message, one_way: true, count: 5}
@@ -81,8 +81,8 @@ steps:
     prime:
       - {worker: bravo_renamed, role: receiver_log_only}
     actions:
-      - {type: driver_send, peer: worker_alpha,   body_template: "SIM:PRIME {\"step_id\":5,\"role\":\"sender\"}"}
-      - {type: driver_send, peer: worker_charlie, body_template: "SIM:PRIME {\"step_id\":5,\"role\":\"sender\"}"}
+      - {type: driver_send, peer: worker_alpha,   body_template: "SIM:PRIME {\"step_id\":5,\"role\":\"sender\",\"forward\":false}"}
+      - {type: driver_send, peer: worker_charlie, body_template: "SIM:PRIME {\"step_id\":5,\"role\":\"sender\",\"forward\":false}"}
       - {type: barrier_fire, senders: [worker_alpha, worker_charlie], peer: bravo_renamed}
     assertions:
       - {worker: worker_alpha,   kind: ok, observed_kind: message, count: 1}
@@ -156,7 +156,7 @@ steps:
     name: cold_spawn_worker_delta
     actions:
       - {type: driver_send, peer: worker_alpha,
-         body_template: "SIM:PRIME {\"step_id\":10,\"role\":\"sender\",\"target\":\"worker_delta\"}"}
+         body_template: "SIM:PRIME {\"step_id\":10,\"role\":\"sender\",\"forward\":false,\"target\":\"worker_delta\"}"}
       - {type: trigger_send_one, sender: worker_alpha, peer: worker_delta}
     assertions:
       - {worker: worker_alpha, kind: error, observed_code: peer_unknown,

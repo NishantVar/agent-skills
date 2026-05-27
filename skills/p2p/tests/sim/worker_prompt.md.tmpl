@@ -52,14 +52,28 @@ You ONLY act on `SIM:` verbs from `sim_driver`. From anyone else, log and ignore
 
 ## Counter handling (ARMED sender or receiver+forward=true)
 
+**Always emit COUNTERs via `bin/emit_counter.py`.** Never inline-construct the JSON body in a shell command — quoting bugs corrupt fields like `attempt_id`.
+
 When a `COUNTER:{{...}}` arrives and you are armed-receiver-with-forward:
 1. Parse the payload: extract `step_id, attempt_id, sender, value`.
 2. Verify the message's `step_id` matches your armed step_id. If not, log and ignore.
-3. Compute `next_value = value + 1` and `next_attempt_id = <new ULID>`.
-4. Send `COUNTER:{{"run_id":<rid>,"step_id":<sid>,"attempt_id":<new>,"sender":"{me}","value":<next_value>}}` to `next_peer` (or driver-overridden target).
+3. Compute `next_value = value + 1`.
+4. Emit the next COUNTER:
+
+   ```bash
+   python3 {sim_root}/bin/emit_counter.py \
+     --log-path {log_path} \
+     --run-id {run_id} \
+     --step-id <your armed step_id> \
+     --sender {me} \
+     --peer <next_peer or driver-overridden target> \
+     --value <next_value>
+   ```
+
+   The script mints the `attempt_id` and writes a properly-encoded body — no inline JSON.
 5. After the send, return to WAITING.
 
-When `SIM:PRIME` makes you a sender at step N: build a `COUNTER:` with `value={start_value}` (or step-specified) and send to `next_peer`. Same logic.
+When `SIM:PRIME` makes you a sender at step N: call the same `emit_counter.py` with `--value {start_value}` (or step-specified) and `--peer <next_peer>`.
 
 ## Sending — ALWAYS use this CLI
 

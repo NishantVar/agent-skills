@@ -153,7 +153,10 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
         # then drop them so subsequent count/field checks see only allowed events
         events = [e for e in events if e.get("intended_peer") != assertion["intended_peer_not"]]
 
-    # filter send_result by ok/error and other selectors
+    # filter send_result by ok/error and other selectors. These are
+    # narrowing predicates that describe "which sends should I look at",
+    # not assertions on a known-narrow set; they must run BEFORE the
+    # count check, otherwise count is taken against unfiltered events.
     if event == "send_result":
         if assertion.get("kind") == "ok":
             events = [e for e in events if (e.get("raw_stdout") or {}).get("ok") is True]
@@ -163,6 +166,12 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
             events = [e for e in events if e.get("intended_peer") == assertion["intended_peer"]]
         if "one_way" in assertion:
             events = [e for e in events if e.get("one_way") == assertion["one_way"]]
+        if "observed_kind" in assertion:
+            events = [e for e in events if e.get("observed_kind") == assertion["observed_kind"]]
+        if "peer_status" in assertion:
+            events = [e for e in events if e.get("peer_status") == assertion["peer_status"]]
+        if "resolved_by" in assertion:
+            events = [e for e in events if e.get("resolved_by") == assertion["resolved_by"]]
 
     # count check (only when count is specified)
     if "count" in assertion:
@@ -184,18 +193,6 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
         if "observed_code" in assertion and ev.get("observed_code") != assertion["observed_code"]:
             return AssertionResult(False,
                 f"expected observed_code={assertion['observed_code']!r}, got {ev.get('observed_code')!r}",
-                events)
-        if "observed_kind" in assertion and ev.get("observed_kind") != assertion["observed_kind"]:
-            return AssertionResult(False,
-                f"expected observed_kind={assertion['observed_kind']!r}, got {ev.get('observed_kind')!r}",
-                events)
-        if "peer_status" in assertion and ev.get("peer_status") != assertion["peer_status"]:
-            return AssertionResult(False,
-                f"expected peer_status={assertion['peer_status']!r}, got {ev.get('peer_status')!r}",
-                events)
-        if "resolved_by" in assertion and ev.get("resolved_by") != assertion["resolved_by"]:
-            return AssertionResult(False,
-                f"expected resolved_by={assertion['resolved_by']!r}, got {ev.get('resolved_by')!r}",
                 events)
         if "handoff_skill" in assertion and ev.get("handoff_skill") != assertion["handoff_skill"]:
             return AssertionResult(False,

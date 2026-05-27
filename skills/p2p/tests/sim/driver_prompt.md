@@ -14,6 +14,7 @@ You are the orchestrator for a p2p stress-simulation. Your job is to:
 - Log dir: `{sim_root}/runs/{run_id}/`
 - Your title: `sim_driver`
 - Workers: `worker_alpha`, `worker_bravo` (later renamed to `bravo_renamed`), `worker_charlie`, plus transient `worker_delta` (step 10) and a duplicate-title agent (step 3)
+- **Agent spawn command:** read the `P2P_SIM_AGENT_CMD` env var; default to `claude` if unset. Use this value as the agent invocation passed to tfork (e.g. operators with a permission-shimmed alias set `P2P_SIM_AGENT_CMD=cm`). Hard-coding `claude` breaks any operator whose claude needs `--dangerously-skip-permissions` or equivalent.
 
 ## High-level loop
 

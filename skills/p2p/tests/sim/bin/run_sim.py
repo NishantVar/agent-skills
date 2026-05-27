@@ -35,14 +35,21 @@ def main() -> int:
     rendered_path = run_dir / "driver_prompt.rendered.md"
     rendered_path.write_text(rendered)
 
+    agent_cmd = os.environ.get("P2P_SIM_AGENT_CMD", "claude")
+
     print(f"run_id={run_id}")
     print(f"run_dir={run_dir}")
     print(f"rendered driver prompt: {rendered_path}")
+    print(f"agent spawn cmd: {agent_cmd}  (override via P2P_SIM_AGENT_CMD env var)")
     print()
     print("Next: spawn the sim_driver pane in cmux with the rendered prompt as")
     print("its first user-turn input. Example via tfork skill:")
-    print(f"  fork claude --placement new-workspace -- claude")
+    print(f"  fork {agent_cmd} --placement new-workspace -- {agent_cmd}")
     print(f"  then paste {rendered_path} as the first user prompt.")
+    print()
+    print("The driver will read P2P_SIM_AGENT_CMD from its own env when spawning")
+    print("worker panes, so export it before launching this script if you use a")
+    print("non-default alias (e.g. `cm`).")
     return 0
 
 
