@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+from dataclasses import dataclass, field
 
+from ..errors import CmuxUnavailable
 from ..model import Surface, Workspace
 
 # Lines look like (annotations may appear in any order at the end):
@@ -75,10 +79,6 @@ def parse_tree(stdout: str) -> list[Workspace]:
     return workspaces
 
 
-from dataclasses import dataclass, field
-import re as _re
-
-
 @dataclass
 class TagLine:
     kind: str           # "claude_code" | "codex" | "opencode" | "gemini" | ...
@@ -98,11 +98,11 @@ class TopResult:
     stats_by_surface: dict[str, SurfaceStats] = field(default_factory=dict)
 
 
-_TOP_WORKSPACE_RE = _re.compile(r"workspace (workspace:\d+)")
-_TOP_TAG_RE       = _re.compile(
+_TOP_WORKSPACE_RE = re.compile(r"workspace (workspace:\d+)")
+_TOP_TAG_RE       = re.compile(
     r'\btag\s+(\S+)\s+"([^"]+)"\s+pid=(\d+)'
 )
-_TOP_SURFACE_RE   = _re.compile(
+_TOP_SURFACE_RE   = re.compile(
     r"^\s*([\d.]+)%\s+([\d.]+)\s+(KB|MB|GB|B)\s+\d+\s+.*\bsurface (surface:\d+)"
 )
 
@@ -142,3 +142,52 @@ def parse_top(stdout: str) -> TopResult:
             )
 
     return result
+
+
+def _run_cmux(*args: str) -> str:
+    """Invoke `cmux <args>` and return stdout as text. Raises
+    `CmuxUnavailable` when the binary is missing or the call returns
+    non-zero (callers map to a non-fatal Failure record)."""
+    if shutil.which("cmux") is None:
+        raise CmuxUnavailable("cmux binary not on PATH")
+    try:
+        cp = subprocess.run(
+            ["cmux", *args],
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+    except (FileNotFoundError, OSError) as e:
+        raise CmuxUnavailable(str(e)) from e
+    if cp.returncode != 0:
+        raise CmuxUnavailable(
+            f"cmux {' '.join(args)!r} exited {cp.returncode}: {cp.stderr.strip()}"
+        )
+    return cp.stdout
+
+
+def fetch_tree() -> list[Workspace]:
+    # `cmux tree --all` matches the documented output and the parser fixtures.
+    # Do NOT add `--id-format both` — it inserts UUID tokens between the ref
+    # and the title that break the parser fixtures.
+    return parse_tree(_run_cmux("tree", "--all"))
+
+
+def fetch_top() -> TopResult:
+    return parse_top(_run_cmux("top", "--all"))
+
+
+def read_screen(surface_ref: str, lines: int = 150) -> str:
+    """Capture up to `lines` lines of scrollback for a given surface. Raises
+    `CmuxUnavailable` if the call fails — callers degrade per-surface."""
+    return _run_cmux(
+        "read-screen", "--surface", surface_ref,
+        "--scrollback", "--lines", str(lines),
+    )
+
+
+def cmux_version() -> str | None:
+    try:
+        return _run_cmux("version").strip() or None
+    except CmuxUnavailable:
+        return None

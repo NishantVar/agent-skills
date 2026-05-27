@@ -59,3 +59,47 @@ def test_parse_top_no_tags_returns_empty_tag_map(fixture_dir):
     result = parse_top(text)
     assert result.tags_by_workspace == {}
     assert "surface:39" in result.stats_by_surface
+
+
+import subprocess
+from pathlib import Path
+
+from cmux_observability.collector.cmux import (
+    fetch_tree, fetch_top, read_screen, cmux_version, CmuxUnavailable,
+)
+
+
+def test_fetch_tree_returns_parsed_workspaces(monkeypatch, fake_cmux, fixture_dir):
+    monkeypatch.setenv("CMUX_FIXTURE_TREE", str(fixture_dir / "cmux_tree_basic.txt"))
+    workspaces = fetch_tree()
+    assert [w.ref for w in workspaces] == ["workspace:2", "workspace:17"]
+
+
+def test_fetch_top_returns_parsed_top(monkeypatch, fake_cmux, fixture_dir):
+    monkeypatch.setenv("CMUX_FIXTURE_TOP", str(fixture_dir / "cmux_top_with_tags.txt"))
+    result = fetch_top()
+    assert "workspace:12" in result.tags_by_workspace
+
+
+def test_read_screen_passes_lines_and_returns_stdout(monkeypatch, fake_cmux, tmp_path):
+    payload = tmp_path / "screen.txt"
+    payload.write_text("line1\nline2\nline3\n")
+    monkeypatch.setenv("CMUX_FIXTURE_READ_SCREEN", str(payload))
+    out = read_screen("surface:1", lines=120)
+    assert out == "line1\nline2\nline3\n"
+
+
+def test_cmux_version_returns_stripped_string(monkeypatch, fake_cmux, tmp_path):
+    payload = tmp_path / "version.txt"
+    payload.write_text("  cmux 1.2.3\n\n")
+    monkeypatch.setenv("CMUX_FIXTURE_VERSION", str(payload))
+    assert cmux_version() == "cmux 1.2.3"
+
+
+def test_fetch_tree_raises_cmux_unavailable_on_missing_binary(monkeypatch):
+    monkeypatch.setenv("PATH", "/nonexistent")
+    try:
+        fetch_tree()
+    except CmuxUnavailable:
+        return
+    raise AssertionError("expected CmuxUnavailable")
