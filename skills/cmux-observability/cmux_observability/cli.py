@@ -177,11 +177,22 @@ def cmd_collect(args: argparse.Namespace) -> int:
     runstate.write(run_id, snap, screen_hashes=screen_hashes,
                    redactions_by_surface=redactions_by_surface)
 
+    agents_tagged = sum(1 for a in snap.agents if a.type_source == "cmux_tag")
+    agents_heuristic = sum(
+        1 for a in snap.agents if a.type_source == "heuristic"
+    )
+    assert agents_tagged + agents_heuristic == len(snap.agents), (
+        f"unexpected agent type_source values: "
+        f"{sorted({a.type_source for a in snap.agents})}"
+    )
+
     return _emit({
         "ok": True, "run_id": run_id,
         "pending_summaries": pending,
         "snapshot_preview": {
             "agents_total": len(snap.agents),
+            "agents_tagged": agents_tagged,
+            "agents_heuristic": agents_heuristic,
             "workspaces_total": len(snap.workspaces),
             "failures": [f.__dict__ for f in failures],
         },

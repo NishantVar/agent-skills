@@ -365,3 +365,171 @@ def test_collect_heuristic_weak_marker_not_promoted(
         s.ref for ws in snap.workspaces for s in ws.surfaces
     }
     assert "surface:1" in workspace_surface_refs
+
+
+# --- T4: agents_tagged / agents_heuristic envelope breakdown ---------------
+
+# Two distinct claude markers — drives heuristic confidence >= 0.7.
+_CLAUDE_TAIL_2MARKERS = (
+    "❯ run the tests\n"
+    "╭─ ctx:42%\n"
+    "⏵⏵ bypass permissions\n"
+)
+_PLAIN_TAIL = (
+    "nishant@host project % ls\n"
+    "README.md  src/\n"
+    "nishant@host project % \n"
+)
+
+
+def _run_collect_with_surfaces(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    tagged_refs: list[str],
+    heuristic_refs: list[str],
+    plain_refs: list[str],
+) -> dict:
+    """Run `collect` against synthetic workspaces and return the envelope.
+
+    Each ref becomes its own workspace+surface. Tagged refs get a claude_code
+    cmux tag. Heuristic refs return a 2-marker claude tail (conf>=0.7).
+    Plain refs return a plain-shell tail and must not be promoted.
+    """
+    from cmux_observability.collector.cmux import TagLine, TopResult
+    from cmux_observability.model import Surface, Workspace
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    workspaces: list[Workspace] = []
+    tags_by_ws: dict[str, list[TagLine]] = {}
+    all_refs = tagged_refs + heuristic_refs + plain_refs
+    for idx, ref in enumerate(all_refs, start=1):
+        ws_ref = f"workspace:{idx}"
+        surf = Surface(
+            ref=ref, pane_ref=f"pane:{idx}", workspace_ref=ws_ref,
+            kind="terminal", title=f"tab-{idx}", tty=f"ttys{idx:03d}",
+        )
+        workspaces.append(Workspace(
+            ref=ws_ref, title=f"WS {idx}",
+            window_ref="window:1", surfaces=[surf],
+        ))
+        if ref in tagged_refs:
+            tags_by_ws[ws_ref] = [
+                TagLine(kind="claude_code", state="Running", pid=4200 + idx),
+            ]
+
+    top = TopResult(tags_by_workspace=tags_by_ws, stats_by_surface={})
+
+    monkeypatch.setattr("cmux_observability.cli.fetch_tree", lambda: workspaces)
+    monkeypatch.setattr("cmux_observability.cli.fetch_top", lambda: top)
+    monkeypatch.setattr(
+        "cmux_observability.cli.cmux_version", lambda: "0.64.10",
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.discover_repos",
+        lambda cfg, force_rescan=False: ([], []),
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.productivity", lambda repos, cfg: None,
+    )
+
+    def fake_read_screen(surface_ref, *, workspace_ref=None, lines=150):
+        if surface_ref in tagged_refs:
+            return "tagged agent screen\n" + _CLAUDE_TAIL_2MARKERS
+        if surface_ref in heuristic_refs:
+            return _CLAUDE_TAIL_2MARKERS
+        return _PLAIN_TAIL
+
+    monkeypatch.setattr(
+        "cmux_observability.cli.read_screen", fake_read_screen,
+    )
+
+    cfg = _write_config(tmp_path)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cli.main(["collect", "--config", str(cfg)])
+    assert rc == 0
+    return json.loads(buf.getvalue())
+
+
+def test_envelope_agents_breakdown_mixed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mixed fixture: 2 tagged + 3 heuristic + 1 plain → 5 agents (2/3)."""
+    out = _run_collect_with_surfaces(
+        tmp_path, monkeypatch,
+        tagged_refs=["surface:t1", "surface:t2"],
+        heuristic_refs=["surface:h1", "surface:h2", "surface:h3"],
+        plain_refs=["surface:p1"],
+    )
+    sp = out["snapshot_preview"]
+    assert sp["agents_total"] == 5
+    assert sp["agents_tagged"] == 2
+    assert sp["agents_heuristic"] == 3
+    assert sp["agents_total"] == sp["agents_tagged"] + sp["agents_heuristic"]
+
+
+def test_envelope_agents_breakdown_all_tagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-tagged fixture: agents_heuristic=0, agents_tagged == agents_total."""
+    out = _run_collect_with_surfaces(
+        tmp_path, monkeypatch,
+        tagged_refs=["surface:t1", "surface:t2", "surface:t3"],
+        heuristic_refs=[],
+        plain_refs=[],
+    )
+    sp = out["snapshot_preview"]
+    assert sp["agents_total"] == 3
+    assert sp["agents_tagged"] == 3
+    assert sp["agents_heuristic"] == 0
+
+
+def test_envelope_agents_breakdown_all_heuristic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-heuristic fixture: agents_tagged=0, agents_heuristic == agents_total."""
+    out = _run_collect_with_surfaces(
+        tmp_path, monkeypatch,
+        tagged_refs=[],
+        heuristic_refs=["surface:h1", "surface:h2"],
+        plain_refs=[],
+    )
+    sp = out["snapshot_preview"]
+    assert sp["agents_total"] == 2
+    assert sp["agents_tagged"] == 0
+    assert sp["agents_heuristic"] == 2
+
+
+def test_envelope_agents_breakdown_zero_agents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No agents: all three counts are 0."""
+    out = _run_collect_with_surfaces(
+        tmp_path, monkeypatch,
+        tagged_refs=[],
+        heuristic_refs=[],
+        plain_refs=["surface:p1", "surface:p2"],
+    )
+    sp = out["snapshot_preview"]
+    assert sp["agents_total"] == 0
+    assert sp["agents_tagged"] == 0
+    assert sp["agents_heuristic"] == 0
+
+
+def test_envelope_agents_breakdown_invariant_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invariant: agents_total == agents_tagged + agents_heuristic."""
+    out = _run_collect_with_surfaces(
+        tmp_path, monkeypatch,
+        tagged_refs=["surface:t1"],
+        heuristic_refs=["surface:h1", "surface:h2"],
+        plain_refs=["surface:p1"],
+    )
+    sp = out["snapshot_preview"]
+    assert sp["agents_total"] == sp["agents_tagged"] + sp["agents_heuristic"]
+    assert sp["agents_total"] > 0
