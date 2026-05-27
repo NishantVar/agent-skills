@@ -167,3 +167,123 @@ def test_collect_passes_workspace_ref_to_read_screen(
     failures = out["snapshot_preview"]["failures"]
     rs_failures = [f for f in failures if f["component"] == "read_screen"]
     assert not rs_failures, f"unexpected read_screen failures: {rs_failures}"
+
+
+def test_collect_heuristic_classifies_untagged_surface_and_flows_into_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wired heuristic classifier:
+    - tagged claude surface keeps type_source=cmux_tag, conf=1.0
+    - untagged surface whose scrollback hits claude markers becomes a heuristic
+      agent (type_source=heuristic, conf>=0.7) and flows into pending_summaries
+    - untagged surface with plain-shell tail produces NO agent and is NOT in
+      pending_summaries
+    """
+    from cmux_observability.collector.cmux import TagLine, TopResult
+    from cmux_observability.model import Surface, Workspace
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    # Workspace A: tagged claude surface.
+    ws_tagged = Workspace(
+        ref="workspace:1", title="Tagged WS", window_ref="window:1",
+        surfaces=[Surface(
+            ref="surface:1", pane_ref="pane:1", workspace_ref="workspace:1",
+            kind="terminal", title="claude_code worker", tty="ttys001",
+        )],
+    )
+    # Workspace B: untagged surface whose scrollback hits claude markers.
+    ws_heuristic = Workspace(
+        ref="workspace:2", title="Heuristic WS", window_ref="window:1",
+        surfaces=[Surface(
+            ref="surface:2", pane_ref="pane:2", workspace_ref="workspace:2",
+            kind="terminal", title="some-tab", tty="ttys002",
+        )],
+    )
+    # Workspace C: untagged plain-shell surface — must NOT become an agent.
+    ws_plain = Workspace(
+        ref="workspace:3", title="Plain WS", window_ref="window:1",
+        surfaces=[Surface(
+            ref="surface:3", pane_ref="pane:3", workspace_ref="workspace:3",
+            kind="terminal", title="shell", tty="ttys003",
+        )],
+    )
+
+    top = TopResult(
+        tags_by_workspace={
+            "workspace:1": [TagLine(kind="claude_code", state="Running", pid=4242)],
+        },
+        stats_by_surface={},
+    )
+
+    monkeypatch.setattr(
+        "cmux_observability.cli.fetch_tree",
+        lambda: [ws_tagged, ws_heuristic, ws_plain],
+    )
+    monkeypatch.setattr("cmux_observability.cli.fetch_top", lambda: top)
+    monkeypatch.setattr("cmux_observability.cli.cmux_version", lambda: "0.64.10")
+    monkeypatch.setattr(
+        "cmux_observability.cli.discover_repos",
+        lambda cfg, force_rescan=False: ([], []),
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.productivity", lambda repos, cfg: None,
+    )
+
+    # Two distinct claude markers — confidence >= 0.7.
+    claude_tail = (
+        "❯ run the tests\n"
+        "╭─ ctx:42%\n"
+        "⏵⏵ bypass permissions\n"
+    )
+    plain_tail = (
+        "nishant@host project % ls\n"
+        "README.md  src/\n"
+        "nishant@host project % \n"
+    )
+
+    def fake_read_screen(surface_ref, *, workspace_ref=None, lines=150):
+        if surface_ref == "surface:1":
+            return "tagged agent screen\n" + claude_tail
+        if surface_ref == "surface:2":
+            return claude_tail
+        if surface_ref == "surface:3":
+            return plain_tail
+        return ""
+
+    monkeypatch.setattr("cmux_observability.cli.read_screen", fake_read_screen)
+
+    cfg = _write_config(tmp_path)
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cli.main(["collect", "--config", str(cfg)])
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["ok"] is True
+
+    # Two agents total: one tagged, one heuristic. Plain shell stays out.
+    assert out["snapshot_preview"]["agents_total"] == 2
+
+    # Reload snapshot from runstate to inspect Agent fields.
+    snap, _h, _r = runstate.read(out["run_id"])
+    by_ref = {a.surface_ref: a for a in snap.agents}
+    assert set(by_ref) == {"surface:1", "surface:2"}
+
+    tagged = by_ref["surface:1"]
+    assert tagged.type == "claude_code"
+    assert tagged.type_source == "cmux_tag"
+    assert tagged.type_confidence == 1.0
+
+    heuristic = by_ref["surface:2"]
+    assert heuristic.type == "claude_code"
+    assert heuristic.type_source == "heuristic"
+    assert heuristic.type_confidence >= 0.7
+
+    # Both classified surfaces are in pending_summaries; plain shell is NOT.
+    pending_refs = {p["surface_ref"] for p in out["pending_summaries"]}
+    assert pending_refs == {"surface:1", "surface:2"}, (
+        f"expected both classified surfaces in pending, got {pending_refs}"
+    )

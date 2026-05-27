@@ -46,19 +46,28 @@ def _cache_lookup(
     )
 
 
+def _is_summary_eligible(agent) -> bool:
+    # cmux_tag agents are summarized when active; heuristic agents always
+    # flow through (the summarizer is how we learn their real state).
+    if agent.type_source == "heuristic":
+        return True
+    return agent.state in ("running", "needs_input")
+
+
 def attach_cached_summaries(
     snap: Snapshot, conn: sqlite3.Connection,
     screens: dict[str, str], prompt_version: int,
 ) -> None:
     """Attach cached summaries for the requested `prompt_version` and clear
-    stale ones. Walks each running / needs_input agent that has screen
+    stale ones. Walks each summary-eligible agent (cmux_tag running /
+    needs_input, plus every heuristic-classified agent) that has screen
     content: if a cache row exists for `(surface_ref, redacted_screen_hash,
     prompt_version)`, the matching Summary is attached; otherwise
     `agent.summary` is set to None so a previously-attached Summary from a
     different prompt_version does not shadow a cache miss.
     """
     for agent in snap.agents:
-        if agent.state not in ("running", "needs_input"):
+        if not _is_summary_eligible(agent):
             continue
         raw = screens.get(agent.surface_ref)
         if raw is None:
@@ -81,7 +90,7 @@ def pending_for_agent(
     attach_cached_summaries(snap, conn, screens, prompt_version)
     pending: list[dict] = []
     for agent in snap.agents:
-        if agent.state not in ("running", "needs_input"):
+        if not _is_summary_eligible(agent):
             continue
         if agent.summary is not None:
             continue

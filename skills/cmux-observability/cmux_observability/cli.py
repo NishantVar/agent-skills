@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import runstate
+from .collector.classify import classify_from_scrollback
 from .collector.cmux import (
     CmuxUnavailable,
     cmux_version,
@@ -33,7 +34,7 @@ from .collector.discovery import discover_repos
 from .collector.git import productivity
 from .config import Config, default_config_path, load
 from .errors import Failure
-from .model import HistoryPoint, HistorySeries
+from .model import Agent, HistoryPoint, HistorySeries
 from .normalize import normalize
 from .persist import append_snapshot, connect, migrate
 from .render.render import render_snapshot
@@ -113,6 +114,40 @@ def cmd_collect(args: argparse.Namespace) -> int:
                     component="read_screen", target=a.surface_ref,
                     message=str(e), fatal=False,
                 ))
+
+    # Heuristic fallback: for terminal surfaces not yet attached to an agent,
+    # read scrollback and ask the classifier. Tagged surfaces are untouched
+    # (cmux_tag wins on precedence — they're already in snap.agents).
+    agent_refs = {a.surface_ref for a in snap.agents}
+    for w in snap.workspaces:
+        for s in w.surfaces:
+            if s.ref in agent_refs or s.kind != "terminal":
+                continue
+            try:
+                tail = read_screen(
+                    s.ref, workspace_ref=w.ref, lines=lines,
+                )
+            except CmuxUnavailable as e:
+                failures.append(Failure(
+                    component="read_screen", target=s.ref,
+                    message=str(e), fatal=False,
+                ))
+                continue
+            kind, confidence = classify_from_scrollback(tail)
+            if kind is None:
+                continue
+            s.is_agent = True
+            screens[s.ref] = tail
+            snap.agents.append(Agent(
+                surface_ref=s.ref,
+                workspace_ref=w.ref,
+                type=kind,
+                type_source="heuristic",
+                type_confidence=confidence,
+                state="unknown",
+                state_source="heuristic",
+                pid=None,
+            ))
 
     snap.failures = failures
 
