@@ -103,7 +103,11 @@ def cmd_collect(args: argparse.Namespace) -> int:
     for a in snap.agents:
         if a.state in ("running", "needs_input"):
             try:
-                screens[a.surface_ref] = read_screen(a.surface_ref, lines=lines)
+                screens[a.surface_ref] = read_screen(
+                    a.surface_ref,
+                    workspace_ref=a.workspace_ref,
+                    lines=lines,
+                )
             except CmuxUnavailable as e:
                 failures.append(Failure(
                     component="read_screen", target=a.surface_ref,

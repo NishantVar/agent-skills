@@ -177,13 +177,28 @@ def fetch_top() -> TopResult:
     return parse_top(_run_cmux("top", "--all"))
 
 
-def read_screen(surface_ref: str, lines: int = 150) -> str:
-    """Capture up to `lines` lines of scrollback for a given surface. Raises
-    `CmuxUnavailable` if the call fails — callers degrade per-surface."""
-    return _run_cmux(
-        "read-screen", "--surface", surface_ref,
-        "--scrollback", "--lines", str(lines),
-    )
+def read_screen(
+    surface_ref: str,
+    *,
+    workspace_ref: str | None = None,
+    lines: int = 150,
+) -> str:
+    """Capture up to `lines` lines of scrollback for a given surface.
+
+    cmux 0.64.10's `read-screen` requires `--workspace <ref>` alongside
+    `--surface <ref>` to resolve a terminal surface; without it, cmux
+    errors with `invalid_params: Surface is not a terminal`. When
+    `workspace_ref` is None (legacy callers / fixtures), the original
+    surface-only invocation is preserved.
+
+    Raises `CmuxUnavailable` if the call fails — callers degrade
+    per-surface.
+    """
+    args: list[str] = ["read-screen"]
+    if workspace_ref is not None:
+        args += ["--workspace", workspace_ref]
+    args += ["--surface", surface_ref, "--scrollback", "--lines", str(lines)]
+    return _run_cmux(*args)
 
 
 def cmux_version() -> str | None:

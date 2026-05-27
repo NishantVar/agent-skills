@@ -90,3 +90,80 @@ def test_themes_payload_uses_existing_runstate(
     assert out["ok"] is True
     # themes_payload envelope has either `payload` or `omit`+`reason`.
     assert "payload" in out or "omit" in out
+
+
+def test_collect_passes_workspace_ref_to_read_screen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live-smoke regression: `collect` must pass each agent's
+    workspace_ref to `read_screen` so cmux 0.64.10 can resolve the
+    surface (otherwise `Surface is not a terminal`). Produces
+    non-empty `pending_summaries` and zero read_screen failures."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    # Build a fixture-driven snapshot via the real parse path.
+    fixture_dir = Path(__file__).parent / "fixtures"
+    from cmux_observability.collector.cmux import parse_top, parse_tree
+
+    tree = parse_tree((fixture_dir / "cmux_tree_with_tagged_ws.txt").read_text())
+    top = parse_top((fixture_dir / "cmux_top_with_tags.txt").read_text())
+
+    monkeypatch.setattr(
+        "cmux_observability.cli.fetch_tree", lambda: tree
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.fetch_top", lambda: top
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.cmux_version", lambda: "0.64.10"
+    )
+    # discover_repos may try real filesystem; force empty.
+    monkeypatch.setattr(
+        "cmux_observability.cli.discover_repos",
+        lambda cfg, force_rescan=False: ([], []),
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.productivity",
+        lambda repos, cfg: None,
+    )
+
+    calls: list[dict] = []
+
+    def fake_read_screen(surface_ref, *, workspace_ref=None, lines=150):
+        calls.append({
+            "surface_ref": surface_ref,
+            "workspace_ref": workspace_ref,
+            "lines": lines,
+        })
+        return f"agent screen content for {surface_ref}\n" * 5
+
+    monkeypatch.setattr(
+        "cmux_observability.cli.read_screen", fake_read_screen
+    )
+
+    cfg = _write_config(tmp_path)
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cli.main(["collect", "--config", str(cfg)])
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["ok"] is True
+
+    # All read_screen calls received a workspace_ref kwarg.
+    assert calls, "read_screen was never called"
+    for c in calls:
+        assert c["workspace_ref"] is not None, c
+        assert c["workspace_ref"].startswith("workspace:"), c
+
+    # Tagged-ws fixture has 2 running/needs_input agents -> non-empty pending.
+    assert out["pending_summaries"], (
+        f"expected non-empty pending_summaries, got {out['pending_summaries']}"
+    )
+
+    # No read_screen failures appear.
+    failures = out["snapshot_preview"]["failures"]
+    rs_failures = [f for f in failures if f["component"] == "read_screen"]
+    assert not rs_failures, f"unexpected read_screen failures: {rs_failures}"

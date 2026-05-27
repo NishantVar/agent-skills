@@ -102,3 +102,56 @@ def test_fetch_tree_raises_cmux_unavailable_on_missing_binary(monkeypatch):
     except CmuxUnavailable:
         return
     raise AssertionError("expected CmuxUnavailable")
+
+
+def test_read_screen_includes_workspace_when_provided(monkeypatch):
+    """Live-smoke regression: cmux 0.64.10 `read-screen` requires
+    `--workspace <ref>` alongside `--surface <ref>` to resolve a terminal
+    surface. Without it, cmux errors with `Surface is not a terminal`.
+    """
+    captured: dict[str, tuple[str, ...]] = {}
+
+    def fake_run_cmux(*args: str) -> str:
+        captured["args"] = args
+        return "screen text"
+
+    monkeypatch.setattr(
+        "cmux_observability.collector.cmux._run_cmux", fake_run_cmux
+    )
+    out = read_screen("surface:1", workspace_ref="workspace:1", lines=5)
+    assert out == "screen text"
+
+    args = list(captured["args"])
+    assert args[0] == "read-screen"
+    # --workspace must precede --surface (matches cmux CLI ordering).
+    assert "--workspace" in args
+    assert "--surface" in args
+    ws_i = args.index("--workspace")
+    sf_i = args.index("--surface")
+    assert args[ws_i + 1] == "workspace:1"
+    assert args[sf_i + 1] == "surface:1"
+    assert ws_i < sf_i
+    assert "--scrollback" in args
+    assert "--lines" in args
+    assert args[args.index("--lines") + 1] == "5"
+
+
+def test_read_screen_omits_workspace_when_not_provided(monkeypatch):
+    """Legacy path: callers (and fixtures) that don't pass workspace_ref
+    must continue to produce the original arg vector — no --workspace."""
+    captured: dict[str, tuple[str, ...]] = {}
+
+    def fake_run_cmux(*args: str) -> str:
+        captured["args"] = args
+        return ""
+
+    monkeypatch.setattr(
+        "cmux_observability.collector.cmux._run_cmux", fake_run_cmux
+    )
+    read_screen("surface:9", lines=42)
+    args = list(captured["args"])
+    assert "--workspace" not in args
+    assert args[0] == "read-screen"
+    sf_i = args.index("--surface")
+    assert args[sf_i + 1] == "surface:9"
+    assert args[args.index("--lines") + 1] == "42"
