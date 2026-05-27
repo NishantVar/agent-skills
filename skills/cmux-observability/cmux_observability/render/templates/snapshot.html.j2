@@ -372,7 +372,11 @@
     border-radius: var(--radius-sm);
     font-size: 0.9rem;
   }
-  .surface-row + .surface-row {
+  /* T14 follow-up: after wrapping rows in <details>, adjacent .surface-row
+     summaries are no longer DOM siblings — the <details> roots are. Move the
+     separator rule to the <details> siblings and apply the border to the
+     summary child so the visual is identical to the pre-wrap layout. */
+  details.surface-details + details.surface-details > summary.surface-row {
     border-top: 1px solid var(--border);
   }
   .state-pill {
@@ -439,14 +443,15 @@
      <div class="surface-expanded"> panel revealed when the user toggles.
      <details>+<summary> is keyboard-accessible by default — Enter/Space
      toggles, screen readers expose aria-expanded — so no JS is needed.
-     The summary marker is suppressed via `list-style: none` and
-     `::-webkit-details-marker { display: none }` for the cleaner flex
-     layout; the existing copy-ref chip + state pill still telegraph
-     interactivity. */
+     The native marker is suppressed via `list-style: none` and
+     `::-webkit-details-marker { display: none }` so it can be replaced
+     with an explicit ▸/▾ chevron (rendered below) that integrates with
+     the flex layout. */
   details.surface-details {
     /* Reset the default <details> border-box so the inner flex row stays
-       flush with neighbouring rows. The shared .surface-row + .surface-row
-       border-top rule (above) continues to separate adjacent disclosures. */
+       flush with neighbouring rows. The
+       `details.surface-details + details.surface-details > summary.surface-row`
+       rule above paints the separator between adjacent disclosures. */
   }
   details.surface-details > summary.surface-row {
     list-style: none;
@@ -454,6 +459,27 @@
   }
   details.surface-details > summary.surface-row::-webkit-details-marker {
     display: none;
+  }
+  /* T14 follow-up: replace the suppressed native marker with an explicit
+     directional cue. ▸ when collapsed, ▾ when open. Pseudo-elements are
+     inherently aria-hidden, so the visible chevron does not add noise to
+     the AT tree (the <details> already exposes aria-expanded via the UA). */
+  details.surface-details > summary.surface-row::before {
+    content: "\25B8"; /* ▸ */
+    flex: 0 0 auto;
+    display: inline-block;
+    width: 1ch;
+    color: var(--muted);
+    font-size: 0.8rem;
+    transition: transform 120ms ease;
+  }
+  details.surface-details[open] > summary.surface-row::before {
+    content: "\25BE"; /* ▾ */
+  }
+  @media (prefers-reduced-motion: reduce) {
+    details.surface-details > summary.surface-row::before {
+      transition: none;
+    }
   }
   details.surface-details > summary.surface-row:focus-visible {
     outline: 2px solid var(--state-running);

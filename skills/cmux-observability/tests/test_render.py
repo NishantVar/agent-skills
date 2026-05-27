@@ -2386,3 +2386,64 @@ def test_render_themes_css_has_pulse_keyframes_and_reduced_motion(tmp_path: Path
         r'@media\s*\(\s*prefers-reduced-motion:\s*reduce\s*\)\s*\{[^}]*\.pulse[^}]*animation:\s*none',
         html, re.S,
     ), "must include prefers-reduced-motion override that disables the pulse animation"
+
+
+def test_render_surface_row_separator_uses_details_sibling_selector(tmp_path: Path):
+    """T14 follow-up: after wrapping rows in <details>, adjacent .surface-row
+    summaries are no longer DOM siblings — the <details> roots are. The
+    separator rule MUST match adjacent <details.surface-details> pairs and
+    paint the border on the summary child."""
+    import re
+
+    snap = _snap_surface_row_full()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    assert re.search(
+        r'details\.surface-details\s*\+\s*details\.surface-details\s*>\s*summary\.surface-row\s*\{[^}]*border-top\s*:\s*1px\s+solid\s+var\(--border\)',
+        html, re.S,
+    ), (
+        "separator must use `details.surface-details + details.surface-details "
+        "> summary.surface-row` with a border-top declaration"
+    )
+
+    # And the broken pre-T14 selector must not be present anymore.
+    assert not re.search(
+        r'\.surface-row\s*\+\s*\.surface-row\s*\{',
+        html, re.S,
+    ), "legacy `.surface-row + .surface-row` selector must be gone (siblings are <details>, not <summary>)"
+
+
+def test_render_surface_row_disclosure_chevron_cue_collapsed_and_open(tmp_path: Path):
+    """T14 follow-up: the native disclosure marker is suppressed via
+    `::-webkit-details-marker { display: none }` + `list-style: none`, so a
+    replacement directional cue is required. Use a `::before` chevron that
+    renders ▸ when collapsed and ▾ when [open]. Pseudo-elements are
+    aria-hidden by spec, so the chevron does not duplicate the UA-managed
+    aria-expanded signal."""
+    import re
+
+    snap = _snap_surface_row_full()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Collapsed cue: `::before` rule on summary.surface-row with content ▸
+    # (encoded either as the literal char or as the CSS escape \25B8).
+    collapsed_pat = re.compile(
+        r'details\.surface-details\s*>\s*summary\.surface-row::before\s*\{[^}]*content\s*:\s*"(\\25B8|▸)"',
+        re.S | re.I,
+    )
+    assert collapsed_pat.search(html), (
+        "must declare a `::before` directional cue on summary.surface-row "
+        "with collapsed glyph ▸ (\\25B8)"
+    )
+
+    # Open variant: `[open]` flips the chevron to ▾ (\25BE).
+    open_pat = re.compile(
+        r'details\.surface-details\[open\]\s*>\s*summary\.surface-row::before\s*\{[^}]*content\s*:\s*"(\\25BE|▾)"',
+        re.S | re.I,
+    )
+    assert open_pat.search(html), (
+        "must override `::before` content to ▾ (\\25BE) when the <details> "
+        "is `[open]`"
+    )
