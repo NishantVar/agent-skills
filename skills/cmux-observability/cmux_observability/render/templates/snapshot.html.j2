@@ -580,6 +580,22 @@
     background: color-mix(in srgb, var(--state-needs-input) 14%, transparent);
     color: var(--state-needs-input);
   }
+
+  /* T17: failures banner — sits above the hero strip when collection
+     surfaces hit errors. There's no dedicated --danger token in :root,
+     so we mute the existing amber/red-family --state-needs-input token
+     via color-mix against the page surface. Muted via color-mix; do not
+     switch to a saturated alert-red — this banner is informational, not
+     a fire alarm. (role="region" + aria-label is wired in the partial.) */
+  .failures-banner {
+    padding: var(--space-2) var(--space-3);
+    background: color-mix(in srgb, var(--state-needs-input) 16%, var(--surface));
+    border-bottom: 1px solid color-mix(in srgb, var(--state-needs-input) 40%, transparent);
+    color: var(--contrast-strong);
+    font-size: 0.9rem;
+  }
+  .failures-banner ul { margin: 0; padding-left: 1.25rem; }
+  .failures-banner code { font-family: var(--font-mono); }
 </style>
 <style>{{ inline_css | safe }}</style>
 </head><body>
@@ -595,6 +611,11 @@
 {% set _unknown = snapshot.agents | selectattr("state","equalto","unknown") | list | length %}
 {% set _ws_total = snapshot.workspaces | length %}
 {% set _surfaces_total = snapshot.workspaces | map(attribute="surfaces") | map("length") | sum %}
+{# T17: failures banner — rendered ABOVE the hero so collection failures are
+   impossible to miss. The partial is a flat <section role="region">, not a
+   collapsible. Guard stays at the include site so the strip vanishes
+   completely when there are no failures. #}
+{% if snapshot.failures %}{% include "_failures.html.j2" %}{% endif %}
 <header class="hero">
   <div class="hero-counters">
     <div class="counter">{{ _ws_total }}<small>workspaces</small></div>
@@ -618,7 +639,9 @@
   </div>
 </header>
 <main class="dashboard-main">
-  {% if snapshot.failures %}{% include "_failures.html.j2" %}{% endif %}
+  {# T17: failures banner now renders ABOVE <header class="hero"> (see the
+     include just before the hero element). It is intentionally outside
+     <main>. #}
 
   {# T11: blocked-work banner — included AFTER the hero (above main loop)
      and BEFORE the workspace grid. The partial self-renders only when

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -2608,3 +2609,93 @@ def test_render_history_no_honest_label_when_populated(tmp_path: Path):
     html_path, _json_path = render_snapshot(snap, tmp_path)
     html = html_path.read_text()
     assert "Trends appear after N snapshots are collected over time" not in html
+
+
+# ---------------------------------------------------------------------------
+# T17: failures banner above the hero
+# ---------------------------------------------------------------------------
+
+
+def _snap_with_failures(failures: list[Failure]) -> Snapshot:
+    """T17 helper-by-mutation: reuse the populated fixture, swap in caller's
+    failures list. Stays consistent with other T-suite test helpers which
+    build from `_snap_populated` rather than introducing new top-levels."""
+    snap = _snap_populated()
+    return replace(snap, failures=failures)
+
+
+def test_render_failures_banner_absent_when_no_failures(tmp_path: Path):
+    """T17: when `snapshot.failures == []`, the banner partial is not
+    included — the <section class="failures-banner"> element is absent
+    from the body. (The CSS rule for the class lives in the inline <style>
+    block regardless, but no banner DOM is emitted.)"""
+    snap = _snap_with_failures([])
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    assert 'class="failures-banner"' not in html
+    assert "<section class=\"failures-banner\"" not in html
+
+
+def test_render_failures_banner_present_when_failures(tmp_path: Path):
+    """T17: with failures, the banner appears as a flat <section> (no
+    <details>/<summary>) and renders each failure with the component
+    bolded, an optional <code>-wrapped target, and the message."""
+    failures = [
+        Failure(component="collector", target="cmux", message="tree timeout"),
+        Failure(component="git-stats", target=None, message="no repos discovered"),
+    ]
+    snap = _snap_with_failures(failures)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    assert 'class="failures-banner"' in html
+    # Both component labels and messages are visible.
+    assert "collector" in html
+    assert "tree timeout" in html
+    assert "git-stats" in html
+    assert "no repos discovered" in html
+    # The failure that has a target still wraps it in <code>...
+    assert "<code>cmux</code>" in html
+    # ...but the one without a target does NOT emit an empty <code></code>.
+    # (The "no repos discovered" entry should sit immediately after its
+    # bold component label without a <code> tag.)
+    assert "<code></code>" not in html
+
+
+def test_render_failures_banner_renders_above_hero(tmp_path: Path):
+    """T17: structural sanity-check — the banner must appear in the source
+    BEFORE `<header class="hero">` so it sits above the hero in the DOM."""
+    failures = [Failure(component="collector", target="cmux", message="tree timeout")]
+    snap = _snap_with_failures(failures)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    banner_idx = html.find('class="failures-banner"')
+    hero_idx = html.find('class="hero"')
+    assert banner_idx != -1, "banner missing"
+    assert hero_idx != -1, "hero missing"
+    assert banner_idx < hero_idx, (
+        f"failures banner must render above the hero "
+        f"(banner@{banner_idx}, hero@{hero_idx})"
+    )
+
+
+def test_render_failures_banner_uses_muted_red_styling(tmp_path: Path):
+    """T17: the banner's CSS rule must exist in the inline <style> block
+    and must use color-mix against an existing theme token rather than a
+    raw saturated red literal — the banner is informational, not alarming."""
+    failures = [Failure(component="collector", target="cmux", message="tree timeout")]
+    snap = _snap_with_failures(failures)
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+    assert ".failures-banner {" in html, "CSS rule for .failures-banner missing"
+    # Extract just the .failures-banner rule body to check it specifically.
+    rule_start = html.find(".failures-banner {")
+    rule_end = html.find("}", rule_start)
+    rule = html[rule_start:rule_end]
+    assert "color-mix" in rule, (
+        "banner must use color-mix() to mute the state token, not a raw red"
+    )
+    # No saturated-red literals in the banner rule.
+    for forbidden in ("red;", "#f00", "#ff0000", "rgb(255,0,0)", "rgb(255, 0, 0)"):
+        assert forbidden not in rule.lower(), (
+            f"banner CSS must not use saturated red literal {forbidden!r}"
+        )
