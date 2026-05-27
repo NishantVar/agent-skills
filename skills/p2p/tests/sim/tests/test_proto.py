@@ -68,6 +68,27 @@ def test_encode_death_notice_roundtrip():
     assert parsed.payload["from"] == "worker_charlie"
 
 
+def test_strips_p2p_reply_trailer_before_json_parse():
+    # p2plib appends `\n\nTo reply: Load p2p` to every non-one-way frame.
+    # The parser must strip it before json.loads to avoid Extra-data errors.
+    body = ('COUNTER:{"run_id":"r1","step_id":3,"attempt_id":"a1",'
+            '"sender":"worker_alpha","value":7}\n\nTo reply: Load p2p')
+    parsed = parse_body(body)
+    assert parsed.kind == MessageClass.COUNTER
+    assert parsed.parse_error is None
+    assert parsed.payload["value"] == 7
+    assert parsed.payload["attempt_id"] == "a1"
+
+
+def test_strips_p2p_reply_trailer_for_sim_verb():
+    body = 'SIM:PRIME {"step_id":4,"role":"sender"}\n\nTo reply: Load p2p'
+    parsed = parse_body(body)
+    assert parsed.kind == MessageClass.SIM
+    assert parsed.parse_error is None
+    assert parsed.verb == "PRIME"
+    assert parsed.payload["step_id"] == 4
+
+
 @pytest.mark.parametrize("verb", [
     "PRIME", "RECOVER", "REPORT", "HALT",
     "ANNOUNCE_DEATH", "SET_NEXT_PEER",

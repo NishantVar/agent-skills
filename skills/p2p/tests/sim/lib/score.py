@@ -3,30 +3,36 @@
 An assertion is a dict (loaded from catalog.yaml). Supported keys:
   worker            : str    — which JSONL to read (sim_driver.jsonl, etc.)
   event             : str    — "send_result" (default) or "inbound_frame"
-  kind              : "ok" | "error"  (for send_result events)
+  kind              : "ok" | "error" | "informational"
   observed_code     : str    — required when kind=error
   observed_kind     : str    — message | bootstrap (for ok)
   peer_status       : str    — live | stale (for ok)
   resolved_by       : str    — title_in_workspace | explicit_surface | ...
   one_way           : bool
   intended_peer     : str
-  intended_peer_not : str    — none of the events targets this peer
+  intended_peer_not : str    — strict: zero events targeted this peer
   count             : int | ">=N"
   body_prefix       : str    — for inbound_frame body filter
   distinct_attempt_ids : bool
   all_one_way       : bool
   candidate_check   : dict   — subset-match against candidates[0]
+  candidates_min    : int    — >=N entries in candidates
   payload_file_nonempty : bool
   handoff_skill     : str
   surface_differs_from_step_id : int
+  reason            : str    — for kind=informational, match informational.reason
+  any_of            : list[dict] — alternation; pass if any sub-assertion passes
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from lib.proto import parse_body, MessageClass
 
 
 @dataclass
@@ -43,7 +49,12 @@ def _read_events(log_path: Path, *, step_id: int, event: str) -> list[dict[str, 
     for line in log_path.read_text().splitlines():
         if not line.strip():
             continue
-        rec = json.loads(line)
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError as e:
+            print(f"score: skipping malformed JSONL line in {log_path}: {e}",
+                  file=sys.stderr)
+            continue
         if rec.get("event") != event:
             continue
         if rec.get("step_id") != step_id:
@@ -61,18 +72,85 @@ def _check_count(actual: int, expected: Any) -> tuple[bool, str]:
     raise ValueError(f"unsupported count spec: {expected!r}")
 
 
+def _surfaces_for_peer(events: list[dict[str, Any]], peer: str | None) -> set[str]:
+    """All surface refs seen in `events` that pertain to `peer`. Pulls
+    `raw_stdout.surface` on success, falls back to `candidates[*].ref` on
+    error responses where no single surface resolved (e.g. peer_unknown)."""
+    out: set[str] = set()
+    for ev in events:
+        if peer is not None and ev.get("intended_peer") != peer:
+            continue
+        raw = ev.get("raw_stdout") or {}
+        s = raw.get("surface")
+        if s:
+            out.add(s)
+        for c in (raw.get("candidates") or []):
+            ref = c.get("ref")
+            if ref:
+                out.add(ref)
+    return out
+
+
 def score_assertion(assertion: dict[str, Any], *, step_id: int,
                     log_dir: Path) -> AssertionResult:
+    # any_of: pass if any sub-assertion passes
+    if "any_of" in assertion:
+        worker = assertion["worker"]
+        sub_results = []
+        for sub in assertion["any_of"]:
+            merged = {"worker": worker, **sub}
+            r = score_assertion(merged, step_id=step_id, log_dir=log_dir)
+            sub_results.append(r)
+            if r.passed:
+                return AssertionResult(True, "ok (any_of)", r.observed)
+        reasons = "; ".join(r.reason for r in sub_results)
+        return AssertionResult(False, f"any_of: all branches failed: {reasons}",
+                               [e for r in sub_results for e in r.observed])
+
     worker = assertion["worker"]
     event = assertion.get("event", "send_result")
     log_path = log_dir / f"{worker}.jsonl"
+    log_exists = log_path.exists()
     events = _read_events(log_path, step_id=step_id, event=event)
+
+    # informational kind: read sidecar informational.jsonl (driver-managed)
+    if assertion.get("kind") == "informational":
+        info_path = log_dir / f"{worker}.informational.jsonl"
+        if not info_path.exists():
+            return AssertionResult(False,
+                f"expected informational event but {info_path.name} missing",
+                events)
+        for line in info_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("step_id") != step_id:
+                continue
+            if "reason" in assertion and rec.get("reason") != assertion["reason"]:
+                continue
+            return AssertionResult(True, "ok (informational)", [rec])
+        return AssertionResult(False,
+            f"no informational event matched at step {step_id}", events)
 
     # filter by body_prefix if specified
     if "body_prefix" in assertion:
         events = [e for e in events if e.get("body", "").startswith(assertion["body_prefix"])]
 
-    # filter send_result by ok/error and intended_peer_not
+    # intended_peer_not is a strict negative check — independently of all
+    # other filters, no event in this step may have targeted that peer.
+    if "intended_peer_not" in assertion and event == "send_result":
+        bad = [e for e in events if e.get("intended_peer") == assertion["intended_peer_not"]]
+        if bad:
+            return AssertionResult(False,
+                f"expected zero sends to {assertion['intended_peer_not']!r}, got {len(bad)}",
+                events)
+        # then drop them so subsequent count/field checks see only allowed events
+        events = [e for e in events if e.get("intended_peer") != assertion["intended_peer_not"]]
+
+    # filter send_result by ok/error and other selectors
     if event == "send_result":
         if assertion.get("kind") == "ok":
             events = [e for e in events if (e.get("raw_stdout") or {}).get("ok") is True]
@@ -80,13 +158,18 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
             events = [e for e in events if (e.get("raw_stdout") or {}).get("ok") is False]
         if "intended_peer" in assertion:
             events = [e for e in events if e.get("intended_peer") == assertion["intended_peer"]]
-        if "intended_peer_not" in assertion:
-            events = [e for e in events if e.get("intended_peer") != assertion["intended_peer_not"]]
         if "one_way" in assertion:
             events = [e for e in events if e.get("one_way") == assertion["one_way"]]
 
     # count check (only when count is specified)
     if "count" in assertion:
+        # `count: 0` plus missing log file is suspicious — the worker may
+        # never have spawned at all, which is not the same as "the worker
+        # spawned and emitted zero events." Require the file to exist.
+        if assertion["count"] == 0 and not log_exists:
+            return AssertionResult(False,
+                f"count: 0 but log file {log_path.name} does not exist "
+                f"(worker may never have spawned)", events)
         ok, msg = _check_count(len(events), assertion["count"])
         if not ok:
             return AssertionResult(False, msg, events)
@@ -126,6 +209,26 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
                 if top.get(k) != v:
                     return AssertionResult(False,
                         f"candidate[0].{k}: expected {v!r}, got {top.get(k)!r}", events)
+        if "candidates_min" in assertion:
+            cands = ev.get("candidates") or []
+            n = assertion["candidates_min"]
+            if len(cands) < n:
+                return AssertionResult(False,
+                    f"expected >={n} candidates, got {len(cands)}", events)
+        if "surface_differs_from_step_id" in assertion:
+            prior_step = assertion["surface_differs_from_step_id"]
+            prior = _read_events(log_path, step_id=prior_step, event="send_result")
+            peer = ev.get("intended_peer")
+            prior_surfaces = _surfaces_for_peer(prior, peer)
+            current_surface = (ev.get("raw_stdout") or {}).get("surface")
+            if not current_surface:
+                return AssertionResult(False,
+                    f"surface_differs_from_step_id: current event has no resolved surface",
+                    events)
+            if current_surface in prior_surfaces:
+                return AssertionResult(False,
+                    f"surface {current_surface!r} matches a surface seen at step {prior_step} "
+                    f"for peer {peer!r}", events)
         if event == "inbound_frame":
             if assertion.get("all_one_way") and not ev.get("one_way"):
                 return AssertionResult(False, "expected all events to be one_way", events)
@@ -135,12 +238,12 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
         ids = []
         for ev in events:
             body = ev.get("body", "")
-            if body.startswith("COUNTER:"):
-                try:
-                    p = json.loads(body[len("COUNTER:"):])
-                    ids.append(p.get("attempt_id"))
-                except json.JSONDecodeError:
-                    pass
+            parsed = parse_body(body)
+            if parsed.kind != MessageClass.COUNTER or parsed.parse_error:
+                continue
+            aid = parsed.payload.get("attempt_id")
+            if aid is not None:
+                ids.append(aid)
         if len(set(ids)) != len(ids):
             return AssertionResult(False, f"duplicate attempt_ids: {ids}", events)
 

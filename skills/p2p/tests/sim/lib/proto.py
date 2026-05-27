@@ -36,8 +36,19 @@ class ParsedMessage:
     parse_error: str | None = None
 
 
+_REPLY_TRAILER = "\n\nTo reply: "
+
+
+def _strip_p2p_trailer(body: str) -> str:
+    """p2plib appends `\\n\\nTo reply: Load p2p` to every non-one-way frame
+    (see p2plib/send.py::_frame). Strip it before namespace-payload parsing
+    so JSON bodies don't get extra trailing text."""
+    idx = body.find(_REPLY_TRAILER)
+    return body[:idx] if idx >= 0 else body
+
+
 def parse_body(body: str) -> ParsedMessage:
-    body = body.lstrip()
+    body = _strip_p2p_trailer(body).strip()
     if body.startswith("COUNTER:"):
         return _parse_counter(body)
     if body.startswith("SIM:"):
