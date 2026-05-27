@@ -19,6 +19,8 @@ An assertion is a dict (loaded from catalog.yaml). Supported keys:
   candidates_min    : int    — >=N entries in candidates
   payload_file_nonempty : bool
   handoff_skill     : str
+  action_required   : str    — recovery verb from p2p error envelope
+  retryable         : bool   — retryability bit from p2p error envelope
   surface_differs_from_step_id : int
   reason            : str    — for kind=informational, match informational.reason
   any_of            : list[dict] — alternation; pass if any sub-assertion passes
@@ -72,22 +74,23 @@ def _check_count(actual: int, expected: Any) -> tuple[bool, str]:
     raise ValueError(f"unsupported count spec: {expected!r}")
 
 
-def _surfaces_for_peer(events: list[dict[str, Any]], peer: str | None) -> set[str]:
-    """All surface refs seen in `events` that pertain to `peer`. Pulls
-    `raw_stdout.surface` on success, falls back to `candidates[*].ref` on
-    error responses where no single surface resolved (e.g. peer_unknown)."""
+def _successful_surfaces_for_peer(events: list[dict[str, Any]],
+                                  peer: str | None) -> set[str]:
+    """Surface refs that were successfully resolved for `peer` across
+    `events`. Only `raw_stdout.surface` on ok=True counts. peer_unknown
+    responses carry no surface at all (see p2plib/errors.py::peer_unknown),
+    so we cannot infer the dead surface from a failure record — only from
+    a prior successful resolve."""
     out: set[str] = set()
     for ev in events:
         if peer is not None and ev.get("intended_peer") != peer:
             continue
         raw = ev.get("raw_stdout") or {}
+        if raw.get("ok") is not True:
+            continue
         s = raw.get("surface")
         if s:
             out.add(s)
-        for c in (raw.get("candidates") or []):
-            ref = c.get("ref")
-            if ref:
-                out.add(ref)
     return out
 
 
@@ -198,6 +201,14 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
             return AssertionResult(False,
                 f"expected handoff_skill={assertion['handoff_skill']!r}, got {ev.get('handoff_skill')!r}",
                 events)
+        if "action_required" in assertion and ev.get("action_required") != assertion["action_required"]:
+            return AssertionResult(False,
+                f"expected action_required={assertion['action_required']!r}, got {ev.get('action_required')!r}",
+                events)
+        if "retryable" in assertion and ev.get("retryable") != assertion["retryable"]:
+            return AssertionResult(False,
+                f"expected retryable={assertion['retryable']!r}, got {ev.get('retryable')!r}",
+                events)
         if assertion.get("payload_file_nonempty") and not ev.get("payload_file"):
             return AssertionResult(False, "expected non-empty payload_file", events)
         if "candidate_check" in assertion:
@@ -217,33 +228,74 @@ def score_assertion(assertion: dict[str, Any], *, step_id: int,
                     f"expected >={n} candidates, got {len(cands)}", events)
         if "surface_differs_from_step_id" in assertion:
             prior_step = assertion["surface_differs_from_step_id"]
-            prior = _read_events(log_path, step_id=prior_step, event="send_result")
             peer = ev.get("intended_peer")
-            prior_surfaces = _surfaces_for_peer(prior, peer)
+            # Scan ALL events at or before the cited step (not just that
+            # single step). peer_unknown responses carry no surface, so a
+            # narrow lookup at step N often returns empty if N was a
+            # failure; we want the last surface the peer was ever known
+            # to hold while alive.
+            all_prior: list[dict[str, Any]] = []
+            for line in log_path.read_text().splitlines() if log_exists else []:
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("event") != "send_result":
+                    continue
+                sid = rec.get("step_id")
+                if not isinstance(sid, int) or sid > prior_step:
+                    continue
+                all_prior.append(rec)
+            prior_surfaces = _successful_surfaces_for_peer(all_prior, peer)
+            if not prior_surfaces:
+                return AssertionResult(False,
+                    f"surface_differs_from_step_id: no successful prior surface "
+                    f"recorded for peer {peer!r} at or before step {prior_step} "
+                    f"(cannot prove the resurrection used a new surface)",
+                    events)
             current_surface = (ev.get("raw_stdout") or {}).get("surface")
             if not current_surface:
                 return AssertionResult(False,
-                    f"surface_differs_from_step_id: current event has no resolved surface",
+                    "surface_differs_from_step_id: current event has no resolved surface",
                     events)
             if current_surface in prior_surfaces:
                 return AssertionResult(False,
-                    f"surface {current_surface!r} matches a surface seen at step {prior_step} "
-                    f"for peer {peer!r}", events)
+                    f"surface {current_surface!r} matches a surface seen at or before "
+                    f"step {prior_step} for peer {peer!r}", events)
         if event == "inbound_frame":
             if assertion.get("all_one_way") and not ev.get("one_way"):
                 return AssertionResult(False, "expected all events to be one_way", events)
 
-    # distinct_attempt_ids check for inbound frames
+    # distinct_attempt_ids check for inbound frames.
+    # Every filtered event must yield exactly one parseable COUNTER
+    # attempt_id. Non-COUNTER bodies, parse errors, missing attempt_ids,
+    # and non-"ok" parse_status all fail the assertion — otherwise the
+    # check would pass vacuously when bodies are garbled.
     if assertion.get("distinct_attempt_ids"):
-        ids = []
+        ids: list[str] = []
         for ev in events:
+            if ev.get("parse_status") and ev["parse_status"] != "ok":
+                return AssertionResult(False,
+                    f"distinct_attempt_ids: event parse_status={ev['parse_status']!r}",
+                    events)
             body = ev.get("body", "")
             parsed = parse_body(body)
-            if parsed.kind != MessageClass.COUNTER or parsed.parse_error:
-                continue
+            if parsed.kind != MessageClass.COUNTER:
+                return AssertionResult(False,
+                    f"distinct_attempt_ids: expected COUNTER body, got kind={parsed.kind.value!r}",
+                    events)
+            if parsed.parse_error:
+                return AssertionResult(False,
+                    f"distinct_attempt_ids: COUNTER parse error: {parsed.parse_error}",
+                    events)
             aid = parsed.payload.get("attempt_id")
-            if aid is not None:
-                ids.append(aid)
+            if not aid:
+                return AssertionResult(False,
+                    "distinct_attempt_ids: COUNTER payload missing attempt_id",
+                    events)
+            ids.append(aid)
         if len(set(ids)) != len(ids):
             return AssertionResult(False, f"duplicate attempt_ids: {ids}", events)
 

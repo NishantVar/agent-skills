@@ -111,38 +111,16 @@ def test_intended_peer_not_passes_when_only_allowed_peers(tmp_path: Path):
     assert res.passed, res.reason
 
 
-def test_surface_differs_from_step_id_passes_when_new_surface(tmp_path: Path):
+def test_surface_differs_fails_when_current_matches_prior_success(tmp_path: Path):
     log = tmp_path / "worker_alpha.jsonl"
     _seed_log(log, [
-        # step 8: peer_unknown with dead-surface candidate
-        {"event": "send_result", "step_id": 8,
+        # step 7: success at the dead surface
+        {"event": "send_result", "step_id": 7,
          "intended_peer": "bravo_renamed",
-         "raw_stdout": {"ok": False, "code": "peer_unknown",
-                        "candidates": [{"ref": "surface:OLD"}]},
-         "candidates": [{"ref": "surface:OLD"}]},
-        # step 9: success with a brand-new surface
-        {"event": "send_result", "step_id": 9,
-         "intended_peer": "bravo_renamed",
-         "raw_stdout": {"ok": True, "surface": "surface:NEW",
-                        "kind": "bootstrap", "peer_status": "live",
-                        "resolved_by": "title_in_workspace"},
-         "observed_kind": "bootstrap", "peer_status": "live",
-         "resolved_by": "title_in_workspace"},
-    ])
-    a = {"worker": "worker_alpha", "kind": "ok", "observed_kind": "bootstrap",
-         "peer_status": "live", "resolved_by": "title_in_workspace",
-         "surface_differs_from_step_id": 8}
-    res = score_assertion(a, step_id=9, log_dir=tmp_path)
-    assert res.passed, res.reason
-
-
-def test_surface_differs_from_step_id_fails_when_same_surface(tmp_path: Path):
-    log = tmp_path / "worker_alpha.jsonl"
-    _seed_log(log, [
-        {"event": "send_result", "step_id": 8,
-         "intended_peer": "bravo_renamed",
-         "raw_stdout": {"ok": False, "code": "peer_unknown",
-                        "candidates": [{"ref": "surface:SAME"}]}},
+         "raw_stdout": {"ok": True, "surface": "surface:SAME",
+                        "kind": "message", "peer_status": "live",
+                        "resolved_by": "title_in_workspace"}},
+        # step 9: "resurrection" but somehow reusing the same surface — fail
         {"event": "send_result", "step_id": 9,
          "intended_peer": "bravo_renamed",
          "raw_stdout": {"ok": True, "surface": "surface:SAME",
@@ -257,6 +235,136 @@ def test_distinct_attempt_ids_fails_on_dupes(tmp_path: Path):
     res = score_assertion(a, step_id=4, log_dir=tmp_path)
     assert not res.passed
     assert "duplicate" in res.reason
+
+
+def test_distinct_attempt_ids_fails_on_non_counter_body(tmp_path: Path):
+    # Rp2p HIGH-1: previously, non-COUNTER bodies were silently skipped,
+    # so 5 inbound frames of garbage passed distinct_attempt_ids vacuously.
+    log = tmp_path / "bravo_renamed.jsonl"
+    _seed_log(log, [
+        {"event": "inbound_frame", "step_id": 4, "from_title": "x",
+         "one_way": True, "raw_frame": "", "body": "SIM:HALT {}",
+         "parse_status": "ok"},
+        {"event": "inbound_frame", "step_id": 4, "from_title": "x",
+         "one_way": True, "raw_frame": "", "body": "noise",
+         "parse_status": "ok"},
+    ])
+    a = {"worker": "bravo_renamed", "event": "inbound_frame", "count": 2,
+         "distinct_attempt_ids": True}
+    res = score_assertion(a, step_id=4, log_dir=tmp_path)
+    assert not res.passed
+    assert "COUNTER" in res.reason
+
+
+def test_distinct_attempt_ids_fails_on_missing_attempt_id(tmp_path: Path):
+    log = tmp_path / "bravo_renamed.jsonl"
+    _seed_log(log, [
+        {"event": "inbound_frame", "step_id": 4, "from_title": "x",
+         "one_way": True, "raw_frame": "",
+         "body": 'COUNTER:{"value":1}', "parse_status": "ok"},
+    ])
+    a = {"worker": "bravo_renamed", "event": "inbound_frame", "count": 1,
+         "distinct_attempt_ids": True}
+    res = score_assertion(a, step_id=4, log_dir=tmp_path)
+    assert not res.passed
+    assert "attempt_id" in res.reason
+
+
+def test_distinct_attempt_ids_fails_on_bad_parse_status(tmp_path: Path):
+    log = tmp_path / "bravo_renamed.jsonl"
+    _seed_log(log, [
+        {"event": "inbound_frame", "step_id": 4, "from_title": "x",
+         "one_way": True, "raw_frame": "",
+         "body": 'COUNTER:{"attempt_id":"a1","value":1}',
+         "parse_status": "Expecting value: line 1"},
+    ])
+    a = {"worker": "bravo_renamed", "event": "inbound_frame", "count": 1,
+         "distinct_attempt_ids": True}
+    res = score_assertion(a, step_id=4, log_dir=tmp_path)
+    assert not res.passed
+    assert "parse_status" in res.reason
+
+
+def test_surface_differs_uses_prior_success_not_peer_unknown_event(tmp_path: Path):
+    # Rp2p HIGH-2: peer_unknown has no surface/candidates fields, so the
+    # only way to know the dead surface is to look at the most recent
+    # successful send to that peer at or before the cited step.
+    log = tmp_path / "worker_alpha.jsonl"
+    _seed_log(log, [
+        # step 7: successful send to bravo_renamed at the soon-to-die surface
+        {"event": "send_result", "step_id": 7,
+         "intended_peer": "bravo_renamed",
+         "raw_stdout": {"ok": True, "surface": "surface:OLD",
+                        "kind": "message", "peer_status": "live",
+                        "resolved_by": "title_in_workspace"}},
+        # step 8: peer_unknown — realistic shape, no surface, no candidates
+        {"event": "send_result", "step_id": 8,
+         "intended_peer": "bravo_renamed",
+         "raw_stdout": {"ok": False, "code": "peer_unknown",
+                        "action_required": "spawn_peer", "retryable": True,
+                        "handoff_skill": "tfork",
+                        "payload_file": "/tmp/spawn.txt"},
+         "observed_code": "peer_unknown", "action_required": "spawn_peer",
+         "retryable": True, "handoff_skill": "tfork",
+         "payload_file": "/tmp/spawn.txt"},
+        # step 9: success with brand-new surface — must pass
+        {"event": "send_result", "step_id": 9,
+         "intended_peer": "bravo_renamed",
+         "raw_stdout": {"ok": True, "surface": "surface:NEW",
+                        "kind": "bootstrap", "peer_status": "live",
+                        "resolved_by": "title_in_workspace"},
+         "observed_kind": "bootstrap", "peer_status": "live",
+         "resolved_by": "title_in_workspace"},
+    ])
+    a = {"worker": "worker_alpha", "kind": "ok", "observed_kind": "bootstrap",
+         "peer_status": "live", "resolved_by": "title_in_workspace",
+         "surface_differs_from_step_id": 8}
+    res = score_assertion(a, step_id=9, log_dir=tmp_path)
+    assert res.passed, res.reason
+
+
+def test_surface_differs_fails_defensively_when_no_prior_success(tmp_path: Path):
+    log = tmp_path / "worker_alpha.jsonl"
+    # only a peer_unknown at step 8 — no prior success anywhere
+    _seed_log(log, [
+        {"event": "send_result", "step_id": 8,
+         "intended_peer": "bravo_renamed",
+         "raw_stdout": {"ok": False, "code": "peer_unknown"}},
+        {"event": "send_result", "step_id": 9,
+         "intended_peer": "bravo_renamed",
+         "raw_stdout": {"ok": True, "surface": "surface:NEW",
+                        "kind": "bootstrap", "peer_status": "live",
+                        "resolved_by": "title_in_workspace"},
+         "observed_kind": "bootstrap", "peer_status": "live",
+         "resolved_by": "title_in_workspace"},
+    ])
+    a = {"worker": "worker_alpha", "kind": "ok", "observed_kind": "bootstrap",
+         "peer_status": "live", "resolved_by": "title_in_workspace",
+         "surface_differs_from_step_id": 8}
+    res = score_assertion(a, step_id=9, log_dir=tmp_path)
+    assert not res.passed
+    assert "no successful prior surface" in res.reason
+
+
+def test_action_required_and_retryable_checks(tmp_path: Path):
+    log = tmp_path / "worker_alpha.jsonl"
+    _seed_log(log, [{"event": "send_result", "step_id": 2,
+                     "intended_peer": "worker_bravo",
+                     "raw_stdout": {"ok": False, "code": "peer_renamed",
+                                    "action_required": "confirm_rename",
+                                    "retryable": True},
+                     "observed_code": "peer_renamed",
+                     "action_required": "confirm_rename", "retryable": True}])
+    ok = {"worker": "worker_alpha", "kind": "error",
+          "observed_code": "peer_renamed",
+          "action_required": "confirm_rename", "retryable": True}
+    assert score_assertion(ok, step_id=2, log_dir=tmp_path).passed
+    bad_action = {**ok, "action_required": "something_else"}
+    res = score_assertion(bad_action, step_id=2, log_dir=tmp_path)
+    assert not res.passed and "action_required" in res.reason
+    bad_retry = {**ok, "retryable": False}
+    res2 = score_assertion(bad_retry, step_id=2, log_dir=tmp_path)
+    assert not res2.passed and "retryable" in res2.reason
 
 
 def test_read_events_skips_malformed_json_line(tmp_path: Path):

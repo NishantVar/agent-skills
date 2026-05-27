@@ -34,6 +34,8 @@ steps:
       - worker: worker_alpha
         kind: error
         observed_code: peer_renamed
+        action_required: confirm_rename
+        retryable: true
         candidate_check:
           current_title: bravo_renamed
           former_title: worker_bravo
@@ -54,7 +56,8 @@ steps:
     actions:
       - {type: tfork_duplicate, my_title: worker_alpha}
     assertions:
-      - {worker: tfork_duplicate, kind: error, observed_code: title_collision}
+      - {worker: tfork_duplicate, kind: error, observed_code: title_collision,
+         action_required: pick_self_title, retryable: true}
     cleanup:
       - {type: close_pane, of: tfork_duplicate}
     classification: pass_fail
@@ -130,7 +133,9 @@ steps:
     actions:
       - {type: trigger_send_one, sender: worker_alpha, peer: bravo_renamed}
     assertions:
-      - {worker: worker_alpha, kind: error, observed_code: peer_unknown, payload_file_nonempty: true}
+      - {worker: worker_alpha, kind: error, observed_code: peer_unknown,
+         action_required: spawn_peer, retryable: true,
+         payload_file_nonempty: true}
     classification: pass_fail
 
   - id: 9
@@ -155,6 +160,7 @@ steps:
       - {type: trigger_send_one, sender: worker_alpha, peer: worker_delta}
     assertions:
       - {worker: worker_alpha, kind: error, observed_code: peer_unknown,
+         action_required: spawn_peer, retryable: true,
          payload_file_nonempty: true, handoff_skill: tfork}
     post_recovery_actions:
       - {type: driver_tfork_from_payload, sender: worker_alpha}
