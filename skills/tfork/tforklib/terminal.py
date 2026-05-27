@@ -73,6 +73,17 @@ class Terminal(ABC):
     def kill(self, session) -> None:
         """Close the pane identified by ``session``."""
 
+    @abstractmethod
+    def rename_tab(self, session, title) -> tuple:
+        """Rename the tab containing ``session`` to ``title``.
+
+        Returns ``(error_or_none, duplicate_refs)``: ``error_or_none`` is a
+        one-line stderr-style string when the underlying rename failed (None
+        on success), and ``duplicate_refs`` is the list of other surface refs
+        in the same workspace that already carried ``title`` (empty when the
+        title is unique). The pane is not killed on rename failure — a tab
+        without the requested title is still a working fork."""
+
 
 def _run(cmd, timeout=10):
     """Run a subprocess, never raising — failures surface as a non-zero code."""
@@ -482,6 +493,35 @@ class CmuxTerminal(Terminal):
         cmd = ["cmux", "close-surface", "--surface", session,
                *self._workspace_args(session)]
         _run(cmd)
+
+    def rename_tab(self, session, title):
+        """Rename ``session``'s tab to ``title``; also report duplicates.
+
+        cmux allows duplicate tab titles within a workspace, so the rename
+        always succeeds when the surface is live. After the rename, the
+        workspace tree is walked once to surface every other live surface
+        sharing ``title`` — the caller bubbles that up via the result ``note``
+        so the spawner is not surprised when a later p2p ``send`` returns
+        ``peer_ambiguous`` on this title.
+        """
+        ws_args = self._workspace_args(session)
+        result = _run(["cmux", "rename-tab", "--surface", session,
+                       *ws_args, title])
+        if result.returncode != 0:
+            return result.stderr.strip() or "cmux rename-tab failed", []
+        ws_ref = self._workspaces.get(session) or _workspace_of(session)
+        duplicates = []
+        for window in _cmux_tree().get("windows", []):
+            for ws in window.get("workspaces", []):
+                if ws_ref and ws.get("ref") != ws_ref:
+                    continue
+                for pane in ws.get("panes", []):
+                    for surface in pane.get("surfaces", []):
+                        ref = surface.get("ref")
+                        if (surface.get("title") == title
+                                and ref and ref != session):
+                            duplicates.append(ref)
+        return None, duplicates
 
 
 def _build_wrapper(nonce, cwd, command):

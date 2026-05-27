@@ -23,7 +23,7 @@ from .verify import DEFAULT_DELAY, verify_fork
 
 
 def run_fork(command_words, placement="right", anchor=None, type_override=None,
-             delay=None, terminal=None, nonce=None,
+             title=None, delay=None, terminal=None, nonce=None,
              registry_path=REGISTRY_PATH):
     """Fork, verify, label, persist, and return the result dict.
 
@@ -54,8 +54,20 @@ def run_fork(command_words, placement="right", anchor=None, type_override=None,
 
     session = terminal.fork(command_str, placement, os.getcwd(), nonce, anchor)
 
+    title_note = ""
+    if title:
+        rename_error, duplicate_refs = terminal.rename_tab(session, title)
+        if rename_error:
+            title_note = f"; tab rename to '{title}' failed: {rename_error}"
+        elif duplicate_refs:
+            title_note = (f"; tab title '{title}' is now shared with "
+                          f"{', '.join(duplicate_refs)} in the same workspace "
+                          f"— p2p will report peer_ambiguous on this title")
+
     verified, foreground, exit_status, note = verify_fork(
         terminal, session, nonce, delay)
+    if title_note:
+        note = f"{note}{title_note}"
     observed_type = classify_observed(exit_status, foreground)
 
     # Label resolution: --type wins, then a *strong* observation (one where

@@ -15,6 +15,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
   Optional cmux surface ref (surface:N) or tab title the new pane attaches next to; omit to anchor on the caller's own pane. Ignored when placement is new-workspace.
   Default: none.
 - **type_override**: Optional classification override: agent or command. Omit to let the binary classify by what it observed after the fork. Default: none.
+- **title**: Optional cmux tab title to apply to the new pane immediately after fork. Pass this whenever the spawner intends to p2p the forked agent — p2p routes by tab title, and without `--title` the new tab carries cmux's default title and is not addressable until renamed. Pick a snake_case title from the spawner's role context (e.g. `worker_42`, `qa_runner`); cmux allows duplicates within a workspace, so collisions are reported in `note` rather than failing the fork. Default: none.
 
 ## Context
 
@@ -25,7 +26,18 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 ## Constraints
 
 - **Must:** Infer only the front-door parameters from the user's request — command, placement, anchor, and type_override — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns.
-- **Require:** tfork only forks. Never message or brief the forked agent from this skill; return the surface ref and let the p2p skill own agent-to-agent messaging.
+- **Require:** tfork only forks. Never message or brief the forked agent from this skill. When the user asks to communicate with, brief, or message the forked agent, load the p2p skill and use it with the session ref (or `--title`) returned from the fork — p2p owns all agent-to-agent messaging.
+
+### Red Flags
+
+These thoughts mean STOP — you are about to waste time on reconnaissance the binary does not need. This SKILL.md is the complete agent-facing interface; trust it and invoke the binary directly.
+
+| Thought | Reality |
+|---|---|
+| "Let me run `fork_terminal.py --help` first" | Every flag the agent needs is listed in Parameters above. |
+| "I'll read fork_terminal.py / tforklib to understand it" | The contract is SKILL.md. Source is implementation detail. |
+| "I should `cmux identify` / `cmux ls` to check my surface first" | The binary resolves the caller's own surface itself. Just invoke. |
+| "Let me peek at the registry before forking" | The binary reads and writes the registry; the JSON result tells you what label landed. |
 
 ## Steps
 
@@ -35,6 +47,8 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
    a. Insert --anchor {anchor} into the invocation, before the -- separator.
 4. If the user explicitly specified agent or command as the type:
    a. Insert --type {type_override} into the invocation, before the -- separator.
+4a. If the fork is an agent the spawner intends to message via p2p:
+   a. Pick a snake_case title from your own role context (do not ask the human) and insert --title {title} into the invocation, before the -- separator. The new tab is renamed before the binary returns, so p2p can route to it on the first send.
 5. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
 6. Decide which of the following applies and follow only that path:
    If the JSON result has ok set to true:
@@ -46,7 +60,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 
 1. Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed.
 2. If the result's type is agent:
-   a. Hand the session field — the new cmux surface ref — to the p2p skill for messaging the forked agent.
+   a. Record the session field — the new cmux surface ref — as the address for this forked agent. When the user asks to communicate with, brief, or message that agent (now or later in the conversation), load the p2p skill and use it with this session ref to talk to the agent.
 3. If the result's verified field is false:
    a. tfork could not confirm the command ran cleanly. Point the user at the session surface so they can inspect the pane themselves, and do not re-run the command.
 4. If the result's note mentions 'correct if intended':

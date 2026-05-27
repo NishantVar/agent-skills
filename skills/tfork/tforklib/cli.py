@@ -75,6 +75,9 @@ def parse_args(argv):
                              "default: the caller's own surface")
     parser.add_argument("--type", choices=("agent", "command"), default=None,
                         help="force the type label; otherwise post-hoc")
+    parser.add_argument("--title", default=None,
+                        help="rename the new tab to this title after fork, "
+                             "so it is immediately p2p-addressable")
     parser.add_argument("--delay", type=_nonneg_int, default=None,
                         help="seconds to wait before reading the new pane")
     parser.add_argument("command", nargs="*",
@@ -87,7 +90,7 @@ def main(argv=None):
         args = parse_args(argv)
         result = run_fork(args.command, placement=args.placement,
                           anchor=args.anchor, type_override=args.type,
-                          delay=args.delay)
+                          title=args.title, delay=args.delay)
     except ForkError as exc:
         print(json.dumps(exc.handoff()))
         return EXIT_CODES.get(exc.code, 1)

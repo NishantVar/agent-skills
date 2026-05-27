@@ -13,11 +13,12 @@ class FakeTerminal(Terminal):
     """
 
     def __init__(self, *, process=None, text="", fork_error=None,
-                 session="surface:fake"):
+                 session="surface:fake", rename_result=(None, [])):
         self.process = process
         self.text = text
         self.fork_error = fork_error
         self.session = session
+        self.rename_result = rename_result
         self.calls = []
         self.killed = []
 
@@ -43,6 +44,10 @@ class FakeTerminal(Terminal):
     def kill(self, session):
         self.calls.append(("kill", session))
         self.killed.append(session)
+
+    def rename_tab(self, session, title):
+        self.calls.append(("rename_tab", session, title))
+        return self.rename_result
 
     def methods_called(self):
         return [call[0] for call in self.calls]
