@@ -46,10 +46,20 @@ def send_and_log(
         cmd += ["--workspace", workspace]
 
     proc = subprocess.run(cmd, capture_output=True, text=True)
-    raw_stdout = json.loads(proc.stdout) if proc.stdout.strip() else {
-        "ok": False, "code": "sim_send_no_stdout",
-        "stderr": proc.stderr, "returncode": proc.returncode,
-    }
+    if proc.stdout.strip():
+        try:
+            raw_stdout = json.loads(proc.stdout)
+        except json.JSONDecodeError as e:
+            raw_stdout = {
+                "ok": False, "code": "sim_send_json_error",
+                "stderr": proc.stderr, "returncode": proc.returncode,
+                "raw_stdout": proc.stdout, "json_error": str(e),
+            }
+    else:
+        raw_stdout = {
+            "ok": False, "code": "sim_send_no_stdout",
+            "stderr": proc.stderr, "returncode": proc.returncode,
+        }
 
     write_send_result(
         log_path,

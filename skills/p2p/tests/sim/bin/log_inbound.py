@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib.log import write_inbound_frame
 from lib.proto import parse_body, MessageClass
 
-HEADER_RE = re.compile(r"^\[from:\s*(?P<from>[^\]|]+?)(?:\s*\|\s*one-way)?\s*\]\s*(?P<body>.*)$",
+HEADER_RE = re.compile(r"^\[from:\s*(?P<from>[^\]|]+?)(?:\s*\|\s*(?P<oneway>one-way))?\s*\]\s*(?P<body>.*)$",
                        re.DOTALL)
 
 
@@ -34,7 +34,7 @@ def parse_frame(raw: str) -> tuple[str | None, str, bool]:
         return None, raw, False
     from_title = m.group("from").strip()
     body = m.group("body").lstrip()
-    one_way = "| one-way" in raw.splitlines()[0]
+    one_way = m.group("oneway") is not None
     return from_title, body, one_way
 
 

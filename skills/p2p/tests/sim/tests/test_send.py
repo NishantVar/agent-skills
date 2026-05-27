@@ -124,3 +124,41 @@ def test_log_inbound_cli_marks_one_way(tmp_path: Path):
     rec = json.loads(log_path.read_text().splitlines()[0])
     assert rec["one_way"] is True
     assert rec["from_title"] == "worker_charlie"
+
+
+def test_log_inbound_cli_one_way_not_false_positive_on_body(tmp_path: Path):
+    import subprocess
+    log_path = tmp_path / "bravo.jsonl"
+    # body mentions "| one-way" but header has no one-way marker
+    raw = '[from: worker_alpha] COUNTER:{"run_id":"r1","step_id":1,"attempt_id":"a1","sender":"worker_alpha","value":1,"note":"see | one-way docs"}'
+    cli = Path(__file__).resolve().parents[1] / "bin" / "log_inbound.py"
+    proc = subprocess.run([sys.executable, str(cli),
+                           "--log-path", str(log_path),
+                           "--run-id", "r1", "--step-id", "1",
+                           "--raw-frame", raw],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    rec = json.loads(log_path.read_text().splitlines()[0])
+    assert rec["one_way"] is False
+
+
+def test_send_and_log_handles_malformed_stdout(tmp_path: Path, monkeypatch):
+    log_path = tmp_path / "alpha.jsonl"
+    msg_file = tmp_path / "m.txt"
+    msg_file.write_text("hi")
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 0
+            stdout = "not json {"
+            stderr = ""
+        return R()
+
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = send_and_log(peer="bravo", message_file=msg_file, log_path=log_path,
+                          run_id="r1", step_id=1, attempt_id="a1")
+    assert result["ok"] is False
+    assert result["code"] == "sim_send_json_error"
+    assert "raw_stdout" in result
