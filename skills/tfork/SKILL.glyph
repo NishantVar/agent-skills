@@ -3,7 +3,7 @@
 // binary, call it, and surface the structured JSON result. Carries no
 // runtime-judgement logic of its own.
 
-skill tfork(command = <"The coding-agent alias or literal command to fork, extracted verbatim from the user's request; its first word is the registry key.">, placement = "right" <"Where the new pane opens relative to the anchor: right, left, top, or bottom for a split, or new-workspace for a fresh tab.">, anchor = none <"Optional cmux surface ref (surface:N) or tab title the new pane attaches next to; omit to anchor on the caller's own pane. Ignored when placement is new-workspace.">, type_override = none <"Optional classification override: agent or command. Omit to let the binary classify by what it observed after the fork.">)
+skill tfork(command = <"The coding-agent alias or literal command to fork, extracted verbatim from the user's request; its first word is the registry key.">, placement = "right" <"Where the new pane opens relative to the anchor: right, left, top, or bottom for a split, or new-workspace for a fresh tab.">, anchor = none <"Optional cmux surface ref (surface:N) or tab title the new pane attaches next to; omit to anchor on the caller's own pane. Ignored when placement is new-workspace.">, type_override = none <"Optional classification override: agent or command. Omit to let the binary classify by what it observed after the fork.">, title = none <"Optional cmux tab title for the new pane — renamed right after fork so it's immediately p2p-addressable. Pass a snake_case title (e.g. `worker_42`) for any agent you'll message. cmux allows duplicates in a workspace; collisions surface in `note`, not failures.">)
     description: "Fork a coding agent or command into a new cmux pane via the deterministic fork_terminal.py binary."
 
     context:
@@ -23,6 +23,9 @@ skill tfork(command = <"The coding-agent alias or literal command to fork, extra
         if "the user explicitly specified agent or command as the type"
             "Insert --type {type_override} into the invocation, before the -- separator."
 
+        if "the fork is an agent you'll p2p"
+            "Pick a snake_case title and insert --title {title} before the -- separator. p2p can route to it on the first send."
+
         "Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object."
 
         if "the JSON result has ok set to true"
@@ -31,14 +34,23 @@ skill tfork(command = <"The coding-agent alias or literal command to fork, extra
             "Treat the JSON as a handoff object: carry out its agent_instruction exactly, relay its human_message to the user, and offer suggested_next_command when retryable is true."
 
 const no_runtime_judgement = "Infer only the front-door parameters from the user's request — command, placement, anchor, and type_override — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns."
-const fork_only = "tfork only forks. Never message or brief the forked agent from this skill; return the surface ref and let the p2p skill own agent-to-agent messaging."
+const fork_only = "tfork only forks. Never message or brief the forked agent from this skill. When the user asks to communicate with, brief, or message the forked agent, load the p2p skill and use it with the session ref (or --title) returned from the fork — p2p owns all agent-to-agent messaging."
 const binary_contract = """fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named), opens the new pane or workspace, runs the command in the caller's current directory through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel). A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf."""
+
+// red_flags renders as the ### Red Flags section in SKILL.md. Hand-mirrored
+// for now; the compile pipeline does not yet emit it automatically.
+const red_flags = """| Thought | Reality |
+|---|---|
+| "Run `--help` first" | All flags are listed in Parameters. |
+| "Read fork_terminal.py to understand it" | SKILL.md is the contract. |
+| "`cmux identify` / `ls` to check surfaces first" | The binary resolves the caller's surface itself. |
+| "Peek at the registry first" | The binary handles it; result reports the label. |"""
 
 generated block report_success(result)
     flow:
         "Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed."
         if "the result's type is agent"
-            "Hand the session field — the new cmux surface ref — to the p2p skill for messaging the forked agent."
+            "Record the session field — the new cmux surface ref — as the address for this forked agent. When the user asks to communicate with, brief, or message that agent (now or later in the conversation), load the p2p skill and use it with this session ref to talk to the agent."
         if "the result's verified field is false"
             "tfork could not confirm the command ran cleanly. Point the user at the session surface so they can inspect the pane themselves, and do not re-run the command."
         if "the result's note mentions 'correct if intended'"

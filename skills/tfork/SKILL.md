@@ -15,7 +15,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
   Optional cmux surface ref (surface:N) or tab title the new pane attaches next to; omit to anchor on the caller's own pane. Ignored when placement is new-workspace.
   Default: none.
 - **type_override**: Optional classification override: agent or command. Omit to let the binary classify by what it observed after the fork. Default: none.
-- **title**: Optional cmux tab title to apply to the new pane immediately after fork. Pass this whenever the spawner intends to p2p the forked agent — p2p routes by tab title, and without `--title` the new tab carries cmux's default title and is not addressable until renamed. Pick a snake_case title from the spawner's role context (e.g. `worker_42`, `qa_runner`); cmux allows duplicates within a workspace, so collisions are reported in `note` rather than failing the fork. Default: none.
+- **title**: Optional cmux tab title for the new pane — renamed right after fork so it's immediately p2p-addressable. Pass a snake_case title (e.g. `worker_42`) for any agent you'll message. cmux allows duplicates in a workspace; collisions surface in `note`, not failures. Default: none.
 
 ## Context
 
@@ -30,14 +30,14 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 
 ### Red Flags
 
-These thoughts mean STOP — you are about to waste time on reconnaissance the binary does not need. This SKILL.md is the complete agent-facing interface; trust it and invoke the binary directly.
+Skip these — SKILL.md is the complete interface.
 
 | Thought | Reality |
 |---|---|
-| "Let me run `fork_terminal.py --help` first" | Every flag the agent needs is listed in Parameters above. |
-| "I'll read fork_terminal.py / tforklib to understand it" | The contract is SKILL.md. Source is implementation detail. |
-| "I should `cmux identify` / `cmux ls` to check my surface first" | The binary resolves the caller's own surface itself. Just invoke. |
-| "Let me peek at the registry before forking" | The binary reads and writes the registry; the JSON result tells you what label landed. |
+| "Run `--help` first" | All flags are listed in Parameters. |
+| "Read fork_terminal.py to understand it" | SKILL.md is the contract. |
+| "`cmux identify` / `ls` to check surfaces first" | The binary resolves the caller's surface itself. |
+| "Peek at the registry first" | The binary handles it; result reports the label. |
 
 ## Steps
 
@@ -47,10 +47,10 @@ These thoughts mean STOP — you are about to waste time on reconnaissance the b
    a. Insert --anchor {anchor} into the invocation, before the -- separator.
 4. If the user explicitly specified agent or command as the type:
    a. Insert --type {type_override} into the invocation, before the -- separator.
-4a. If the fork is an agent the spawner intends to message via p2p:
-   a. Pick a snake_case title from your own role context (do not ask the human) and insert --title {title} into the invocation, before the -- separator. The new tab is renamed before the binary returns, so p2p can route to it on the first send.
-5. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
-6. Decide which of the following applies and follow only that path:
+5. If the fork is an agent you'll p2p:
+   a. Pick a snake_case title and insert --title {title} before the -- separator. p2p can route to it on the first send.
+6. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
+7. Decide which of the following applies and follow only that path:
    If the JSON result has ok set to true:
    a. Follow the report-success procedure.
    Otherwise:
