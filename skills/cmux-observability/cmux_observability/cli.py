@@ -134,7 +134,10 @@ def cmd_collect(args: argparse.Namespace) -> int:
                 ))
                 continue
             kind, confidence = classify_from_scrollback(tail)
-            if kind is None:
+            # Heuristic with confidence < 0.7 is too weak to promote: a single
+            # brand mention (e.g. README-style "codex") would otherwise drag a
+            # plain shell into pending_summaries.
+            if kind is None or confidence < 0.7:
                 continue
             s.is_agent = True
             screens[s.ref] = tail

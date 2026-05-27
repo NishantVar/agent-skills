@@ -287,3 +287,76 @@ def test_collect_heuristic_classifies_untagged_surface_and_flows_into_pending(
     assert pending_refs == {"surface:1", "surface:2"}, (
         f"expected both classified surfaces in pending, got {pending_refs}"
     )
+
+
+def test_collect_heuristic_weak_marker_not_promoted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plain terminal whose scrollback contains only a single weak brand
+    mention (README-style ``codex`` substring, no prompt rail / status
+    markers) must NOT be promoted to an Agent and must NOT appear in
+    pending_summaries.
+    """
+    from cmux_observability.collector.cmux import TopResult
+    from cmux_observability.model import Surface, Workspace
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    ws_plain = Workspace(
+        ref="workspace:1", title="Plain WS", window_ref="window:1",
+        surfaces=[Surface(
+            ref="surface:1", pane_ref="pane:1", workspace_ref="workspace:1",
+            kind="terminal", title="shell", tty="ttys001",
+        )],
+    )
+
+    monkeypatch.setattr(
+        "cmux_observability.cli.fetch_tree", lambda: [ws_plain],
+    )
+    monkeypatch.setattr("cmux_observability.cli.fetch_top", lambda: TopResult())
+    monkeypatch.setattr("cmux_observability.cli.cmux_version", lambda: "0.64.10")
+    monkeypatch.setattr(
+        "cmux_observability.cli.discover_repos",
+        lambda cfg, force_rescan=False: ([], []),
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.productivity", lambda repos, cfg: None,
+    )
+
+    # Single weak marker: bare 'codex' substring in a README-style mention,
+    # no prompt rail (› ), no status line, no Worked-for trailer.
+    weak_tail = (
+        "nishant@host project % cat README.md\n"
+        "Some notes about codex in our docs.\n"
+        "nishant@host project % \n"
+    )
+
+    monkeypatch.setattr(
+        "cmux_observability.cli.read_screen",
+        lambda surface_ref, *, workspace_ref=None, lines=150: weak_tail,
+    )
+
+    cfg = _write_config(tmp_path)
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cli.main(["collect", "--config", str(cfg)])
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["ok"] is True
+
+    # Sanity: the classifier itself does see the weak marker (conf 0.5).
+    from cmux_observability.collector.classify import classify_from_scrollback
+    kind, conf = classify_from_scrollback(weak_tail)
+    assert kind == "codex" and conf == 0.5, (
+        f"classifier baseline drifted: {(kind, conf)}"
+    )
+
+    # But the collector must not promote it.
+    assert out["snapshot_preview"]["agents_total"] == 0
+    snap, _h, _r = runstate.read(out["run_id"])
+    assert snap.agents == []
+    pending_refs = {p["surface_ref"] for p in out["pending_summaries"]}
+    assert "surface:1" not in pending_refs

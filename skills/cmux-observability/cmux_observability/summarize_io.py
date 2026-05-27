@@ -211,12 +211,18 @@ def record_from_agent(
             redaction_summary=", ".join(applied),
         )
 
-        # cmux tag wins on state-hint disagreement.
-        if state_hint and state_hint != agent.state:
-            failures.append(Failure(
-                component="summarize_io", target=sref,
-                message=f"state hint {state_hint!r} disagreed with cmux tag {agent.state!r}",
-            ))
+        # cmux_tag agents: tag wins on state-hint disagreement.
+        # heuristic agents start state=unknown; the summarizer is how we
+        # learn their real state, so we adopt the hint instead of complaining.
+        if state_hint:
+            if agent.type_source == "heuristic":
+                agent.state = state_hint
+                agent.state_source = "agent_summary"
+            elif state_hint != agent.state:
+                failures.append(Failure(
+                    component="summarize_io", target=sref,
+                    message=f"state hint {state_hint!r} disagreed with cmux tag {agent.state!r}",
+                ))
 
         cache_payload = {
             "surface_ref": sref,

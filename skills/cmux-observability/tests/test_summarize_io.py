@@ -269,6 +269,106 @@ def test_scrollback_truncation_runs_after_redaction(tmp_path):
     assert pending[0]["redactions_applied"]  # redaction did fire
 
 
+def _snap_with_one_heuristic_agent() -> tuple[Snapshot, str]:
+    surface = Surface(
+        ref="surface:h1", pane_ref="pane:h1", workspace_ref="workspace:h1",
+        kind="terminal", title="some-tab", tty="ttys009",
+        cwd="/home/u/repo", is_agent=True,
+    )
+    ws = Workspace(ref="workspace:h1", title="Heuristic WS",
+                   window_ref="window:1", surfaces=[surface])
+    agent = Agent(
+        surface_ref="surface:h1", workspace_ref="workspace:h1",
+        type="claude_code", type_source="heuristic", type_confidence=0.7,
+        state="unknown", state_source="heuristic", pid=None,
+    )
+    snap = Snapshot(
+        schema_version=1,
+        captured_at=datetime.now(timezone.utc),
+        host="h", cmux_version="x",
+        workspaces=[ws], agents=[agent], themes=[],
+        productivity=None, history=None, failures=[],
+    )
+    raw_screen = "❯ working on something\nctx:42%\n"
+    return snap, raw_screen
+
+
+def test_heuristic_state_hint_updates_agent_no_disagreement(tmp_path):
+    """Heuristic agents start state=unknown. record_from_agent must adopt the
+    summarizer's state_hint as the authoritative state (heuristic path), not
+    emit a disagreement failure. agent.state_source is set to
+    'agent_summary' so downstream consumers can match on it.
+    """
+    snap, raw_screen = _snap_with_one_heuristic_agent()
+    screens = {"surface:h1": raw_screen}
+
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+        assert len(pending) == 1
+        screen_hashes = {"surface:h1": pending[0]["screen_hash"]}
+
+        failures = record_from_agent(
+            {"summaries": [{
+                "surface_ref": "surface:h1",
+                "summary": "running the parser tests",
+                "state_hint": "running",
+                "needs_input_reason": None,
+                "confidence": 0.9,
+            }]},
+            snap, conn,
+            prompt_version=1,
+            screen_hashes=screen_hashes,
+            redactions_by_surface={"surface:h1": []},
+        )
+
+    # No disagreement failures emitted on the heuristic path.
+    msgs = [f.message for f in failures]
+    assert not any("disagreed with cmux tag" in m for m in msgs), msgs
+
+    agent = snap.agents[0]
+    assert agent.summary is not None
+    assert agent.state == "running"
+    assert agent.state_source == "agent_summary"
+
+
+def test_cmux_tag_state_hint_disagreement_records_failure(tmp_path):
+    """cmux_tag path is unchanged: state hint disagreeing with cmux tag
+    produces a non-fatal failure and the agent's tag-derived state stands.
+    """
+    snap, raw_screen = _snap_with_one_running_agent()
+    # Force cmux-tagged agent into needs_input so the summary's "running"
+    # hint actually disagrees.
+    snap.agents[0].state = "needs_input"
+    screens = {"surface:1": raw_screen}
+
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+        screen_hashes = {"surface:1": pending[0]["screen_hash"]}
+
+        failures = record_from_agent(
+            {"summaries": [{
+                "surface_ref": "surface:1",
+                "summary": "writing tests",
+                "state_hint": "running",
+                "needs_input_reason": None,
+                "confidence": 0.9,
+            }]},
+            snap, conn,
+            prompt_version=1,
+            screen_hashes=screen_hashes,
+            redactions_by_surface={"surface:1": ["SK_TOKEN:1"]},
+        )
+
+    assert any("disagreed with cmux tag" in f.message for f in failures)
+    # Tag wins: state stays as cmux gave it.
+    assert snap.agents[0].state == "needs_input"
+    assert snap.agents[0].state_source == "cmux_tag"
+    # Summary is still attached.
+    assert snap.agents[0].summary is not None
+
+
 def test_malformed_and_unknown_summary_entries_produce_non_fatal_failures(tmp_path):
     snap, raw_screen = _snap_with_one_running_agent()
     screens = {"surface:1": raw_screen}
