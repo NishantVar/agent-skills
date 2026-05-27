@@ -2447,3 +2447,46 @@ def test_render_surface_row_disclosure_chevron_cue_collapsed_and_open(tmp_path: 
         "must override `::before` content to ▾ (\\25BE) when the <details> "
         "is `[open]`"
     )
+
+
+def test_render_themes_chip_focuses_summary_with_prevent_scroll(tmp_path: Path):
+    """T15 follow-up: theme chip click must move focus to the target row's
+    <summary class="surface-row"> using `preventScroll: true` so the focus
+    move does not fight the centered scrollIntoView position. Without this,
+    keyboard and AT users stay parked on the theme chip even though the
+    viewport jumped to the target row.
+    """
+    import re
+
+    snap = _snap_themes_fixture()
+    html_path, _json_path = render_snapshot(snap, tmp_path)
+    html = html_path.read_text()
+
+    # Find the chip-click inline script (the one that already calls scrollIntoView).
+    scripts = re.findall(r"<script\b[^>]*>(.*?)</script>", html, re.S)
+    chip_scripts = [
+        s for s in scripts
+        if "data-target" in s and "scrollIntoView" in s
+    ]
+    assert chip_scripts, "could not locate the theme-chip inline <script>"
+    script = chip_scripts[0]
+
+    # Must query the target's summary.surface-row before focusing.
+    assert re.search(
+        r'querySelector\(\s*"summary\.surface-row"\s*\)',
+        script,
+    ), "chip click handler must querySelector('summary.surface-row') on the target"
+
+    # Must call .focus({ preventScroll: true }) so the focus move does not
+    # override the centered scroll position established by scrollIntoView.
+    assert re.search(
+        r'\.focus\s*\(\s*\{\s*preventScroll\s*:\s*true\s*\}\s*\)',
+        script,
+    ), "chip click handler must call summary.focus({ preventScroll: true })"
+
+    # Bare .focus() fallback for browsers that don't accept FocusOptions —
+    # protects keyboard users on older runtimes.
+    assert re.search(r'\.focus\s*\(\s*\)', script), (
+        "chip click handler must provide a bare .focus() fallback for "
+        "runtimes that reject FocusOptions"
+    )

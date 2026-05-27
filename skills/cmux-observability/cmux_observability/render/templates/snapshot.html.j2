@@ -826,7 +826,23 @@
           if (el.tagName && el.tagName.toLowerCase() === "details") {
             el.open = true;
           }
+          // T15 follow-up: scrollIntoView is visual-only. Without an explicit
+          // focus move, keyboard + AT users stay parked on the theme chip
+          // even though the viewport jumped to the target row. Move focus to
+          // the <summary class="surface-row"> (the disclosure's interactive
+          // anchor — it already has a :focus-visible rule), and pass
+          // `preventScroll: true` so the focus call does not fight the
+          // centered scroll position set just above. Fall back to a bare
+          // .focus() on browsers that don't accept FocusOptions.
+          var summary = el.querySelector("summary.surface-row");
           el.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (summary && typeof summary.focus === "function") {
+            try {
+              summary.focus({ preventScroll: true });
+            } catch (_err) {
+              summary.focus();
+            }
+          }
           el.classList.add("pulse");
           setTimeout(function () { el.classList.remove("pulse"); }, 200);
         });
