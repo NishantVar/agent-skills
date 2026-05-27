@@ -2552,12 +2552,19 @@ def _snap_history_only(history: HistorySeries) -> Snapshot:
 
 
 def test_render_productivity_strip_honest_label_when_all_metrics_zero(tmp_path: Path):
-    """T16: when every productivity metric is zero/None, render one muted line
-    below the strip telling the user it's not collected yet."""
+    """T16 follow-up: when every productivity bucket reads zero, render one
+    muted line below the strip. Copy is neutral about collection status — the
+    predicate only proves "zero activity in the today/week/30d windows", so
+    the label names what's measured rather than claiming the data hasn't
+    been collected.
+    """
     snap = _snap_productivity_only(_productivity_with_totals(0, 0, 0))
     html_path, _json_path = render_snapshot(snap, tmp_path)
     html = html_path.read_text()
-    assert "not collected yet — needs git history walker" in html
+    assert "No git activity in the today/week/30d windows" in html
+    # The old, dishonest copy MUST be gone.
+    assert "not collected yet" not in html
+    assert "needs git history walker" not in html
     # Must be muted (re-uses the existing .muted token; no new CSS).
     assert 'class="muted"' in html
 
@@ -2570,7 +2577,7 @@ def test_render_productivity_strip_no_honest_label_when_any_metric_nonzero(
     snap = _snap_productivity_only(_productivity_with_totals(0, 1, 0))
     html_path, _json_path = render_snapshot(snap, tmp_path)
     html = html_path.read_text()
-    assert "not collected yet — needs git history walker" not in html
+    assert "No git activity in the today/week/30d windows" not in html
 
 
 def test_render_history_honest_label_when_empty(tmp_path: Path):
