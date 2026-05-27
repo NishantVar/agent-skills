@@ -65,11 +65,14 @@
     {% endif %}
     {# T22 (qa_lead HOLD): chip is a sibling element of the mono-title /
        surface-summary spans inside <summary class="surface-row"> (not nested
-       inside any text container). Chip body is the icon glyph ⧉ (U+29C9);
-       the ref lives in data-cmux-focus + title + aria-label so AT does NOT
-       announce a bare ref as part of the row label. #}
+       inside any text container). T22 follow-up (Reviewer HOLD): chip is a
+       <span>, NOT a <button> — nested interactive controls inside <summary>
+       break the native disclosure focus/activation pattern, and a button
+       without a click handler promises action that does not happen. Chip
+       body is the icon glyph ⧉ (U+29C9); ref lives in data-cmux-focus +
+       title so AT does NOT announce a bare ref as part of the row label. #}
     {# copy-ref-chip-start #}
-    <button type="button" class="chip surface-copy-ref" data-cmux-focus="{{ s.ref }}" aria-label="Copy cmux focus command for this surface" title="cmux focus {{ s.ref }}">⧉</button>
+    <span class="chip surface-copy-ref" data-cmux-focus="{{ s.ref }}" title="cmux focus {{ s.ref }}">⧉</span>
     {# copy-ref-chip-end #}
   </summary>
   <div class="surface-expanded">

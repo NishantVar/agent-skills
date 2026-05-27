@@ -24,9 +24,12 @@
 <div class="card">
   {# T22 (qa_lead HOLD): the copy-ref chip used to live INSIDE <h3>, so screen
      readers announced the bare workspace ref as part of the heading. The
-     chip now sits as a sibling button after the activity dot + surface count;
-     <h3> holds the workspace title only. The chip body is the icon glyph
-     ⧉ (U+29C9) — the ref lives in data-cmux-focus + title + aria-label. #}
+     chip now sits as a sibling element after the activity dot + surface
+     count; <h3> holds the workspace title only. T22 follow-up (Reviewer
+     HOLD): chip is a <span> (non-interactive) — promoting to <button>
+     promises action without a click handler; v1.1.1 will pair the promotion
+     with clipboard wiring. Chip body is the icon glyph ⧉ (U+29C9); ref
+     lives in data-cmux-focus + title. #}
   <header class="card-header">
     <h3 class="card-title">
       {% if _is_path %}
@@ -39,7 +42,7 @@
     <span class="activity-dot" data-activity="{{ _activity }}" aria-label="activity: {{ _activity }}"></span>
     <span class="surface-count" title="surface count">{{ ws.surfaces | length }}</span>
     {# workspace-copy-ref-start #}
-    <button type="button" class="chip workspace-copy-ref" data-cmux-focus="{{ ws.ref }}" aria-label="Copy cmux focus command for this workspace" title="cmux focus {{ ws.ref }}">⧉</button>
+    <span class="chip workspace-copy-ref" data-cmux-focus="{{ ws.ref }}" title="cmux focus {{ ws.ref }}">⧉</span>
     {# workspace-copy-ref-end #}
   </header>
   <details class="card-body"{% if _has_needs_input or _has_running %} open{% endif %}>
