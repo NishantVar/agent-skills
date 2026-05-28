@@ -38,6 +38,9 @@ EXPECTED_FIXTURES: list[tuple[str, str | None, str, float]] = [
     ("codex_running__working.txt",                      "codex",       "running",     0.9),
     # codex — idle (full conjunct)
     ("codex_idle__worked_for.txt",                      "codex",       "idle",        0.7),
+    # codex — idle, Worked-for line followed by placeholder + chrome (qa_lead
+    # Phase E HOLD repro: closing `─` requirement was too strict).
+    ("codex_idle__worked_for_with_chrome_tail.txt",     "codex",       "idle",        0.7),
     # generic — needs_input
     ("generic_needs_input__y_n_prompt.txt",             None,          "needs_input", 0.8),
     ("generic_needs_input__press_enter.txt",            None,          "needs_input", 0.7),

@@ -178,8 +178,13 @@ _CX_RUN_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"•\s*Thinking\b"),                                               0.9),
 )
 
-# codex idle: `─ Worked for 1m 21s ─` at tail (closed by trailing `─`).
-_CX_WORKED_FOR_CLOSED = re.compile(r"─\s*Worked for \d+[hms][^\n─]*─")
+# codex idle: `─ Worked for 1m 21s` anywhere in the tail window. We drop
+# the trailing `─` requirement because the line of horizontal-rule glyphs
+# that follows the duration can wrap arbitrarily long in cmux output, and
+# qa_lead's Phase E spot-check found the strict-tail-closure form failing
+# on real codex idle screens where the Worked-for line is not the literal
+# last line (placeholder + chrome lines follow it).
+_CX_WORKED_FOR_ANY = re.compile(r"─\s*Worked for \d+[hms]")
 _CX_CHROME = (
     re.compile(r"Context \d+% left"),
     re.compile(r"\bgpt-\d"),
@@ -265,11 +270,15 @@ def state_from_scrollback(tail: str, kind: str | None) -> tuple[str, float]:
         w = _best_weight(_CX_RUN_PATTERNS, window)
         if w > 0.0:
             return ("running", w)
-        # idle: closed `─ Worked for N ─` at tail AND chrome present.
-        if _CX_WORKED_FOR_CLOSED.search(window) and any(
-            p.search(window) for p in _CX_CHROME
-        ):
+        chrome_hit = any(p.search(window) for p in _CX_CHROME)
+        # idle: `─ Worked for N` anywhere in the window AND codex chrome
+        # present. Worked-for + chrome is the strong-signal conjunct.
+        if _CX_WORKED_FOR_ANY.search(window) and chrome_hit:
             return ("idle", 0.7)
+        # idle fallback: chrome alone is weak evidence of an idle codex
+        # pane (not a running one); prefer best-effort idle over unknown.
+        if chrome_hit:
+            return ("idle", 0.6)
         return ("unknown", 0.0)
 
     if kind is None:
