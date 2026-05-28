@@ -101,3 +101,17 @@ def classify_from_scrollback(tail: str) -> tuple[str | None, float]:
         confidence = 0.8
 
     return (best_kind, confidence)
+
+
+def state_from_scrollback(tail: str, kind: str | None) -> tuple[str, float]:
+    """Return ("running"|"needs_input"|"idle"|"unknown", confidence in [0,1]).
+
+    Uses kind-specific markers when known, generic confirm-prompt patterns as
+    a fallback. Returns ("unknown", 0.0) on empty/blank input.
+
+    NOTE: Pattern set is empty in this scaffold commit; populated in v1.2 Phase C
+    after fixture capture lands. Returns ("unknown", 0.0) until then.
+    """
+    if not tail or not tail.strip():
+        return ("unknown", 0.0)
+    return ("unknown", 0.0)
