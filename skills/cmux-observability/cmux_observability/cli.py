@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import runstate
-from .collector.classify import classify_from_scrollback
+from .collector.classify import classify_from_scrollback, state_from_scrollback
 from .collector.cmux import (
     CmuxUnavailable,
     cmux_version,
@@ -34,7 +34,7 @@ from .collector.discovery import discover_repos
 from .collector.git import productivity
 from .config import Config, default_config_path, load
 from .errors import Failure
-from .model import Agent, HistoryPoint, HistorySeries
+from .model import Agent, HistoryPoint, HistorySeries, Snapshot
 from .normalize import normalize
 from .persist import append_snapshot, connect, migrate
 from .render.render import render_snapshot
@@ -61,6 +61,60 @@ def _emit(payload: dict) -> int:
 def _load_config(args: argparse.Namespace) -> Config:
     path = Path(args.config) if args.config else default_config_path()
     return load(path)
+
+
+def _classify_from_scrollback(
+    snap: Snapshot, screens: dict[str, str], failures: list[Failure]
+) -> None:
+    """Apply scrollback-driven state classification per the v1.2 precedence ladder.
+
+    Mutates ``snap.agents`` in place and may append to ``failures``. Skips
+    agents with no entry in ``screens`` (cmux-tagged idle/unknown agents have
+    no scrollback read). Runs after heuristic-promotion so heuristic-promoted
+    agents (state=unknown, state_source=heuristic) are considered.
+
+    Precedence rules:
+      * ``state_from_scrollback`` returning ``"unknown"`` or confidence < 0.5
+        is a no-op.
+      * ``a.state == "needs_input"`` already wins (cmux detected the strongest
+        signal); leave untouched.
+      * scrollback ``needs_input`` with confidence >= 0.7 overrides any other
+        state. When the prior ``state_source`` was ``"cmux_tag"``, emit a
+        non-fatal ``Failure(component="state_classifier", ...)`` recording the
+        disagreement. Promotions from ``"heuristic"`` (state=unknown) do NOT
+        emit a Failure — that's promotion, not contradiction.
+      * For an agent currently ``state == "unknown"``, scrollback with
+        confidence >= 0.5 promotes the state. No Failure.
+    """
+    for a in snap.agents:
+        tail = screens.get(a.surface_ref)
+        if not tail:
+            continue
+        state, conf = state_from_scrollback(tail, a.type)
+        if state == "unknown" or conf < 0.5:
+            continue
+        if a.state == "needs_input":
+            # cmux_tag already detected the strongest user-impact signal; do
+            # not downgrade based on scrollback patterns.
+            continue
+        prior_state = a.state
+        prior_source = a.state_source
+        if state == "needs_input" and conf >= 0.7:
+            if prior_source == "cmux_tag":
+                failures.append(Failure(
+                    component="state_classifier",
+                    target=a.surface_ref,
+                    message=(
+                        f"scrollback overrode cmux_tag={prior_state!r} "
+                        f"→ needs_input"
+                    ),
+                    fatal=False,
+                ))
+            a.state = "needs_input"
+            a.state_source = "scrollback"
+        elif a.state == "unknown" and conf >= 0.5:
+            a.state = state
+            a.state_source = "scrollback"
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
@@ -151,6 +205,11 @@ def cmd_collect(args: argparse.Namespace) -> int:
                 state_source="heuristic",
                 pid=None,
             ))
+
+    # v1.2 — scrollback-driven state classification. Runs after heuristic
+    # promotion so promoted agents are included. May override cmux_tag for
+    # high-confidence needs_input (logs a non-fatal Failure on disagreement).
+    _classify_from_scrollback(snap, screens, failures)
 
     snap.failures = failures
 
