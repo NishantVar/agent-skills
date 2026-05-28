@@ -30,16 +30,26 @@ The test passes `kind=None` to the classifier for `generic` rows.
 ## Capture procedure
 
 ```
-cmux read-screen --workspace <ref> <surface> > <path>
+cmux read-screen \
+  --workspace <workspace_ref> \
+  --surface <surface_ref> \
+  --scrollback \
+  --lines 150 \
+  > tests/fixtures/scrollback/<kind>_<state>__<note>.txt
 ```
 
-Capture the surface in the state you want to encode. Verify visually that the
-file's last ~20 lines match the intended `(kind, state)` before committing.
+Both `--workspace` and `--surface` are required (cmux 0.64.10+ rejects
+surface-only invocations with `invalid_params: Surface is not a terminal`);
+`--scrollback --lines 150` matches the wrapper default in
+`cmux_observability/collector/cmux.py:read_screen`. Capture the surface in
+the state you want to encode. Verify visually that the file's last ~20 lines
+match the intended `(kind, state)` before committing.
 
 ## Spec inventory target (verbatim from the v1.2 spec)
 
-Source the fixtures. Run `cmux read-screen --workspace <ref> <surface>` on the
-user's live machine — there are 29 candidates today. Capture at least:
+Source the fixtures. Run the capture command above (with
+`--workspace <workspace_ref> --surface <surface_ref> --scrollback --lines 150`)
+on the user's live machine — there are 29 candidates today. Capture at least:
 
 - 2× claude_code/needs_input (one empty-prompt, one confirm-card)
 - 2× claude_code/running (one early, one late in a turn)
