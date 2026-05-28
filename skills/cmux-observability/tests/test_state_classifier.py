@@ -57,8 +57,10 @@ def test_state_from_scrollback_matches_fixture(
     fixture_name: str, kind: str | None, expected_state: str, min_conf: float
 ) -> None:
     fp = FIXTURES_DIR / fixture_name
-    if not fp.exists():
-        pytest.skip(f"fixture missing: {fixture_name} — captured in Phase B")
+    assert fp.exists(), (
+        f"expected Phase B fixture missing: {fixture_name}; "
+        "the 13-fixture corpus is authoritative after Phase B and must not skip"
+    )
     tail = fp.read_text(encoding="utf-8", errors="replace")
     actual_state, actual_conf = state_from_scrollback(tail, kind)
     assert actual_state == expected_state, (
