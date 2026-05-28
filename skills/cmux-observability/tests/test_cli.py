@@ -653,3 +653,88 @@ def test_envelope_agents_breakdown_invariant_holds(
     sp = out["snapshot_preview"]
     assert sp["agents_total"] == sp["agents_tagged"] + sp["agents_heuristic"]
     assert sp["agents_total"] > 0
+
+
+def test_collect_state_classifier_wired_into_pending_and_persist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Collect-level regression for the v1.2 Phase D wiring.
+
+    Pins three properties that the unit-level helper tests cannot:
+      1. ``_classify_from_scrollback`` is actually called from ``cmd_collect``
+         (not just defined).
+      2. It runs BEFORE ``pending_for_agent``, so ``cmux_state`` in the
+         pending payload reflects the post-override state.
+      3. The mutated agent persists through ``runstate.write`` and is
+         readable back with ``state_source == "scrollback"``.
+    """
+    from cmux_observability.collector.cmux import TagLine, TopResult
+    from cmux_observability.model import Surface, Workspace
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    ws = Workspace(
+        ref="workspace:1", title="WS", window_ref="window:1",
+        surfaces=[Surface(
+            ref="surface:1", pane_ref="pane:1", workspace_ref="workspace:1",
+            kind="terminal", title="claude_code worker", tty="ttys001",
+        )],
+    )
+    # cmux says running; scrollback (below) says needs_input → disagreement.
+    top = TopResult(
+        tags_by_workspace={
+            "workspace:1": [TagLine(kind="claude_code", state="Running", pid=4242)],
+        },
+        stats_by_surface={},
+    )
+
+    monkeypatch.setattr("cmux_observability.cli.fetch_tree", lambda: [ws])
+    monkeypatch.setattr("cmux_observability.cli.fetch_top", lambda: top)
+    monkeypatch.setattr("cmux_observability.cli.cmux_version", lambda: "0.64.10")
+    monkeypatch.setattr(
+        "cmux_observability.cli.discover_repos",
+        lambda cfg, force_rescan=False: ([], []),
+    )
+    monkeypatch.setattr(
+        "cmux_observability.cli.productivity", lambda repos, cfg: None,
+    )
+
+    fixture_dir = Path(__file__).parent / "fixtures" / "scrollback"
+    needs_input_tail = (fixture_dir / "claude_code_needs_input__direct_ask.txt").read_text()
+
+    monkeypatch.setattr(
+        "cmux_observability.cli.read_screen",
+        lambda surface_ref, *, workspace_ref=None, lines=150: needs_input_tail,
+    )
+
+    cfg = _write_config(tmp_path)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cli.main(["collect", "--config", str(cfg)])
+    assert rc == 0
+    out = json.loads(buf.getvalue())
+    assert out["ok"] is True
+
+    # (1) Disagreement Failure landed in the envelope.
+    failures = out["snapshot_preview"]["failures"]
+    sc_failures = [f for f in failures if f["component"] == "state_classifier"]
+    assert len(sc_failures) == 1, (
+        f"expected 1 state_classifier failure, got {sc_failures}"
+    )
+    assert sc_failures[0]["target"] == "surface:1"
+    assert "scrollback overrode cmux_tag='running'" in sc_failures[0]["message"]
+
+    # (2) pending_summaries[0]["cmux_state"] reflects post-override state.
+    # If classify ran AFTER pending_for_agent, this would still be "running".
+    assert len(out["pending_summaries"]) == 1
+    assert out["pending_summaries"][0]["cmux_state"] == "needs_input"
+
+    # (3) Persisted runstate has the override baked in.
+    snap, _h, _r = runstate.read(out["run_id"])
+    assert len(snap.agents) == 1
+    persisted = snap.agents[0]
+    assert persisted.surface_ref == "surface:1"
+    assert persisted.state == "needs_input"
+    assert persisted.state_source == "scrollback"

@@ -51,12 +51,18 @@ def _snap_with_agent(agent: Agent) -> Snapshot:
 def _agent(
     *, state: str, state_source: str, kind: str = "claude_code",
     surface_ref: str = "sfc:1",
+    type_source: str | None = None,
 ) -> Agent:
+    # Default type_source mirrors state_source for the common cells (cmux_tag
+    # state ↔ cmux_tag type). Heuristic-promoted agents start with
+    # type_source="heuristic" too — pass it explicitly to match real shape.
+    if type_source is None:
+        type_source = "heuristic" if state_source == "heuristic" else "cmux_tag"
     return Agent(
         surface_ref=surface_ref,
         workspace_ref="ws:1",
         type=kind,
-        type_source="cmux_tag",
+        type_source=type_source,
         type_confidence=1.0,
         state=state,
         state_source=state_source,
