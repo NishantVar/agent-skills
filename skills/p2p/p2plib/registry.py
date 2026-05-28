@@ -5,16 +5,19 @@ mutating operations run under an fcntl exclusive lock on REGISTRY/.lock
 so concurrent agents serialize.
 
 Manifest shape:
-    {surface_ref, workspace_ref, title, started_at, last_seen, status?}
+    {surface_ref, workspace_ref, title, started_at, last_seen}
 
 `title` is the cmux tab title at registration time and the single
 routing identifier. (workspace_ref, title) is the unique routing key;
 collisions are rejected at register-time via title_collision.
 
+Liveness is grounded in `cmux tree`, not heartbeat age. An agent
+sitting idle at its prompt is fully reachable; there is no TTL-derived
+"stale" status. `last_seen` is still bumped for diagnostics but never
+gates routing.
+
 Sweep behavior:
   - surface_ref absent from `cmux tree --all` -> delete file (eager).
-  - surface live but `last_seen` older than TTL -> mark status="stale",
-    keep file (title stays held; agent can revive by touching).
   - surface live but the surface's CURRENT cmux title no longer matches
     manifest.title (user renamed the tab outside of p2p) -> in-place
     rewrite: set `title` to the current cmux title and append the
@@ -40,7 +43,6 @@ from pathlib import Path
 
 REGISTRY = Path.home() / ".cmux" / "agents" / "by-surface"
 LOCK_PATH = REGISTRY / ".lock"
-TTL_SECONDS = 30 * 60
 
 
 def _ensure_registry() -> None:
@@ -79,8 +81,8 @@ def _atomic_write(path: Path, data: dict) -> None:
 
 def _read_manifest(path: Path) -> dict | None:
     """Read one manifest file. Returns None on missing/corrupt — does
-    NOT unlink corrupt files (that's an atomic-write violation signal,
-    not a stale signal). Logs to stderr and skips.
+    NOT unlink corrupt files (that's an atomic-write violation signal).
+    Logs to stderr and skips.
 
     Legacy `name` field is promoted to `title` in the returned dict
     (does not rewrite the file)."""
@@ -110,7 +112,6 @@ def _iter_manifest_files():
 
 
 def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
-                 now: float | None = None,
                  promote_renames: bool = True) -> list[dict]:
     """Sweep inside the lock. Returns the post-sweep manifest list.
 
@@ -128,12 +129,11 @@ def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
     still run (they don't depend on a fresh cmux snapshot — the
     workspace assignment is stable, and the name field is one-way
     legacy data). `register()` calls with promote_renames=False so a
-    stale caller-supplied `surfaces` snapshot can't trigger a rename
+    caller-supplied `surfaces` snapshot can't trigger a rename
     rewrite of another agent's just-claimed manifest in the TOCTOU
     window between caller's cmux tree read and the register-time
     lock acquisition.
     """
-    now = time.time() if now is None else now
     survivors: list[dict] = []
     for path in list(_iter_manifest_files()):
         m = _read_manifest(path)
@@ -180,15 +180,12 @@ def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
                 m["title"] = current_title
                 m["former_titles"] = former
                 mutated = True
-        last_seen = m.get("last_seen") or m.get("started_at") or 0
-        if now - last_seen > TTL_SECONDS:
-            if m.get("status") != "stale":
-                m["status"] = "stale"
-                mutated = True
-        else:
-            if m.get("status") == "stale":
-                m.pop("status", None)
-                mutated = True
+        # Legacy: drop any pre-existing `status` field so old manifests
+        # written before the TTL was removed don't keep it around. The
+        # status field is no longer part of the schema.
+        if "status" in m:
+            m.pop("status", None)
+            mutated = True
         if mutated:
             _atomic_write(path, m)
         survivors.append(m)
@@ -196,11 +193,9 @@ def sweep_locked(live_set: set[str], surfaces: dict[str, dict] | None = None,
 
 
 def touch_self(surface_ref: str | None) -> None:
-    """Heartbeat. Idempotent. No-op when not registered or no surface.
-
-    Revives status=stale in place by clearing the field; bumps
-    last_seen. Never creates a manifest.
-    """
+    """Bump `last_seen` for diagnostics. Idempotent. No-op when not
+    registered or no surface. Never creates a manifest. Routing does
+    not depend on `last_seen` — this is bookkeeping only."""
     if not surface_ref:
         return
     path = manifest_path(surface_ref)
@@ -211,8 +206,6 @@ def touch_self(surface_ref: str | None) -> None:
         if m is None:
             return
         m["last_seen"] = int(time.time())
-        if m.get("status") == "stale":
-            m.pop("status", None)
         _atomic_write(path, m)
 
 
@@ -336,10 +329,10 @@ def would_collide(title: str, surface_ref: str,
     Mirrors the (workspace_ref, title) check inside `register` but does
     NOT create a manifest for `title`. It does run a normal sweep
     (same as every other lock-taking operation), so it may write
-    stale-status changes, legacy promotions, and rename promotions to
-    OTHER manifests — that's expected for any caller already on this
-    code path. A future caller that needs a pure side-effect-free
-    probe would need a non-mutating sweep helper.
+    legacy promotions and rename promotions to OTHER manifests —
+    that's expected for any caller already on this code path. A future
+    caller that needs a pure side-effect-free probe would need a
+    non-mutating sweep helper.
 
     Note: there's a brief TOCTOU window between this probe and a
     subsequent `register` call — another agent could claim the title

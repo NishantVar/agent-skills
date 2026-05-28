@@ -1,5 +1,6 @@
-"""argparse front door. `_touch_self` heartbeats at the top of every
-invocation so a stale-marked agent revives the moment it wakes up."""
+"""argparse front door. `_touch_self` bumps `last_seen` at the top of
+every invocation as a diagnostic heartbeat; routing does not depend
+on it (a manifest-with-live-surface is always `live`)."""
 
 from __future__ import annotations
 
@@ -29,7 +30,6 @@ def _decorate_me(m: dict, surfaces: dict[str, dict]) -> dict:
         "surface_ref": ref,
         "workspace_ref": s.get("workspace_ref"),
         "workspace_title": s.get("workspace_title", ""),
-        "status": m.get("status") or "live",
     }
 
 
@@ -190,16 +190,6 @@ def cmd_send(args) -> int:
             "rerun_argv": rerun, "retryable": True,
         })
         return EXIT_HANDOFF
-    # Contract nudge: info_needed(self_title) is a safety net, not the
-    # expected path. SKILL.md teaches agents to commit to --my-title
-    # upfront on first send. Surface a stderr advisory so reviewers and
-    # log readers see the drift.
-    if (result.get("code") == "info_needed"
-            and "self_title" in (result.get("missing") or [])):
-        print("advisory: info_needed(self_title) indicates a stale "
-              "call pattern. Calling agent should pass --my-title on "
-              "first send rather than call-then-react. See SKILL.md.",
-              file=sys.stderr)
     _print_json(result)
     return EXIT_OK if result.get("ok") else EXIT_HANDOFF
 
@@ -284,7 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Heartbeat before dispatch so a stale agent revives on any call.
+    # Bump last_seen before dispatch as a diagnostic heartbeat.
     registry.touch_self(surface.my_surface())
     return args.func(args)
 

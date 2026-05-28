@@ -8,10 +8,14 @@ Resolution:
   1. Match `addressed` (case-insensitive) against tab titles in
      `scope_workspace_ref` when supplied; otherwise match across all
      workspaces.
-  2. 0 hits -> unknown. 1 hit -> live (or stale if its manifest is
-     marked stale). >1 hits -> ambiguous with candidates carrying
-     workspace info so the caller can disambiguate via --peer-surface
-     or --workspace.
+  2. 0 hits -> unknown. 1 hit -> live (or live_first_contact if no
+     manifest exists yet for that surface). >1 hits -> ambiguous with
+     candidates carrying workspace info so the caller can disambiguate
+     via --peer-surface or --workspace.
+
+Liveness is grounded entirely in `cmux tree`. A surface present in
+the tree is reachable; manifest age is not consulted. There is no
+`stale` kind — an idle agent waiting at its prompt is `live`.
 
 Rename detection (only fires when step 1 yields zero live matches):
   - Scan in-scope live manifests for `former_titles` containing the
@@ -19,11 +23,6 @@ Rename detection (only fires when step 1 yields zero live matches):
     the surface's current title + the matched former title. A live
     current-title match in step 1 always wins over rename detection
     (peer_renamed is the fallback when no live current match exists).
-
-Stale resolution:
-  - When the matched manifest has `status="stale"`, the result kind is
-    `stale`. The peer is expected to receive a fresh bootstrap so it
-    can re-touch itself.
 """
 
 from __future__ import annotations
@@ -45,10 +44,6 @@ class ResolveResult:
     source: str | None = None
     # candidates is populated only for kind="ambiguous".
     candidates: list[dict] = field(default_factory=list)
-
-
-def _stale(manifest: dict | None) -> bool:
-    return bool(manifest) and manifest.get("status") == "stale"
 
 
 def resolve_peer(addressed: str, manifests: list[dict],
@@ -142,12 +137,7 @@ def resolve_peer(addressed: str, manifests: list[dict],
     s = matches[0]
     by_surface = {m.get("surface_ref"): m for m in manifests}
     m = by_surface.get(s["ref"])
-    if m is None:
-        kind = "live_first_contact"
-    elif _stale(m):
-        kind = "stale"
-    else:
-        kind = "live"
+    kind = "live_first_contact" if m is None else "live"
     return ResolveResult(
         kind=kind,
         surface_ref=s["ref"],

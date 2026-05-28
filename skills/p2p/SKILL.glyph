@@ -8,12 +8,12 @@ skill p2p(my_title = "" <"REQUIRED on first send for this agent EXCEPT on inline
     avoid skill_calls_skill
 
     flow:
-        if inline_bootstrap_present.applies()
+        if reply_to_inline_bootstrap.applies()
             reply_to_inline_bootstrap()
         else
             send_via_helper()
 
-        if handoff_received.applies()
+        if follow_handoff_instruction.applies()
             follow_handoff_instruction()
 
 
@@ -22,7 +22,7 @@ block send_via_helper()
     flow:
         "Write {message} to a temp file like `/tmp/p2p-out-{peer}.txt`."
         "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer {peer} --my-title {my_title} --message-file <path>`. COMMIT to --my-title upfront on the first send for this agent (exception: inline-bootstrap reply uses --bootstrap-suggested-title instead — see reply_to_inline_bootstrap block). Pick the snake_case title from your own role context, do not call-then-react to info_needed. Drop --my-title on subsequent invocations; the helper ignores it once a manifest exists. Add `--one-way` for fire-and-forget delivery — the wire frame becomes `[from: <me> | one-way] <body>` and any first-contact bootstrap drops the reply request. Add `--workspace <ref>` to scope the title match to a different workspace, or `--workspace all` for global scope."
-        "Parse the JSON on stdout. `{ok: true}` is done. `{ok: false}` carries `code`, `agent_instruction`, and (per code) extra fields like `payload_file` or `candidates`."
+        "Parse the JSON on stdout. `{ok: true}` reports `title`, `surface`, `resolved_by`, `kind` (message/bootstrap), and `one_way` — and you are done. Liveness is grounded in the cmux tree: if the peer's tab is open, the peer is reachable and gets a plain framed message (`kind: message`); a bootstrap is sent only on genuine first contact when no manifest exists yet for that surface (`kind: bootstrap`). An idle peer is NOT a fork signal. `{ok: false}` carries `code`, `agent_instruction`, and (per code) extra fields like `payload_file` or `candidates`; only `peer_unknown` (tab gone) means spawn a new peer."
 
 
 block reply_to_inline_bootstrap()
@@ -31,7 +31,7 @@ block reply_to_inline_bootstrap()
         "Read `peer_title=` / `peer_surface=` / `suggested_title=` from the inline `[p2p-bootstrap]` block in the user-turn prompt."
         "Write the reply body to a temp file like `/tmp/p2p-out-{peer}.txt`."
         "Run `python3 ~/.claude/skills/p2p/agent_msg.py send --peer <peer_title> --peer-surface <peer_surface> --bootstrap-suggested-title <suggested_title> --message-file <path>`. The helper registers this agent under `suggested_title` on the fly and routes directly without title resolution. DO NOT also pass --my-title here — code precedence is --my-title > --bootstrap-suggested-title, so adding it would override the title the initiator expects and break their routing to this agent. The send_via_helper 'REQUIRED on first send' rule is satisfied here by --bootstrap-suggested-title."
-        "If the bootstrap text is in a file rather than inline, pass `--bootstrap-file <path>` instead — it fills --peer, --peer-surface, and --bootstrap-suggested-title from the parsed text."
+        "If the bootstrap text is in a file rather than inline, pass `--bootstrap-file <path>` instead — it fills --peer, --peer-surface, and --bootstrap-suggested-title from the parsed text. Use `agent_msg.py parse-incoming` (scrollback scraper) only when the values cannot be read inline."
 
 
 block follow_handoff_instruction()
@@ -57,7 +57,9 @@ const ask_tfork_for_title = """When forking an agent via tfork that you'll messa
 
 // red_flags renders as the ### Red Flags section in SKILL.md. Hand-mirrored
 // for now; the compile pipeline does not yet emit it automatically.
-const red_flags = """| Thought | Reality |
+const red_flags = """Skip these — SKILL.md is the complete interface.
+
+| Thought | Reality |
 |---|---|
 | "`agent_msg.py list` first" | `send` returns `peer_*` handoffs with everything you need. |
 | "Check `--help` for the right flag" | All flags are listed in Parameters. |

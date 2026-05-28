@@ -18,9 +18,9 @@ The non-trivial branches:
     0600 and returns a `peer_unknown` handoff with `payload_file` and
     `handoff_skill="tfork"`. The CALLING AGENT invokes tfork — this
     module never shells out to tfork.
-  * `kind="stale"` and `kind=live, title==addressed` both send a
-    bootstrap into the live peer when the manifest is stale (so the
-    peer can re-touch); otherwise a plain `[from: X]` message.
+  * `kind="live_first_contact"` sends a bootstrap into the live peer
+    so it can register and reply. `kind="live"` (manifest exists)
+    sends a plain `[from: X]` framed message.
   * `kind="renamed"` returns a `peer_renamed` handoff carrying every
     candidate surface whose `former_titles` includes the addressed
     title. Caller picks whether the rename signals the same agent
@@ -43,7 +43,7 @@ GENERIC_TITLES = frozenset({
 
 
 def _success(addressed: str, title: str | None, surf: str,
-             resolved_by: str, peer_status: str, kind: str,
+             resolved_by: str, kind: str,
              one_way: bool = False) -> dict:
     return {
         "ok": True,
@@ -51,7 +51,6 @@ def _success(addressed: str, title: str | None, surf: str,
         "title": title,
         "surface": surf,
         "resolved_by": resolved_by,
-        "peer_status": peer_status,
         "kind": kind,
         "one_way": one_way,
     }
@@ -185,7 +184,6 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
     by_surface = {m.get("surface_ref"): m for m in manifests}
     m = by_surface.get(peer_surface)
     title = m.get("title") if m else s.get("title", "")
-    is_stale = bool(m) and m.get("status") == "stale"
 
     if transport.is_command(body.strip()):
         text = body.strip()
@@ -198,7 +196,6 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
         title=title,
         surf=peer_surface,
         resolved_by="explicit_surface",
-        peer_status=("stale" if is_stale else "live"),
         kind="message",
         one_way=one_way,
     )
@@ -297,11 +294,11 @@ def send(peer: str | None, body: str,
 
     assert r.surface_ref is not None
     addressed_string = peer
-    # Bootstrap when (a) the peer has a stale manifest (so it
-    # re-touches itself) or (b) no manifest exists at all (first
-    # contact — the peer doesn't know who we are or that p2p is in
-    # play, so the bootstrap text invites it to register and reply).
-    is_bootstrap = r.kind in ("stale", "live_first_contact")
+    # Bootstrap only on genuine first contact — peer surface is live
+    # but no manifest exists, so the peer doesn't know who we are or
+    # that p2p is in play. An idle peer with an existing manifest is
+    # `live` and gets a plain framed message.
+    is_bootstrap = r.kind == "live_first_contact"
 
     if is_bootstrap:
         text = _bootstrap.build_bootstrap(
@@ -326,7 +323,6 @@ def send(peer: str | None, body: str,
         title=r.title,
         surf=r.surface_ref,
         resolved_by=_resolved_by(r.source),
-        peer_status=("stale" if r.kind == "stale" else "live"),
         kind=kind_out,
         one_way=one_way,
     )
