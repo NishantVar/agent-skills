@@ -1,0 +1,10 @@
+  Earlier narrative the agent emitted before the Worked-for marker
+  scrolled out of the tail window — this fixture models a long-lived
+  codex pane where the Worked-for line has been pushed off but the
+  prompt rail and chrome line remain.
+
+
+
+› Improve documentation in @filename
+
+  gpt-5.5 xhigh · Context 67% left · ~/redacted/path · main

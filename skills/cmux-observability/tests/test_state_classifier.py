@@ -1,17 +1,19 @@
 """v1.2 — scrollback-driven state classifier tests.
 
-Parametrized over the 13 fixture files in tests/fixtures/scrollback/ that
-qa_lead delivered in Phase B. Each entry pins one fixture filename to its
-expected `(kind, state, min_confidence)`. Bands follow the post-Phase-B
-calibration ladder:
+Parametrized over the 15 fixture files in tests/fixtures/scrollback/:
+the 13 Phase B fixtures from qa_lead plus two Phase E follow-up fixtures
+covering the relaxed codex idle paths. Each entry pins one fixture
+filename to its expected `(kind, state, min_confidence)`. Bands follow
+the post-Phase-B calibration ladder:
 
     running       → 0.9 on single unambiguous match
     needs_input   → 0.7-0.8 per pattern strength (max-of-matching-weights)
-    idle          → 0.7 on full conjunct
+    idle          → 0.7 on the strong Worked-for + chrome conjunct,
+                    0.6 on the chrome-only fallback
     unknown       → 0.0 (no match)
 
-Phase C tunes patterns until every cell here is green. Fixture cells with
-no file fall back to skip (legacy guard from the scaffold).
+After the Phase C follow-up, missing fixture files assert/fail rather
+than skip — the corpus is authoritative.
 """
 from pathlib import Path
 
@@ -41,6 +43,9 @@ EXPECTED_FIXTURES: list[tuple[str, str | None, str, float]] = [
     # codex — idle, Worked-for line followed by placeholder + chrome (qa_lead
     # Phase E HOLD repro: closing `─` requirement was too strict).
     ("codex_idle__worked_for_with_chrome_tail.txt",     "codex",       "idle",        0.7),
+    # codex — idle, chrome-only fallback (no Worked-for, no run/needs_input).
+    # Pins the (idle, 0.6) best-effort branch added in the Phase E follow-up.
+    ("codex_idle__chrome_only_no_worked_for.txt",       "codex",       "idle",        0.6),
     # generic — needs_input
     ("generic_needs_input__y_n_prompt.txt",             None,          "needs_input", 0.8),
     ("generic_needs_input__press_enter.txt",            None,          "needs_input", 0.7),
@@ -61,8 +66,8 @@ def test_state_from_scrollback_matches_fixture(
 ) -> None:
     fp = FIXTURES_DIR / fixture_name
     assert fp.exists(), (
-        f"expected Phase B fixture missing: {fixture_name}; "
-        "the 13-fixture corpus is authoritative after Phase B and must not skip"
+        f"expected scrollback fixture missing: {fixture_name}; "
+        "the post-Phase-B corpus is authoritative and must not skip"
     )
     tail = fp.read_text(encoding="utf-8", errors="replace")
     actual_state, actual_conf = state_from_scrollback(tail, kind)
