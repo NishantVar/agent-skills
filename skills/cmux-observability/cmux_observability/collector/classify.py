@@ -151,10 +151,10 @@ _CC_RUN_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"\(\d+[hms].*·.*(almost done )?thinking", re.IGNORECASE),        0.9),
 )
 
-# claude_code idle conjunct markers.
-_CC_COMPLETION_AT_TAIL = re.compile(
-    r"✻ (?:Sautéed|Sauteed|Baked|Cooked|Churned|Worked|Simmered|Brewed|Stewed|Whisked|Marinated|Grilled|Roasted|Steamed|Toasted) for \d+[hms]"
-)
+# claude_code idle chrome markers. Phase B fixture spread (`__quiet` has no
+# completion marker at tail) collapsed the catalogue's strict
+# completion-marker conjunct down to a chrome-presence check after
+# running/needs_input markers have already been ruled out.
 _CC_CHROME = (
     re.compile(r"ctx:\d+%"),
     re.compile(r"⏵⏵ bypass permissions"),
@@ -251,9 +251,8 @@ def state_from_scrollback(tail: str, kind: str | None) -> tuple[str, float]:
         if w > 0.0:
             return ("running", w)
         # idle: chrome present AND no running/needs_input signals (caught
-        # above). Two acceptance paths per qa_lead's Phase-B fixture spread:
-        #   (a) ✻ ... for N completion marker present  (just_finished fixture)
-        #   (b) chrome present with no completion marker (quiet fixture)
+        # above). Phase-B fixtures (`__quiet`, `__just_finished`) both fall
+        # through to this chrome-only check.
         chrome_hit = any(p.search(window) for p in _CC_CHROME)
         if chrome_hit:
             return ("idle", 0.7)
