@@ -75,7 +75,7 @@ def normalize(
             ))
 
     return Snapshot(
-        schema_version=1,
+        schema_version=2,
         captured_at=now,
         host=host,
         cmux_version=cmux_version,
