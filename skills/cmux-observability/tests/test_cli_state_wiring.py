@@ -25,8 +25,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from cmux_observability.cli import _classify_from_scrollback
 from cmux_observability.errors import Failure
 from cmux_observability.model import Agent, Snapshot
