@@ -164,7 +164,8 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
                               surfaces: dict[str, dict],
                               manifests: list[dict],
                               rerun_argv: list[str],
-                              one_way: bool) -> dict:
+                              one_way: bool,
+                              workspace_for_spawn: str | None) -> dict:
     """Reply path: caller supplied --peer-surface (typically from an
     inline bootstrap). Skip resolution; route directly. Plain message
     framing — the peer already initiated contact, so no re-bootstrap."""
@@ -179,7 +180,8 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
             one_way=one_way,
         )
         payload_file = _bootstrap.write_spawn_payload(peer, payload_text)
-        return errors.peer_unknown(peer, payload_file, rerun_argv)
+        return errors.peer_unknown(peer, payload_file, rerun_argv,
+                                   workspace=workspace_for_spawn)
 
     by_surface = {m.get("surface_ref"): m for m in manifests}
     m = by_surface.get(peer_surface)
@@ -208,6 +210,7 @@ def send(peer: str | None, body: str,
          peer_surface: str | None = None,
          bootstrap_suggested_title: str | None = None,
          scope_workspace_ref: str | None = None,
+         workspace_for_spawn: str | None = None,
          one_way: bool = False) -> dict:
     """Orchestrator. `peer_surface` skips title resolution and routes
     directly — used when the caller already knows the peer's surface
@@ -258,15 +261,19 @@ def send(peer: str | None, body: str,
             peer=peer, body=body, me=me,
             peer_surface=peer_surface, surfaces=surfaces,
             manifests=manifests, rerun_argv=rerun_argv,
-            one_way=one_way)
+            one_way=one_way,
+            workspace_for_spawn=workspace_for_spawn)
 
     # Default scope: caller's own workspace. The caller can widen by
     # passing scope_workspace_ref explicitly (via --workspace at the
-    # CLI). cli.py threads a sentinel value when --workspace=all is
-    # requested; here we treat None as "use mine".
+    # CLI). cli.py threads "" as the sentinel for --workspace=all so
+    # this layer can distinguish "caller didn't say" (None → use mine)
+    # from "caller explicitly chose global" ("" → None at resolver).
     scope = scope_workspace_ref
     if scope is None:
         scope = (surfaces.get(my_surf or "") or {}).get("workspace_ref")
+    elif scope == "":
+        scope = None
 
     r = resolve.resolve_peer(peer, manifests, surfaces,
                              scope_workspace_ref=scope)
@@ -290,7 +297,8 @@ def send(peer: str | None, body: str,
             one_way=one_way,
         )
         payload_file = _bootstrap.write_spawn_payload(peer, payload_text)
-        return errors.peer_unknown(peer, payload_file, rerun_argv)
+        return errors.peer_unknown(peer, payload_file, rerun_argv,
+                                   workspace=workspace_for_spawn)
 
     assert r.surface_ref is not None
     addressed_string = peer
