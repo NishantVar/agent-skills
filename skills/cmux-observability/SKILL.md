@@ -38,3 +38,13 @@ description: 'Produce a static HTML+JSON ops dashboard of local cmux state, plus
    a. Run: <prefix> themes-payload --run-id <id> (append --config {config} if provided). If the helper returns {payload: null, omit: true, reason: ...}, write an empty themes list and skip record-themes; proceed straight to finalize — guardrails (sparse summaries, summaries disabled, or low confidence) already collapsed the section. Otherwise group surfaces into best-effort cross-workspace themes using titles, cwds, types, states, and summaries. Output JSON {"themes": [{label, member_refs, why, confidence}, ...]} and pipe to: <prefix> record-themes --run-id <id> (append --config {config} if provided). Return an empty themes list when signal is weak — the helper will omit the section.
 5. Run: <prefix> finalize --run-id <id> (append --no-open if {no_open}, append --config {config} if provided). The helper persists, renders HTML+JSON, opens the browser by default, and emits the final envelope on stdout. Surface that envelope to the user.
 
+## Red Flags
+
+| Thought | Reality |
+|---|---|
+| "Add my own API client to summarize." | The skill is intentionally SDK-free. You are the LLM; respond inline. |
+| "Call cmux directly instead of through the helper." | The helper batches, redacts, and caches. Always go through subcommands. |
+| "Skip caching and re-summarize every time." | The cache key (surface_ref, screen_hash, prompt_version) is what keeps the skill cheap. |
+| "Author themes even when summaries are sparse." | Return an empty themes list; the UI will hide the section gracefully. |
+| "Call `cmux read-screen --surface foo` to inspect a pane." | The CLI also needs `--workspace <ref>`; without it the call fails with a misleading `Surface is not a terminal`. Always go through the helper, which already passes both. |
+

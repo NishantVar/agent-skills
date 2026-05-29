@@ -45,4 +45,5 @@ const red_flags = """| Thought | Reality |
 | "Call cmux directly instead of through the helper." | The helper batches, redacts, and caches. Always go through subcommands. |
 | "Skip caching and re-summarize every time." | The cache key (surface_ref, screen_hash, prompt_version) is what keeps the skill cheap. |
 | "Author themes even when summaries are sparse." | Return an empty themes list; the UI will hide the section gracefully. |
+| "Call `cmux read-screen --surface foo` to inspect a pane." | The CLI also needs `--workspace <ref>`; without it the call fails with a misleading `Surface is not a terminal`. Always go through the helper, which already passes both. |
 """

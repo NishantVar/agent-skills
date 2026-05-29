@@ -1,0 +1,22 @@
+Last login: Thu May 28 14:07:35 on ttys020
+(base) user@host agent-skills % com
+╭────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.134.0)                     │
+│                                                │
+│ model:       gpt-5.5 medium   /model to change │
+│ directory:   ~/redacted/path                   │
+│ permissions: YOLO mode                         │
+╰────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+
+› read all files slowly
+
+
+• Working (3s • esc to interrupt)
+
+
+› Summarize recent commits
+
+  gpt-5.5 medium · Context 100% left · ~/redacted/path · branch
