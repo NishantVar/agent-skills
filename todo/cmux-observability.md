@@ -1,0 +1,77 @@
+# cmux-observability — todo
+
+Open work items for the `cmux-observability` skill. Update as items land or new ones surface. Last refreshed 2026-05-28 at v1.2 sign-off.
+
+## Status of in-flight work
+
+- **v1.1 — PR #18** (`feat/cmux-observability-dashboard-v1.1`): open, awaiting merge.
+- **v1.2 scrollback classifier — PR #19** (`feat/cmux-observability-scrollback-state`, stacked on #18): open, signed off by qa_lead, 199 tests passing. HEAD `862c579`.
+  - Final smoke envelope: `agents_total=32`, `running=0`, `needs_input=4`, `idle=28`, `unknown=0`. Artifacts at `/tmp/cmux-v1.2-smoke.{html,json}` run-id `b5b41efb05a7` (volatile — `/tmp` may not survive reboot).
+  - Spec doc of record: `$OBSIDIAN/plans/cmux-observability-scrollback-state-design-2026-05-28.md`.
+
+## v1.1.1 — small UX/correctness follow-ups (deferred from v1.1)
+
+These were known-deferred at v1.1 cut. None block v1.2; pick up after the stack lands.
+
+### 1. Hide/placeholder empty expanded workspace cards under active filter
+When a state filter is active (e.g. "running"), workspace cards that have zero matching agents still render expanded with zero rows. Either collapse them, hide them, or show a "no agents matching filter" placeholder. UX call: probably hide; show "N workspaces hidden by filter" footer line.
+
+### 2. Tag non-agent rows `data-state="unknown"` explicitly
+Non-agent surfaces (terminal panes, browser previews, "no screen access" rows) currently render without an explicit `data-state` attribute. Set `data-state="unknown"` so the unknown-bucket CSS selector catches them uniformly and the unknown counter is consistent with what's on screen.
+
+### 3. Promote copy-ref chips to real `<button>` + wire clipboard
+The `⧉` chips next to each surface/workspace ref are currently styled `<span>`s with no click handler. Make them `<button>` elements, add `aria-label="Copy {ref}"`, wire `navigator.clipboard.writeText`, flash a 1-second confirmation. Keep the same visual chip styling.
+
+### 4. T18 footer (deferred from v1.1)
+Footer row with: snapshot timestamp, cmux version + commit, host, and the re-run command. Most of this is already in the hero block as plain text; T18 wants it pinned to a real `<footer>` with a `kbd`-styled command and a copy button. Check the v1.1 plan for the exact field list.
+
+### 5. T19 keyboard shortcuts (deferred from v1.1)
+- `f` → focus state filter
+- `/` → focus search (if/when search lands)
+- `r` → re-run hint (just shows the command, doesn't execute — security)
+- `?` → keyboard shortcut help overlay
+- `Esc` → close overlay / clear filter
+
+Document in T18 footer.
+
+## v1.2.1 — codex needs_input recall gap (filed during v1.2 sign-off)
+
+**Problem.** Codex agents sometimes end their narrative with an inline question like `Tell me which to save: 1, 2, all, or none.` — no `Question:` prefix, no numbered `› 1.` confirm card. Current codex `needs_input` patterns don't catch this style, so the pane falls to `idle` via the chrome-alone fallback at 0.6 confidence.
+
+**Observed example.** v1.2 smoke surface:160 — narrative ended with the "Tell me which to save" line, classifier returned `idle/scrollback` (0.6). Visually that's a needs-input state; UX impact is low (agent shows in idle bucket; Nishant opens the pane and sees the question immediately), but it's a real recall gap.
+
+**Proposed heuristic.**
+```
+codex NEEDS_INPUT (additional rule):
+  - last non-empty narrative line ends with `?`
+  - AND no `─ Worked for` marker anywhere in tail window
+  - AND codex chrome present
+  → (needs_input, 0.5)
+```
+
+**Risk.** False positives on rhetorical questions in agent narrative. Needs a small fixture set:
+- Positive: 2-3 codex panes ending with real questions to the user.
+- Negative: 2-3 codex panes where the agent self-poses a question mid-narrative and then continues with an answer (these should stay idle).
+
+**Out of scope for v1.2.** Filed as v1.2.1.
+
+## Spec/coverage drift to watch
+
+- The 15th fixture `tests/fixtures/scrollback/codex_idle__chrome_only_no_worked_for.txt` was added late by Monitor at Reviewer's request to cover the chrome-alone `(idle, 0.6)` fallback branch (previously unexercised). If anyone tightens the chrome-alone fallback later, that fixture is the canary.
+- Confidence calibration table in the spec doc (running=0.9, needs_input=0.5–0.8 max-weight, idle=0.7, chrome-alone-idle=0.6) is the contract — don't drift without updating the spec.
+
+## How to resume
+
+1. Read `$OBSIDIAN/plans/cmux-observability-scrollback-state-design-2026-05-28.md` for v1.2 design context.
+2. Read `$OBSIDIAN/plans/cmux-observability-dashboard-v1.1-plan-2026-05-27.md` for v1.1 plan (T18/T19 originate there).
+3. PR #18 → PR #19 stack on GitHub.
+4. Branch worktree: `/Users/nishantvarshney/.config/superpowers/worktrees/agent-skills/feat-cmux-observability` (v1.1 branch); v1.2 branch is `feat/cmux-observability-scrollback-state`.
+5. After #18 merges, rebase #19 to main.
+
+## Live agents at pause time
+
+These were last seen alive in cmux. Nishant did not authorize shutdown — they're left running per the HARD RULE in CLAUDE.md.
+
+- **qa_lead** — surface:128 (this agent)
+- **Monitor** — surface:67, workspace:17 (v1.2 implementer)
+- Reviewer, builder, plus various other workspace agents — see live dashboard at `/tmp/cmux-v1.2-smoke.html` for the full set as of run-id `b5b41efb05a7`.
