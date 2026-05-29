@@ -23,10 +23,15 @@ from .errors import (
     err_spawn_failed,
     err_split_failed,
     err_surface_resolution_failed,
+    err_workspace_ambiguous,
+    err_workspace_unknown,
 )
 
 
 SURFACE_REF_RE = re.compile(r"^surface:\d+$")
+# Workspace refs come back as ``workspace:N`` or as a UUID. Treat either
+# as an explicit ref (no implicit creation on a ref miss).
+_WORKSPACE_REF_RE = re.compile(r"^(?:workspace:\d+|[0-9a-fA-F-]{16,})$")
 
 # User-facing split directions. Mapped to cmux's ``new-split`` argot below
 # (cmux speaks ``up``/``down``; tfork keeps the more intuitive
@@ -35,8 +40,11 @@ SPLIT_DIRS = ("right", "left", "top", "bottom")
 _CMUX_DIRECTION = {"right": "right", "left": "left",
                    "top": "up", "bottom": "down"}
 
-# Placement value that opens a fresh workspace tab instead of splitting.
-NEW_WORKSPACE = "new-workspace"
+
+def is_workspace_ref(value):
+    """True when ``value`` looks like a cmux workspace ref (workspace:N or
+    a UUID-shaped string). Used to skip title lookup."""
+    return bool(_WORKSPACE_REF_RE.match(value or ""))
 
 
 class Terminal(ABC):
@@ -50,15 +58,30 @@ class Terminal(ABC):
         """True when the caller is running inside this multiplexer."""
 
     @abstractmethod
-    def fork(self, command, placement, cwd, nonce, anchor=None) -> object:
-        """Open a new pane (or a new workspace), paste the sentinel-wrapped
-        command, and return an opaque session handle for the new surface.
+    def fork(self, command, placement, cwd, nonce, anchor=None,
+             workspace=None) -> object:
+        """Open a new pane, paste the sentinel-wrapped command, and return
+        an opaque session handle for the new surface.
 
         ``placement`` is one of ``"right"``, ``"left"``, ``"top"``,
-        ``"bottom"`` (split next to ``anchor`` or the caller) or
-        ``"new-workspace"`` (open a fresh workspace tab — ``anchor`` is
-        ignored). ``anchor`` may be a surface ref or a tab title; ``None``
-        means the caller's own surface.
+        ``"bottom"`` (split) or ``None`` (no explicit direction — only
+        valid with ``workspace``: opens a fresh pane in the workspace).
+        ``anchor`` may be a surface ref or a tab title; ``None`` means
+        the caller's own surface. ``workspace`` is the resolved
+        ``{ref, title, created}`` dict from ``resolve_workspace`` and is
+        mutually exclusive with ``anchor`` (the front door enforces).
+        """
+
+    @abstractmethod
+    def resolve_workspace(self, value, cwd) -> dict:
+        """Resolve a ``--workspace`` value to ``{ref, title, created}``.
+
+        ``value`` is a cmux workspace ref (workspace:N or a UUID) or a
+        title. A ref must already resolve — refs are not names and miss
+        → ``workspace_unknown`` (no implicit creation). A title with
+        exactly one match is reused (created=False); zero matches creates
+        via ``cmux new-workspace --name <title> --cwd <cwd>``; two or
+        more → ``workspace_ambiguous`` with each candidate.
         """
 
     @abstractmethod
@@ -259,9 +282,10 @@ class CmuxTerminal(Terminal):
             return False
         return _run(["cmux", "identify", "--json"]).returncode == 0
 
-    def fork(self, command, placement, cwd, nonce, anchor=None):
+    def fork(self, command, placement, cwd, nonce, anchor=None,
+             workspace=None):
         """Open the new surface and paste the sentinel-wrapped command into it."""
-        session = self._open_surface(placement, anchor)
+        session = self._open_surface(placement, anchor, workspace)
         self._wait_ready(session)
         line = _build_wrapper(nonce, cwd, command)
         self._spawn(session, line)
@@ -322,14 +346,34 @@ class CmuxTerminal(Terminal):
 
     # -- placement ----------------------------------------------------------
 
-    def _open_surface(self, placement, anchor):
-        """Open the new surface and return its ref — by split or workspace."""
-        if placement == NEW_WORKSPACE:
-            return self._new_workspace_surface()
+    def _open_surface(self, placement, anchor, workspace):
+        """Open the new surface and return its ref.
+
+        Four placement modes, set by which of ``workspace`` / ``placement``
+        / ``anchor`` are populated (the front door enforces the mutex):
+
+          * ``workspace`` + no ``placement`` → fresh pane in workspace.
+          * ``workspace`` + ``placement`` direction → split workspace's
+            active pane in that direction.
+          * ``placement`` direction + ``anchor`` → split anchor.
+          * ``placement`` direction only → split caller.
+        """
+        if workspace is not None:
+            ws_ref = workspace.get("ref")
+            if placement is None:
+                return self._new_pane_in_workspace(ws_ref, direction=None)
+            if placement not in SPLIT_DIRS:
+                raise err_split_failed(
+                    f"unknown placement '{placement}'; expected one of "
+                    f"{SPLIT_DIRS}"
+                )
+            return self._new_pane_in_workspace(ws_ref, direction=placement)
+        if placement is None:
+            placement = "right"  # historic default when no workspace
         if placement not in SPLIT_DIRS:
             raise err_split_failed(
                 f"unknown placement '{placement}'; expected one of "
-                f"{SPLIT_DIRS + (NEW_WORKSPACE,)}"
+                f"{SPLIT_DIRS}"
             )
         origin = resolve_anchor(anchor) if anchor else self._resolve_origin_surface()
         return self._new_split(placement, origin)
@@ -367,40 +411,135 @@ class CmuxTerminal(Terminal):
             self._workspaces[ref] = ws_ref
         return ref
 
-    def _new_workspace_surface(self):
-        """Open a fresh workspace tab and return the ref of its initial surface.
+    def resolve_workspace(self, value, cwd):
+        """Resolve a ``--workspace`` value to ``{ref, title, created}``.
 
-        cmux's ``new-workspace`` prints ``OK <workspace-ref>``; the surface
-        inside it is then looked up via ``cmux tree``. ``--focus true`` is
-        load-bearing here too — without it cmux leaves the workspace's
-        terminal uninstantiated and ``read-screen`` would never come ready.
+        Refs go through verbatim if they resolve; a ref miss is
+        ``workspace_unknown`` (no implicit creation — refs are not names).
+        Titles are case-sensitive exact matches against ``cmux
+        list-workspaces``: zero matches creates with
+        ``cmux new-workspace --name <title> --cwd <cwd>``; one match is
+        reused; two or more is ``workspace_ambiguous``.
         """
-        result = _run(["cmux", "new-workspace", "--focus", "true"])
-        if result.returncode != 0:
-            raise err_split_failed(
-                result.stderr.strip() or "cmux new-workspace failed")
-        ws_ref = None
-        for token in result.stdout.split():
-            if token.startswith("workspace:"):
-                ws_ref = token
-                break
+        if is_workspace_ref(value):
+            for ws_ref, ws_title in self._list_workspaces():
+                if ws_ref == value:
+                    return {"ref": ws_ref, "title": ws_title or "",
+                            "created": False}
+            raise err_workspace_unknown(value)
+
+        matches = [(r, t) for r, t in self._list_workspaces()
+                   if t == value]
+        if len(matches) == 1:
+            return {"ref": matches[0][0], "title": matches[0][1],
+                    "created": False}
+        if len(matches) > 1:
+            raise err_workspace_ambiguous(
+                value,
+                [{"ref": r, "title": t} for r, t in matches],
+            )
+        ws_ref, detail = self._create_workspace(value, cwd)
         if not ws_ref:
-            raise err_split_failed(
-                "could not capture the new workspace ref")
-        # The freshly-created workspace contains exactly one pane with one
-        # surface; pull its ref out of the tree.
+            # Best-effort recovery from a TOCTOU race: another spawner
+            # may have created the same title between our list_workspaces
+            # call and our new-workspace call. Re-list and reuse if
+            # exactly one match exists now.
+            recheck = [(r, t) for r, t in self._list_workspaces()
+                       if t == value]
+            if len(recheck) == 1:
+                return {"ref": recheck[0][0], "title": recheck[0][1],
+                        "created": False}
+            raise err_workspace_unknown(value, detail=detail)
+        return {"ref": ws_ref, "title": value, "created": True}
+
+    def _list_workspaces(self):
+        """Yield ``(ref, title)`` for every live cmux workspace.
+
+        Walks ``cmux tree --all`` rather than calling ``cmux
+        list-workspaces`` separately — the tree we already use for
+        surface resolution carries the same data and avoids a second
+        subprocess hop. Returns a list, not a generator, so callers can
+        re-iterate cheaply.
+        """
+        out = []
         for window in _cmux_tree().get("windows", []):
             for ws in window.get("workspaces", []):
-                if ws.get("ref") != ws_ref:
-                    continue
-                for pane in ws.get("panes", []):
-                    for surface in pane.get("surfaces", []):
-                        ref = surface.get("ref")
+                ref = ws.get("ref")
+                if ref:
+                    out.append((ref, ws.get("title") or ""))
+        return out
+
+    def _create_workspace(self, title, cwd):
+        """Create a workspace by title; return ``(ref-or-None, detail)``.
+
+        ``--focus false`` keeps cmux's window from jumping to the new
+        workspace — the multi-agent use case is "spawn N agents without
+        my view bouncing around." A future ``--focus`` toggle can be
+        added if needed.
+        """
+        cmd = ["cmux", "new-workspace", "--name", title,
+               "--cwd", cwd, "--focus", "false"]
+        result = _run(cmd)
+        if result.returncode != 0:
+            return None, result.stderr.strip() or "cmux new-workspace failed"
+        ws_ref = None
+        try:
+            ws_ref = (json.loads(result.stdout) or {}).get("workspace_ref")
+        except json.JSONDecodeError:
+            for token in result.stdout.split():
+                if token.startswith("workspace:"):
+                    ws_ref = token
+                    break
+        if not ws_ref:
+            return None, "could not capture the new workspace ref"
+        return ws_ref, None
+
+    def _new_pane_in_workspace(self, ws_ref, direction):
+        """Open a pane in ``ws_ref`` — fresh when ``direction`` is None,
+        otherwise a directional split of the workspace's active pane.
+
+        cmux's ``new-pane --workspace <ref> [--direction <dir>]`` is
+        the path the spec names; ``--focus false`` keeps the cmux window
+        from jumping.
+        """
+        cmd = ["cmux", "--json", "new-pane",
+               "--workspace", ws_ref, "--focus", "false"]
+        if direction:
+            cmux_dir = _CMUX_DIRECTION.get(direction, direction)
+            cmd += ["--direction", cmux_dir]
+        result = _run(cmd)
+        if result.returncode != 0:
+            raise err_split_failed(
+                result.stderr.strip() or "cmux new-pane failed")
+        try:
+            payload = json.loads(result.stdout) or {}
+        except json.JSONDecodeError:
+            payload = {}
+        ref = payload.get("surface_ref")
+        if not ref:
+            # Fall back to walking the tree: the newest pane in ws_ref
+            # whose ref we don't already know is the new one.
+            known = set(self._workspaces.keys())
+            for window in _cmux_tree().get("windows", []):
+                for ws in window.get("workspaces", []):
+                    if ws.get("ref") != ws_ref:
+                        continue
+                    for pane in ws.get("panes", []):
+                        for surface in pane.get("surfaces", []):
+                            sref = surface.get("ref")
+                            if sref and sref not in known:
+                                ref = sref
+                                break
                         if ref:
-                            self._workspaces[ref] = ws_ref
-                            return ref
-        raise err_split_failed(
-            f"could not locate the initial surface for {ws_ref}")
+                            break
+                    if ref:
+                        break
+                if ref:
+                    break
+        if not ref:
+            raise err_split_failed("could not capture the new surface ref")
+        self._workspaces[ref] = ws_ref
+        return ref
 
     # -- readiness ----------------------------------------------------------
 

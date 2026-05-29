@@ -16,6 +16,9 @@ EXIT_CODES = {
     "spawn_failed": 5,
     "anchor_not_found": 7,
     "anchor_ambiguous": 7,
+    "workspace_unknown": 8,
+    "workspace_ambiguous": 8,
+    "workspace_anchor_conflict": 2,
 }
 
 
@@ -60,9 +63,9 @@ def err_bad_arguments(detail):
         f"Invalid arguments: {detail}.",
         "Do not retry verbatim. Fix the invocation, then call again.",
         False,
-        "fork_terminal.py --placement {right,left,top,bottom,new-workspace} "
-        "[--anchor <surface-ref-or-tab-name>] [--type {agent,command}] "
-        "-- <command>",
+        "fork_terminal.py [--placement {right,left,top,bottom}] "
+        "[--workspace <title-or-ref>] [--anchor <surface-ref-or-tab-name>] "
+        "[--type {agent,command}] -- <command>",
     )
 
 
@@ -108,6 +111,68 @@ def err_anchor_not_found(value):
         "a surface ref (e.g. surface:42).",
         False,
         "fork_terminal.py --anchor <surface-ref-or-tab-name> -- <command>",
+    )
+
+
+def err_workspace_unknown(requested, detail=None):
+    """Either ``--workspace <ref>`` did not resolve to a live workspace,
+    or ``--workspace <title>`` matched zero workspaces AND creation
+    failed. ``detail`` is the cmux error when creation was attempted; None
+    when the value was a ref that did not resolve (refs are not names, so
+    no implicit creation)."""
+    if detail:
+        human = (f"Could not create workspace {requested!r}: {detail}.")
+    else:
+        human = (
+            f"No cmux workspace matched {requested!r}. Refs (workspace:N "
+            f"or a UUID) are not names; no workspace is created on a ref "
+            f"miss."
+        )
+    return ForkError(
+        "workspace_unknown",
+        human,
+        "Do not retry verbatim. If you meant to name a new workspace, "
+        "pass a title (not a workspace:N ref) — tfork creates titles "
+        "that don't yet match a workspace. If you meant to target an "
+        "existing one, list workspaces with 'cmux list-workspaces' and "
+        "rerun with the right title or ref.",
+        False,
+        "fork_terminal.py --workspace <title-or-ref> -- <command>",
+    )
+
+
+def err_workspace_ambiguous(requested, candidates):
+    """``--workspace <title>`` matched two or more live workspaces; refusing
+    to guess. ``candidates`` is a list of ``{ref, title}`` dicts."""
+    refs = [c.get("ref") for c in candidates if c.get("ref")]
+
+    def _describe(c):
+        return f"{c.get('ref') or '<unknown>'} ({c.get('title') or ''})"
+
+    bulleted = "\n".join(f"  - {_describe(c)}" for c in candidates) \
+        or "  <none>"
+    listed_refs = ", ".join(refs) if refs else "<none>"
+    return ForkError(
+        "workspace_ambiguous",
+        f"More than one cmux workspace is titled {requested!r}. Refusing "
+        f"to guess which one to target. Candidates:\n{bulleted}",
+        "Do not retry verbatim. Pick one of the listed refs and rerun "
+        "with --workspace <ref>.",
+        False,
+        f"fork_terminal.py --workspace <one of: {listed_refs}> -- <command>",
+    )
+
+
+def err_workspace_anchor_conflict():
+    return ForkError(
+        "workspace_anchor_conflict",
+        "Cannot pass both --workspace and --anchor: the anchor's "
+        "workspace is implicit, so the two flags can disagree.",
+        "Do not retry verbatim. Pick one — drop --anchor and use "
+        "--workspace, or drop --workspace and let the anchor decide.",
+        False,
+        "fork_terminal.py --workspace <title-or-ref> -- <command>  "
+        "OR  fork_terminal.py --anchor <ref-or-tab> -- <command>",
     )
 
 

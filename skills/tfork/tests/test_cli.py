@@ -16,14 +16,23 @@ def test_parse_args_basic():
     assert args.delay is None
 
 
-def test_parse_args_defaults_placement_to_right():
+def test_parse_args_placement_defaults_to_none():
+    """No explicit --placement leaves the argparse value at None; the
+    orchestrator picks 'right' when no --workspace is also given."""
     args = ft.parse_args(["--", "claude"])
-    assert args.placement == "right"
+    assert args.placement is None
 
 
-def test_parse_args_accepts_new_workspace_placement():
-    args = ft.parse_args(["--placement", "new-workspace", "--", "claude"])
-    assert args.placement == "new-workspace"
+def test_parse_args_rejects_retired_new_workspace_placement():
+    """The 'new-workspace' value was retired in favour of --workspace."""
+    with pytest.raises(ft.ForkError) as exc:
+        ft.parse_args(["--placement", "new-workspace", "--", "claude"])
+    assert exc.value.code == "bad_arguments"
+
+
+def test_parse_args_accepts_workspace():
+    args = ft.parse_args(["--workspace", "exp1", "--", "claude"])
+    assert args.workspace == "exp1"
 
 
 def test_parse_args_accepts_anchor():
