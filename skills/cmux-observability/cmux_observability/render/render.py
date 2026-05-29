@@ -14,12 +14,56 @@ from ..model import Snapshot
 _HERE = Path(__file__).parent
 
 
+def _relative_time(dt: datetime) -> str:
+    """Render a datetime as a short relative string: "14s ago", "3m ago",
+    "2h ago", else ISO date. Compares against `datetime.now()` in the same
+    tz-awareness as `dt` so subtraction never raises.
+    """
+    if dt is None:
+        return ""
+    now = datetime.now(dt.tzinfo) if dt.tzinfo is not None else datetime.now()
+    delta = now - dt
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return f"{max(seconds, 0)}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return dt.date().isoformat()
+
+
+def _truncated_summary(text: str | None, limit: int = 80) -> str:
+    """T13 step 4 safety guard: trim a summary to the first newline OR `limit`
+    characters, whichever comes first. Appends '…' when truncation occurred.
+
+    Protects the surface-row layout against pathological multi-KB single-line
+    summaries (the visible cell is CSS-truncated, but the rendered HTML still
+    carries the full string until the browser's text-overflow kicks in).
+    """
+    if not text:
+        return ""
+    first_nl = text.find("\n")
+    if first_nl == -1:
+        cut = limit
+    else:
+        cut = min(first_nl, limit)
+    if cut < len(text):
+        return text[:cut] + "…"
+    return text
+
+
 def _env() -> Environment:
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader(str(_HERE / "templates")),
         autoescape=select_autoescape(["html", "j2"]),
         trim_blocks=True, lstrip_blocks=True,
     )
+    env.filters["relative_time"] = _relative_time
+    env.filters["truncated_summary"] = _truncated_summary
+    return env
 
 
 def _snapshot_to_json(snap: Snapshot) -> str:
@@ -30,6 +74,24 @@ def _snapshot_to_json(snap: Snapshot) -> str:
             return o.__dict__
         raise TypeError(f"non-serializable: {type(o)!r}")
     return json.dumps(snap, default=default, indent=2)
+
+
+def _build_surface_dom_ids(snapshot: Snapshot) -> dict[str, str]:
+    """T15: build a stable, DOM-safe mapping from `surface_ref` ("surface:N")
+    to a sanitized id ("sf-0", "sf-1", …) using the flat enumeration of
+    `snapshot.workspaces[*].surfaces`. The raw `surface:N` token leaks a colon
+    (invalid in CSS selectors without escaping) and exposes an internal ref
+    grammar; the `sf-{idx}` form keeps the id DOM-safe and stable per snapshot.
+    Theme chips use the value as `data-target`; the surface-row `<details>`
+    receives `id="surface-{dom_id}"` so `getElementById` resolves the target.
+    """
+    out: dict[str, str] = {}
+    idx = 0
+    for ws in snapshot.workspaces:
+        for s in ws.surfaces:
+            out[s.ref] = f"sf-{idx}"
+            idx += 1
+    return out
 
 
 def render_snapshot(
@@ -45,8 +107,23 @@ def render_snapshot(
     css = (_HERE / "style.css").read_text()
     js = (_HERE / "charts.js").read_text()
 
+    surface_dom_ids = _build_surface_dom_ids(snapshot)
+    # Build a quick surface_ref → workspace, surface lookup for theme chips so
+    # _themes.html.j2 can render `surface.title @ workspace.title` labels
+    # without re-scanning the snapshot per member ref.
+    surface_lookup: dict[str, dict] = {}
+    for ws in snapshot.workspaces:
+        for s in ws.surfaces:
+            surface_lookup[s.ref] = {"workspace": ws, "surface": s}
+
     tmpl = _env().get_template("snapshot.html.j2")
-    html = tmpl.render(snapshot=snapshot, inline_css=css, inline_js=js)
+    html = tmpl.render(
+        snapshot=snapshot,
+        inline_css=css,
+        inline_js=js,
+        surface_dom_ids=surface_dom_ids,
+        surface_lookup=surface_lookup,
+    )
     html_path.write_text(html)
     json_path.write_text(_snapshot_to_json(snapshot))
     return html_path, json_path

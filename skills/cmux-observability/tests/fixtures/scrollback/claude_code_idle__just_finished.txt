@@ -1,0 +1,15 @@
+  [redacted earlier output]
+
+  - [redacted file change 1]
+  - [redacted file change 2]
+
+       Net: 188 insertions, 71 deletions
+  across the modified files.
+          ✻ Baked for 8s
+
+                        ──────────────────────────────────────
+❯
+──────────────────────────────────────  ctx:10%  /redacted/path  main [?] …
+  -- INSERT ⏵⏵ bypass permissions ·
+   --
+  Update available! Run: brew upgra…

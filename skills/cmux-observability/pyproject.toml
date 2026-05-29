@@ -15,6 +15,13 @@ dependencies = [
 test = [
   "pytest>=8",
   "pyyaml>=6",
+  # T22 follow-up #2 (Reviewer HOLD on 6177087): the addendum-2 chip-text
+  # exact-equality rule in tests/test_identifier_strip.py guards on bs4
+  # availability via pytest.skip. Pinning bs4 here makes the audit
+  # deterministic — a clean `pip install -e .[test]` can no longer skip
+  # the hard-blocking rule and report green. T20's rendered-HTML audit
+  # already uses bs4 as the primary path; the declared dep matches reality.
+  "beautifulsoup4>=4.12",
 ]
 
 [project.scripts]

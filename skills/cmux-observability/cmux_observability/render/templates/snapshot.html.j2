@@ -3,33 +3,657 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>cmux observability — {{ snapshot.captured_at.isoformat() }}</title>
+<style>
+  /* T7: theme tokens — light defaults, dark via prefers-color-scheme.
+     Drives the dashboard's chrome; state tokens are consumed by chips/badges. */
+  :root {
+    color-scheme: light dark;
+
+    /* Font stacks */
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    /* Surface + text tokens (light) */
+    --bg: #ffffff;
+    --surface: #f6f7f9;
+    --text: #15181d;
+    --muted: #6b7280;
+    --border: #dfe3ea;
+
+    /* Spacing scale (4-pt grid) */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+
+    /* Radii */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-pill: 999px;
+
+    /* Contrast helper */
+    --contrast-strong: #000000;
+
+    /* State tokens */
+    --state-running: #1d7a3a;          /* green */
+    --state-needs-input: #b1601e;      /* amber */
+    --state-idle: #6b7280;             /* muted gray */
+    --state-unknown: #9aa3ad;          /* dotted gray, paired with dotted border */
+    --state-unknown-border-style: dotted;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --surface: #181b22;
+      --text: #e6e8ec;
+      --muted: #8a8f99;
+      --border: #2a2f38;
+      --contrast-strong: #ffffff;
+
+      --state-running: #4fc279;
+      --state-needs-input: #d2a247;
+      --state-idle: #8a8f99;
+      --state-unknown: #6e7682;
+    }
+  }
+
+  /* T7: respect users who opt out of motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Reviewer follow-up #2 (P2 layout): the legacy bundled style.css pins
+     `main { max-width: 1080px }`, which defeats the T12 1280px / 1600px
+     responsive grid breakpoints — the grid never expands past 1080px even
+     on wide monitors. We bump the cap to 1800px on the dashboard <main>;
+     this leaves comfortable gutters at the 1600px 3-column breakpoint
+     while preventing the dashboard from stretching uncomfortably wide on
+     4K displays. Selector specificity `main.dashboard-main` (0,1,1) beats
+     the legacy `main` (0,0,1) regardless of source order. */
+  main.dashboard-main {
+    max-width: 1800px;
+  }
+
+  /* T8: hero strip. Sticky to the top of the viewport so the counters and
+     search box stay visible as the user scrolls the workspace list. */
+  .hero {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-sans);
+  }
+  .hero-counters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    align-items: flex-start;
+  }
+  /* T7-T10 follow-up (P2): .counter is used for both <div> (workspaces /
+     surfaces / agents — non-interactive) and <button type="button"> (the four
+     state-bucket chips — clickable + keyboard-focusable). The reset below
+     normalises the button so it looks identical to the div in the resting
+     state; per-element rules below override layout/visual specifics. */
+  .hero-counters .counter {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.1;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--contrast-strong);
+    /* Button reset (no-op for the <div> counters). */
+    border: 0;
+    background: transparent;
+    font-family: inherit;
+    padding: 0;
+    text-align: inherit;
+    border-radius: var(--radius-sm);
+  }
+  .hero-counters button.counter {
+    cursor: pointer;
+  }
+  .hero-counters .counter:focus-visible {
+    outline: 2px solid var(--state-running);
+    outline-offset: 2px;
+  }
+  /* T7-T10 follow-up (P1): rows whose state/query gate has rejected them
+     carry data-hidden="true". The broad attribute selector (not tr-scoped)
+     lets future non-<tr> row containers benefit without revisiting CSS. */
+  [data-hidden="true"] { display: none; }
+  /* Active-chip styling: inset ring keyed off each chip's data-state so the
+     ring color matches the bucket the user toggled. Per-state (rather than
+     a single static color) preserves the meaning of each chip. */
+  .counter[data-filter-active="true"] {
+    background: var(--bg);
+  }
+  .counter[data-state="running"][data-filter-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--state-running);
+  }
+  .counter[data-state="needs_input"][data-filter-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--state-needs-input);
+  }
+  .counter[data-state="idle"][data-filter-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--state-idle);
+  }
+  .counter[data-state="unknown"][data-filter-active="true"] {
+    box-shadow: inset 0 0 0 2px var(--state-unknown);
+  }
+  .hero-counters .counter small {
+    margin-top: var(--space-1);
+    font-size: 0.72rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .hero-counters .counter .counter-sub {
+    margin-top: var(--space-1);
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .hero-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--space-1);
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .hero-right .hero-search {
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    min-width: 14rem;
+  }
+  .hero-right .hero-refresh {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  /* T11: blocked-work banner — one card per needs_input surface, with an
+     amber left-border (var(--state-needs-input)) and a subtly elevated
+     background. Drops in after the hero and before the workspace grid. */
+  .blocked-banner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+  .blocked-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--state-needs-input);
+    border-radius: var(--radius-md);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    font-family: var(--font-sans);
+    color: var(--text);
+  }
+  .blocked-card .blocked-workspace {
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .blocked-card .blocked-surface-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--contrast-strong);
+  }
+  .blocked-card .blocked-summary {
+    font-size: 0.95rem;
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+  .blocked-card .blocked-reason {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .blocked-card .blocked-stamp {
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .blocked-card .blocked-ref {
+    align-self: flex-start;
+    margin-top: var(--space-1);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+
+  /* T12: workspace grid — responsive columns. Single column on small screens,
+     two columns at 1280px (typical wide laptop), three at 1600px (large
+     external monitor). Fixed pixel breakpoints (per spec) keep card widths
+     predictable; intrinsic auto-fit was rejected because the card body is a
+     dense table whose minimum width fights with minmax(). */
+  .workspace-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+    padding: 0 var(--space-4) var(--space-4);
+  }
+  @media (min-width: 1280px) {
+    .workspace-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  @media (min-width: 1600px) {
+    .workspace-grid {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+  }
+
+  /* T12: workspace card header — title row carrying basename, optional muted
+     full path, activity dot, and surface count. The dot itself is a small
+     circle driven by the --state-* tokens; dotted-gray case keys off
+     data-activity="unknown" and switches to a dotted border per the design
+     token --state-unknown-border-style. */
+  .workspace-grid .card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    font-family: var(--font-sans);
+    color: var(--text);
+  }
+  .workspace-grid .card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  /* Reviewer follow-up #3 (P3): the legacy bundled style.css ships a global
+     `header { padding: 12px 18px; border-bottom: 1px solid var(--border) }`,
+     so the workspace card's <header class="card-header"> would inherit
+     page-header chrome (extra padding + an internal divider line). Reset
+     both to zero so the card-header stays compact. Selector specificity
+     (.card-header) ties with the global `header`; because the inline
+     <style> renders BEFORE style.css in the document but this rule lives
+     in the same inline block as the rest of the dashboard chrome, we keep
+     the reset broad (any `.card-header`) for future card variants. */
+  .card-header {
+    padding: 0;
+    border-bottom: 0;
+  }
+  .workspace-grid .card-title {
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    font-size: 1rem;
+  }
+  .ws-title-basename {
+    font-weight: 600;
+    color: var(--contrast-strong);
+  }
+  .ws-path-full {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .activity-dot {
+    display: inline-block;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: var(--radius-pill);
+    background: var(--state-unknown);
+    border: 2px solid transparent;
+  }
+  .activity-dot[data-activity="running"] {
+    background: var(--state-running);
+  }
+  .activity-dot[data-activity="needs_input"] {
+    background: var(--state-needs-input);
+  }
+  .activity-dot[data-activity="idle"] {
+    background: var(--state-idle);
+  }
+  .activity-dot[data-activity="unknown"] {
+    background: transparent;
+    border: 2px var(--state-unknown-border-style) var(--state-unknown);
+  }
+  .surface-count {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .workspace-grid .card-body > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  /* T13: surface row redesign. Flex layout pinned by 5 cells in order:
+     [state-pill] [mono title] [summary (grows + truncates)] [captured stamp]
+     [copy-ref chip]. The summary cell carries `flex: 1; min-width: 0;` plus
+     the ellipsis triple so a pathological long line shrinks gracefully; the
+     `title=` attr on the cell carries the full untruncated text for hover
+     (and the template-side `truncated_summary` filter caps the rendered text
+     at 80 chars / first newline, whichever comes first). */
+  .surface-row-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+  .surface-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+  }
+  /* T14 follow-up: after wrapping rows in <details>, adjacent .surface-row
+     summaries are no longer DOM siblings — the <details> roots are. Move the
+     separator rule to the <details> siblings and apply the border to the
+     summary child so the visual is identical to the pre-wrap layout. */
+  details.surface-details + details.surface-details > summary.surface-row {
+    border-top: 1px solid var(--border);
+  }
+  .state-pill {
+    flex: 0 0 auto;
+    display: inline-block;
+    padding: 0 var(--space-2);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
+    color: var(--contrast-strong);
+    background: var(--surface);
+  }
+  .state-pill.state-running {
+    background: color-mix(in srgb, var(--state-running) 18%, transparent);
+    border-color: var(--state-running);
+  }
+  .state-pill.state-needs_input {
+    background: color-mix(in srgb, var(--state-needs-input) 18%, transparent);
+    border-color: var(--state-needs-input);
+  }
+  .state-pill.state-idle {
+    background: color-mix(in srgb, var(--state-idle) 14%, transparent);
+    border-color: var(--state-idle);
+  }
+  .state-pill.state-unknown {
+    background: transparent;
+    border-style: var(--state-unknown-border-style);
+    border-color: var(--state-unknown);
+    color: var(--muted);
+  }
+  .mono-title {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--contrast-strong);
+    max-width: 28ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .surface-summary {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  .surface-captured {
+    flex: 0 0 auto;
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+  .surface-copy-ref {
+    flex: 0 0 auto;
+  }
+
+  /* T14: click-to-expand surface row. <details class="surface-details">
+     wraps a <summary class="surface-row"> (collapsed flex view) and a
+     <div class="surface-expanded"> panel revealed when the user toggles.
+     <details>+<summary> is keyboard-accessible by default — Enter/Space
+     toggles, screen readers expose aria-expanded — so no JS is needed.
+     The native marker is suppressed via `list-style: none` and
+     `::-webkit-details-marker { display: none }` so it can be replaced
+     with an explicit ▸/▾ chevron (rendered below) that integrates with
+     the flex layout. */
+  details.surface-details {
+    /* Reset the default <details> border-box so the inner flex row stays
+       flush with neighbouring rows. The
+       `details.surface-details + details.surface-details > summary.surface-row`
+       rule above paints the separator between adjacent disclosures. */
+  }
+  details.surface-details > summary.surface-row {
+    list-style: none;
+    cursor: pointer;
+  }
+  details.surface-details > summary.surface-row::-webkit-details-marker {
+    display: none;
+  }
+  /* T14 follow-up: replace the suppressed native marker with an explicit
+     directional cue. ▸ when collapsed, ▾ when open. Pseudo-elements are
+     inherently aria-hidden, so the visible chevron does not add noise to
+     the AT tree (the <details> already exposes aria-expanded via the UA). */
+  details.surface-details > summary.surface-row::before {
+    content: "\25B8"; /* ▸ */
+    flex: 0 0 auto;
+    display: inline-block;
+    width: 1ch;
+    color: var(--muted);
+    font-size: 0.8rem;
+    transition: transform 120ms ease;
+  }
+  details.surface-details[open] > summary.surface-row::before {
+    content: "\25BE"; /* ▾ */
+  }
+  @media (prefers-reduced-motion: reduce) {
+    details.surface-details > summary.surface-row::before {
+      transition: none;
+    }
+  }
+  details.surface-details > summary.surface-row:focus-visible {
+    outline: 2px solid var(--state-running);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+  .surface-expanded {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3) var(--space-2) calc(var(--space-2) + 2.5rem);
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+  .surface-expanded-summary {
+    white-space: pre-wrap;
+    color: var(--text);
+  }
+  .surface-expanded-row {
+    color: var(--text);
+  }
+  .surface-expanded-label {
+    color: var(--muted);
+    font-weight: 600;
+    margin-right: var(--space-1);
+  }
+  .surface-expanded-cwd {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+  .surface-expanded-typeinfo {
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+  .surface-disagreement {
+    color: var(--state-needs-input);
+    font-size: 0.8rem;
+    font-style: italic;
+  }
+  /* Spec: diagnostic line is muted + small (low-contrast). This is the second
+     allowed home for bare `workspace:N` / `surface:N` refs (the copy-ref chip
+     is the first); no other row content may render bare refs. */
+  .surface-diagnostic {
+    color: var(--muted);
+    font-size: 0.75em;
+    font-family: var(--font-mono);
+    margin-top: var(--space-1);
+  }
+  /* T15: theme chip pulse highlight. A theme-member chip click scrolls its
+     target surface row into view and adds `.pulse` to the <details> for
+     200ms. The animation flashes the summary background with the running
+     state color (~18% mix already used by state-pill backgrounds) then
+     fades out. `prefers-reduced-motion: reduce` disables the animation
+     entirely. */
+  @keyframes surface-pulse {
+    0%   { background-color: color-mix(in srgb, var(--state-running) 35%, transparent); }
+    100% { background-color: transparent; }
+  }
+  .surface-details.pulse > summary {
+    animation: surface-pulse 200ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .surface-details.pulse > summary { animation: none; }
+  }
+
+  /* T15: theme card members. The chip list wraps; each chip is a <button>
+     with the standard `.chip` look plus a pointer cursor since clicking
+     navigates the page. */
+  .theme-members {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+  }
+  .theme-member-chip {
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+  }
+  .theme-member-chip:focus-visible {
+    outline: 2px solid var(--state-running);
+    outline-offset: 2px;
+  }
+
+  /* T14: redaction badge in the collapsed summary row when
+     summary.redactions_applied is non-empty. Neutral text "redacted" with the
+     applied redaction types in the title= tooltip. */
+  .surface-redaction-badge {
+    flex: 0 0 auto;
+    display: inline-block;
+    padding: 0 var(--space-2);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--state-needs-input);
+    background: color-mix(in srgb, var(--state-needs-input) 14%, transparent);
+    color: var(--state-needs-input);
+  }
+
+  /* T17: failures banner — sits above the hero strip when collection
+     surfaces hit errors. There's no dedicated --danger token in :root,
+     so we mute the existing amber/red-family --state-needs-input token
+     via color-mix against the page surface. Muted via color-mix; do not
+     switch to a saturated alert-red — this banner is informational, not
+     a fire alarm. (role="region" + aria-label is wired in the partial.) */
+  .failures-banner {
+    padding: var(--space-2) var(--space-3);
+    background: color-mix(in srgb, var(--state-needs-input) 16%, var(--surface));
+    border-bottom: 1px solid color-mix(in srgb, var(--state-needs-input) 40%, transparent);
+    color: var(--contrast-strong);
+    font-size: 0.9rem;
+  }
+  .failures-banner ul { margin: 0; padding-left: 1.25rem; }
+  .failures-banner code { font-family: var(--font-mono); }
+</style>
 <style>{{ inline_css | safe }}</style>
 </head><body>
-<header>
-  <h1>cmux observability</h1>
-  <div class="meta">
-    snapshot {{ snapshot.captured_at.isoformat() }} ·
-    host {{ snapshot.host }} ·
-    cmux {{ snapshot.cmux_version or "unavailable" }}
+{# T8: hero strip — sticky top bar with 7 big-number counters on the left and
+   the search box + captured-at + refresh hint on the right. The search input
+   is a placeholder DOM target; live filtering is wired in T10. #}
+{% set _agents_total = snapshot.agents | length %}
+{% set _agents_tagged = snapshot.agents | selectattr("type_source","equalto","cmux_tag") | list | length %}
+{% set _agents_heuristic = snapshot.agents | selectattr("type_source","equalto","heuristic") | list | length %}
+{% set _running = snapshot.agents | selectattr("state","equalto","running") | list | length %}
+{% set _needs_input = snapshot.agents | selectattr("state","equalto","needs_input") | list | length %}
+{% set _idle = snapshot.agents | selectattr("state","equalto","idle") | list | length %}
+{% set _unknown = snapshot.agents | selectattr("state","equalto","unknown") | list | length %}
+{% set _ws_total = snapshot.workspaces | length %}
+{% set _surfaces_total = snapshot.workspaces | map(attribute="surfaces") | map("length") | sum %}
+{# T17: failures banner — rendered ABOVE the hero so collection failures are
+   impossible to miss. The partial is a flat <section role="region">, not a
+   collapsible. Guard stays at the include site so the strip vanishes
+   completely when there are no failures. #}
+{% if snapshot.failures %}{% include "_failures.html.j2" %}{% endif %}
+<header class="hero">
+  <div class="hero-counters">
+    <div class="counter">{{ _ws_total }}<small>workspaces</small></div>
+    <div class="counter">{{ _surfaces_total }}<small>surfaces</small></div>
+    <div class="counter">
+      {{ _agents_total }}<small>agents</small>
+      <span class="counter-sub">{{ _agents_tagged }} tagged · {{ _agents_heuristic }} heuristic</span>
+    </div>
+    {# T7-T10 follow-up (P2): state-bucket chips are <button type="button">
+       so they're keyboard-focusable and Enter/Space activate the existing
+       click handler natively. The 3 non-interactive counters above stay <div>. #}
+    <button type="button" class="counter" data-state="running" aria-pressed="false">{{ _running }}<small>running</small></button>
+    <button type="button" class="counter" data-state="needs_input" aria-pressed="false">{{ _needs_input }}<small>needs_input</small></button>
+    <button type="button" class="counter" data-state="idle" aria-pressed="false">{{ _idle }}<small>idle</small></button>
+    <button type="button" class="counter" data-state="unknown" aria-pressed="false">{{ _unknown }}<small>unknown</small></button>
+  </div>
+  <div class="hero-right">
+    <input class="hero-search" id="hero-search" type="search" placeholder="filter surfaces…" aria-label="Filter surfaces">
+    <div class="hero-captured">captured {{ snapshot.captured_at | relative_time }} · host {{ snapshot.host }} · cmux {{ snapshot.cmux_version or "unavailable" }}</div>
+    <div class="hero-refresh">{{ "re-run: cmux-observability collect && finalize" | safe }}</div>
   </div>
 </header>
-<main>
-  {% if snapshot.failures %}{% include "_failures.html.j2" %}{% endif %}
+<main class="dashboard-main">
+  {# T17: failures banner now renders ABOVE <header class="hero"> (see the
+     include just before the hero element). It is intentionally outside
+     <main>. #}
 
-  <section>
-    <h2>Counters</h2>
-    <p>
-      <span class="chip">agents: <b>{{ snapshot.agents | length }}</b></span>
-      <span class="chip state-running">running: <b>{{ snapshot.agents | selectattr("state","equalto","running") | list | length }}</b></span>
-      <span class="chip state-needs_input">needs input: <b>{{ snapshot.agents | selectattr("state","equalto","needs_input") | list | length }}</b></span>
-      <span class="chip">workspaces: <b>{{ snapshot.workspaces | length }}</b></span>
-      <span class="chip">surfaces: <b>{{ snapshot.workspaces | map(attribute="surfaces") | map("length") | sum }}</b></span>
-    </p>
-  </section>
+  {# T11: blocked-work banner — included AFTER the hero (above main loop)
+     and BEFORE the workspace grid. The partial self-renders only when
+     at least one agent is in `needs_input` state. #}
+  {% include "_blocked.html.j2" %}
 
   {% if snapshot.workspaces %}
-    <section><h2>Workspaces</h2>
-      {% for ws in snapshot.workspaces %}{% include "_workspace.html.j2" %}{% endfor %}
+    <section>
+      <h2>Workspaces</h2>
+      <div class="workspace-grid">
+        {% for ws in snapshot.workspaces %}{% include "_workspace.html.j2" %}{% endfor %}
+      </div>
     </section>
   {% else %}
     <section><h2>Workspaces</h2><p>No agents detected.</p></section>
@@ -48,4 +672,205 @@
   {% endif %}
 </main>
 <script>{{ inline_js | safe }}</script>
+<script>
+  // T9 + T10: hero filter state machine — counter click-filter (state buckets)
+  // AND search-box live-filter (substring), both serialised to `location.hash`.
+  // Hash grammar: `#filter=a,b,c&q=needle` (either segment optional). Counter
+  // chips with `data-state` toggle membership in the state set on click; the
+  // search <input id="hero-search"> emits `input` events that sync into `q=`.
+  // A row is visible iff (no state filter OR row's data-state in active set)
+  // AND (no query OR row's data-search includes the lowercased query).
+  // Empty filter (no hash) shows all rows.
+  // Reference: modern-web-guidance "stack-drill-down" — browser history
+  // stays in sync so deep links and back/forward navigation work coherently.
+  (function () {
+    var STATES = ["running", "needs_input", "idle", "unknown"];
+    var chips = Array.prototype.slice.call(
+      document.querySelectorAll('.counter[data-state]')
+    );
+    // T13: surface rows moved from <tr> to <div class="surface-row">; the
+    // selector now matches by `data-search` attribute presence so any future
+    // row container is picked up automatically.
+    var rows = Array.prototype.slice.call(
+      document.querySelectorAll('[data-search]')
+    );
+    var searchInput = document.getElementById('hero-search');
+
+    function parseHash() {
+      // Returns {states: [...], query: "..."} from the current location.hash.
+      var h = (location.hash || "").replace(/^#/, "");
+      var out = { states: [], query: "" };
+      if (!h) return out;
+      var parts = h.split("&");
+      for (var i = 0; i < parts.length; i++) {
+        var p = parts[i];
+        if (p.indexOf("filter=") === 0) {
+          var raw = p.slice("filter=".length);
+          if (raw) {
+            out.states = raw.split(",")
+              .map(function (s) { return s.trim(); })
+              .filter(function (s) { return STATES.indexOf(s) !== -1; });
+          }
+        } else if (p.indexOf("q=") === 0) {
+          var qRaw = p.slice("q=".length);
+          try {
+            out.query = decodeURIComponent(qRaw);
+          } catch (e) {
+            out.query = qRaw;
+          }
+        }
+      }
+      return out;
+    }
+
+    function writeHash(state) {
+      // state = {states: [...], query: "..."}; assemble the canonical hash
+      // and replace it on the URL. Both segments optional — empty state
+      // clears the hash entirely, keeping deep-links tidy.
+      var segs = [];
+      if (state.states.length > 0) segs.push("filter=" + state.states.join(","));
+      if (state.query) segs.push("q=" + encodeURIComponent(state.query));
+      if (segs.length === 0) {
+        if (location.hash) {
+          history.replaceState(null, "", location.pathname + location.search);
+        }
+        return;
+      }
+      var next = "#" + segs.join("&");
+      if (location.hash !== next) {
+        // Use replaceState so we don't pollute the back stack with each
+        // keystroke or chip click.
+        history.replaceState(null, "", location.pathname + location.search + next);
+      }
+    }
+
+    function apply() {
+      var state = parseHash();
+      var activeSet = {};
+      for (var i = 0; i < state.states.length; i++) activeSet[state.states[i]] = true;
+      var q = (state.query || "").toLowerCase();
+
+      // Reflect chip state. Reviewer follow-up #2 (P2 a11y): keep
+      // `aria-pressed` in lockstep with `data-filter-active` so screen-reader
+      // and keyboard users can perceive which buckets are toggled — the
+      // visual ring driven by data-filter-active is invisible to them.
+      for (var c = 0; c < chips.length; c++) {
+        var st = chips[c].getAttribute("data-state");
+        if (activeSet[st]) {
+          chips[c].setAttribute("data-filter-active", "true");
+          chips[c].setAttribute("aria-pressed", "true");
+        } else {
+          chips[c].removeAttribute("data-filter-active");
+          chips[c].setAttribute("aria-pressed", "false");
+        }
+      }
+
+      // Reflect search box value (covers deep-link / hashchange).
+      if (searchInput && searchInput.value !== state.query) {
+        searchInput.value = state.query;
+      }
+
+      // AND-compose: row visible iff state-gate passes AND query-gate passes.
+      var stateGateActive = state.states.length > 0;
+      var queryGateActive = q.length > 0;
+      for (var r = 0; r < rows.length; r++) {
+        var row = rows[r];
+        var rs = row.getAttribute("data-state");
+        var stateOk = !stateGateActive || (rs && activeSet[rs]);
+        var corpus = row.getAttribute("data-search") || "";
+        var queryOk = !queryGateActive || corpus.includes(q);
+        if (stateOk && queryOk) {
+          row.removeAttribute("data-hidden");
+        } else {
+          row.setAttribute("data-hidden", "true");
+        }
+      }
+    }
+
+    function toggleState(stateName) {
+      var current = parseHash();
+      var idx = current.states.indexOf(stateName);
+      if (idx === -1) {
+        current.states.push(stateName);
+      } else {
+        current.states.splice(idx, 1);
+      }
+      writeHash(current);
+      apply();
+    }
+
+    function setQuery(value) {
+      var current = parseHash();
+      current.query = value || "";
+      writeHash(current);
+      apply();
+    }
+
+    for (var i = 0; i < chips.length; i++) {
+      (function (chip) {
+        chip.style.cursor = "pointer";
+        chip.addEventListener("click", function () {
+          toggleState(chip.getAttribute("data-state"));
+        });
+      })(chips[i]);
+    }
+
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        setQuery(searchInput.value);
+      });
+    }
+
+    window.addEventListener("hashchange", apply);
+    apply();
+  })();
+</script>
+<script>
+  // T15: theme chip click handler. Each theme-member chip carries a
+  // data-target attribute whose value resolves (via the `surface-<id>` prefix)
+  // to a surface-row disclosure element. Clicking scrolls the target into
+  // view smoothly + centered, expands the disclosure (so the user lands on
+  // visible content), and adds a transient `.pulse` class for 200ms to flash
+  // the row.
+  // Reference: modern-web-guidance "scroll-target-on-load" — applied the
+  // `Element.scrollIntoView({behavior, block:'center'})` JS pattern (the
+  // CSS-only `scroll-initial-target` declarative variant is unsupported in
+  // Firefox/Safari and is for first-paint targeting, not on-click).
+  (function () {
+    var chips = document.querySelectorAll('.theme-member-chip[data-target]');
+    for (var i = 0; i < chips.length; i++) {
+      (function (chip) {
+        chip.addEventListener("click", function () {
+          var target = chip.getAttribute("data-target");
+          if (!target) return;
+          var el = document.getElementById("surface-" + target);
+          if (!el) return;
+          // Expand the disclosure so the user lands on visible content.
+          if (el.tagName && el.tagName.toLowerCase() === "details") {
+            el.open = true;
+          }
+          // T15 follow-up: scrollIntoView is visual-only. Without an explicit
+          // focus move, keyboard + AT users stay parked on the theme chip
+          // even though the viewport jumped to the target row. Move focus to
+          // the <summary class="surface-row"> (the disclosure's interactive
+          // anchor — it already has a :focus-visible rule), and pass
+          // `preventScroll: true` so the focus call does not fight the
+          // centered scroll position set just above. Fall back to a bare
+          // .focus() on browsers that don't accept FocusOptions.
+          var summary = el.querySelector("summary.surface-row");
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (summary && typeof summary.focus === "function") {
+            try {
+              summary.focus({ preventScroll: true });
+            } catch (_err) {
+              summary.focus();
+            }
+          }
+          el.classList.add("pulse");
+          setTimeout(function () { el.classList.remove("pulse"); }, 200);
+        });
+      })(chips[i]);
+    }
+  })();
+</script>
 </body></html>

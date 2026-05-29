@@ -46,19 +46,51 @@ def _cache_lookup(
     )
 
 
+DEFAULT_MAX_SCROLLBACK_BYTES = 4096
+
+
+def _truncate_scrollback(redacted: str, cap: int) -> str:
+    """Cap `redacted` to at most `cap` bytes of UTF-8, keeping the tail.
+
+    If the original fits, return it unchanged. Otherwise return the last bytes
+    of the input followed by a trailer that records the pre-truncation byte
+    length. The trailer counts against the cap so the final payload is ≤ cap.
+    """
+    raw = redacted.encode("utf-8")
+    if len(raw) <= cap:
+        return redacted
+    trailer = f"\n…[truncated, original {len(raw)} bytes]\n"
+    trailer_bytes = trailer.encode("utf-8")
+    body_budget = cap - len(trailer_bytes)
+    if body_budget <= 0:
+        # Cap too small to fit even the trailer; emit only the trailer tail.
+        return trailer_bytes[-cap:].decode("utf-8", errors="ignore")
+    body = raw[-body_budget:].decode("utf-8", errors="ignore")
+    return body + trailer
+
+
+def _is_summary_eligible(agent) -> bool:
+    # cmux_tag agents are summarized when active; heuristic agents always
+    # flow through (the summarizer is how we learn their real state).
+    if agent.type_source == "heuristic":
+        return True
+    return agent.state in ("running", "needs_input")
+
+
 def attach_cached_summaries(
     snap: Snapshot, conn: sqlite3.Connection,
     screens: dict[str, str], prompt_version: int,
 ) -> None:
     """Attach cached summaries for the requested `prompt_version` and clear
-    stale ones. Walks each running / needs_input agent that has screen
+    stale ones. Walks each summary-eligible agent (cmux_tag running /
+    needs_input, plus every heuristic-classified agent) that has screen
     content: if a cache row exists for `(surface_ref, redacted_screen_hash,
     prompt_version)`, the matching Summary is attached; otherwise
     `agent.summary` is set to None so a previously-attached Summary from a
     different prompt_version does not shadow a cache miss.
     """
     for agent in snap.agents:
-        if agent.state not in ("running", "needs_input"):
+        if not _is_summary_eligible(agent):
             continue
         raw = screens.get(agent.surface_ref)
         if raw is None:
@@ -72,6 +104,7 @@ def attach_cached_summaries(
 def pending_for_agent(
     snap: Snapshot, conn: sqlite3.Connection,
     screens: dict[str, str], prompt_version: int,
+    max_scrollback_bytes: int = DEFAULT_MAX_SCROLLBACK_BYTES,
 ) -> list[dict]:
     """Return JSON-ready payload listing agents that still need a summary.
 
@@ -81,7 +114,7 @@ def pending_for_agent(
     attach_cached_summaries(snap, conn, screens, prompt_version)
     pending: list[dict] = []
     for agent in snap.agents:
-        if agent.state not in ("running", "needs_input"):
+        if not _is_summary_eligible(agent):
             continue
         if agent.summary is not None:
             continue
@@ -110,7 +143,7 @@ def pending_for_agent(
             "cmux_state": agent.state,
             "title": title,
             "cwd": cwd,
-            "scrollback": redacted,
+            "scrollback": _truncate_scrollback(redacted, max_scrollback_bytes),
             "screen_hash": h,
             "redactions_applied": applied,
             "prompt_version": prompt_version,
@@ -178,12 +211,18 @@ def record_from_agent(
             redaction_summary=", ".join(applied),
         )
 
-        # cmux tag wins on state-hint disagreement.
-        if state_hint and state_hint != agent.state:
-            failures.append(Failure(
-                component="summarize_io", target=sref,
-                message=f"state hint {state_hint!r} disagreed with cmux tag {agent.state!r}",
-            ))
+        # cmux_tag agents: tag wins on state-hint disagreement.
+        # heuristic agents start state=unknown; the summarizer is how we
+        # learn their real state, so we adopt the hint instead of complaining.
+        if state_hint:
+            if agent.type_source == "heuristic":
+                agent.state = state_hint
+                agent.state_source = "agent_summary"
+            elif state_hint != agent.state:
+                failures.append(Failure(
+                    component="summarize_io", target=sref,
+                    message=f"state hint {state_hint!r} disagreed with cmux tag {agent.state!r}",
+                ))
 
         cache_payload = {
             "surface_ref": sref,

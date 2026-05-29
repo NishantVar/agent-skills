@@ -1,9 +1,46 @@
+{# T15: Work-themes section. Each theme card carries:
+   - title + confidence chip
+   - activity dot (T12 precedence: needs_input > running > idle > unknown)
+     over agents whose surface_ref appears in the theme's member_refs.
+   - one <button class="chip" data-target="sf-N"> per member, label
+     `{surface.title} @ {workspace.title}` — NO bare `surface:N` /
+     `workspace:N` refs anywhere in the section.
+   The chip click handler (inline JS at the bottom of snapshot.html.j2)
+   resolves data-target → surface row <details id="surface-sf-N">,
+   scrolls it into view, and adds a transient `.pulse` class. #}
 <section><h2>Work themes <span class="meta">(best effort)</span></h2>
 {% for t in snapshot.themes %}
-  <div class="card">
-    <h3 class="card-title">{{ t.label }} <span class="chip">conf {{ "%.2f" % t.confidence }}</span></h3>
+  {%- set _member_agent_states = [] -%}
+  {%- for r in t.member_refs -%}
+    {%- set _a = snapshot.agents | selectattr("surface_ref","equalto",r) | list | first -%}
+    {%- if _a -%}{%- set _ = _member_agent_states.append(_a.state) -%}{%- endif -%}
+  {%- endfor -%}
+  {%- if "needs_input" in _member_agent_states -%}
+    {%- set _theme_activity = "needs_input" -%}
+  {%- elif "running" in _member_agent_states -%}
+    {%- set _theme_activity = "running" -%}
+  {%- elif "idle" in _member_agent_states -%}
+    {%- set _theme_activity = "idle" -%}
+  {%- else -%}
+    {%- set _theme_activity = "unknown" -%}
+  {%- endif -%}
+  <div class="card theme-card">
+    <header class="card-header">
+      <h3 class="card-title">{{ t.label }} <span class="chip">conf {{ "%.2f" % t.confidence }}</span></h3>
+      <span class="activity-dot" data-activity="{{ _theme_activity }}" aria-label="theme activity: {{ _theme_activity }}"></span>
+    </header>
     <div class="meta">{{ t.why }}</div>
-    <div>{% for r in t.member_refs %}<span class="chip">{{ r }}</span>{% endfor %}</div>
+    <div class="theme-members">
+      {% for r in t.member_refs %}
+        {%- set _entry = surface_lookup.get(r) -%}
+        {%- if _entry -%}
+          {%- set _s = _entry.surface -%}
+          {%- set _ws = _entry.workspace -%}
+          {%- set _dom_id = surface_dom_ids.get(r) -%}
+          <button type="button" class="chip theme-member-chip" data-target="{{ _dom_id }}">{{ _s.title }} @ {{ _ws.title }}</button>
+        {%- endif -%}
+      {% endfor %}
+    </div>
   </div>
 {% endfor %}
 </section>

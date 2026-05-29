@@ -89,10 +89,10 @@ class Agent:
     surface_ref: str
     workspace_ref: str
     type: str                                # claude_code | codex | opencode | gemini | unknown_agent
-    type_source: str                         # cmux_tag | title_sniff   (process_sniff deferred post-v1)
+    type_source: str                         # cmux_tag | heuristic   (process_sniff deferred post-v1)
     type_confidence: float
     state: str                               # running | needs_input | idle | unknown
-    state_source: str
+    state_source: str                        # cmux_tag | heuristic | agent_summary | scrollback (v1.2+)
     pid: int | None = None
     summary: Summary | None = None
 
@@ -111,4 +111,4 @@ class Snapshot:
     failures: list[Failure] = field(default_factory=list)
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2

@@ -1,0 +1,10 @@
+⏺ Plan landed at $OBSIDIAN/plans/cmux-observability-dashboard-v1.1-plan-2026-05-27.md.
+  Phase 1 (T1-T6): Heuristic classifier first.
+
+  Phase 2 (T7-T21): Dashboard top-to-bottom.
+
+──────────────────────────────────────────────────────────────────────────────
+❯ run the tests
+──────────────────────────────────────────────────────────────────────────────
+  ctx:46%  /git/agent-skills  feat/tfork-title-and-skill-redflags
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

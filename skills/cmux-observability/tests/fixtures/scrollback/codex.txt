@@ -1,0 +1,12 @@
+• Final spot-check completed and sent to Monitor.
+
+  PR #17 looks ready for review:
+  - Head SHA matches local and remote
+  - mergeable: MERGEABLE
+  - Worktree clean
+
+─ Worked for 1m 40s ──────────────────────────────────────────────────────────
+
+› Write tests for @filename
+
+  gpt-5.5 xhigh · Context 58% left · ~/git/agent-skills · feat/tfork-title-and-skill-redflags

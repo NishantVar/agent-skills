@@ -1,0 +1,14 @@
+  [redacted earlier output]
+
+  ✔ [redacted task 1]
+  ✔ [redacted task 2]
+  ✔ [redacted task 3]
+  ◼ Per-page must-fix items
+
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  ctx:25%  /redacted/path  main [?]  O
+  -- INSERT -- ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agent
+
+                           Update available! Run: brew upgrade claude-code

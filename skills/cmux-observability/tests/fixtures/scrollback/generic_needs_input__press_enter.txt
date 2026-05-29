@@ -1,0 +1,4 @@
+Configuration written to /etc/example.conf.
+Restart the service for changes to take effect.
+
+Press Enter to continue, or Ctrl-C to cancel.

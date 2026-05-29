@@ -167,6 +167,208 @@ def test_prompt_version_bump_invalidates_cache(tmp_path):
     assert len(bumped) == 1
 
 
+def _snap_with_scrollback(raw: str) -> tuple[Snapshot, dict[str, str]]:
+    surface = Surface(
+        ref="surface:1", pane_ref="pane:1", workspace_ref="workspace:1",
+        kind="terminal", title="claude_code", tty="ttys001",
+        cwd="/home/u/repo", is_agent=True,
+    )
+    ws = Workspace(ref="workspace:1", title="Project A", window_ref="window:1",
+                   surfaces=[surface])
+    agent = Agent(
+        surface_ref="surface:1", workspace_ref="workspace:1",
+        type="claude_code", type_source="cmux_tag", type_confidence=1.0,
+        state="running", state_source="cmux_tag", pid=42,
+    )
+    snap = Snapshot(
+        schema_version=1,
+        captured_at=datetime.now(timezone.utc),
+        host="h", cmux_version="x",
+        workspaces=[ws], agents=[agent], themes=[],
+        productivity=None, history=None, failures=[],
+    )
+    return snap, {"surface:1": raw}
+
+
+def test_scrollback_default_cap_truncates_to_4096_bytes(tmp_path):
+    raw = "A" * 100_000  # 100 KB; no redaction patterns
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+    payload = pending[0]["scrollback"]
+    payload_bytes = payload.encode("utf-8")
+    assert len(payload_bytes) == 4096
+    # Trailer carries the ORIGINAL byte count (post-redaction == 100_000 here).
+    assert "\n…[truncated, original 100000 bytes]\n" in payload
+    # Tail preservation: the content (before the trailer) is the LAST bytes of
+    # the input — for an all-'A' input that's still all 'A's, so assert the
+    # non-trailer prefix is composed of input bytes.
+    trailer = "\n…[truncated, original 100000 bytes]\n"
+    body = payload[: -len(trailer)]
+    assert body.endswith("A" * 10)
+    assert "B" not in body
+
+
+def test_scrollback_under_cap_no_trailer(tmp_path):
+    raw = "x" * 500  # well under 4096
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+    payload = pending[0]["scrollback"]
+    assert payload == raw
+    assert "truncated" not in payload
+
+
+def test_scrollback_configurable_cap(tmp_path):
+    raw = "Z" * 10_000
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(
+            snap, conn, screens, prompt_version=1,
+            max_scrollback_bytes=512,
+        )
+    payload = pending[0]["scrollback"]
+    assert len(payload.encode("utf-8")) == 512
+    assert "\n…[truncated, original 10000 bytes]\n" in payload
+
+
+def test_scrollback_tail_preserved_not_head(tmp_path):
+    # Distinct head and tail so we can prove the tail is what survives.
+    raw = ("HEAD-MARKER-" * 1000) + ("TAIL-DISTINCT-" * 1000)
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+    payload = pending[0]["scrollback"]
+    trailer_orig_len = len(raw.encode("utf-8"))
+    trailer = f"\n…[truncated, original {trailer_orig_len} bytes]\n"
+    body = payload[: -len(trailer)]
+    assert "TAIL-DISTINCT" in body
+    assert "HEAD-MARKER" not in body
+
+
+def test_scrollback_truncation_runs_after_redaction(tmp_path):
+    # A small Slack token must be redacted; truncated payload must contain the
+    # redaction marker, never the raw token.
+    secret = "xoxb-123456789012-987654321098-AbCdEfGhIjKlMnOpQrSt"
+    raw = ("filler " * 1000) + secret + ("\nmore filler " * 1000)
+    snap, screens = _snap_with_scrollback(raw)
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(
+            snap, conn, screens, prompt_version=1,
+            max_scrollback_bytes=2048,
+        )
+    payload = pending[0]["scrollback"]
+    assert secret not in payload
+    # Marker is in the redacted text; once truncated to the tail it may or may
+    # not survive depending on position, but the raw secret must never appear.
+    assert pending[0]["redactions_applied"]  # redaction did fire
+
+
+def _snap_with_one_heuristic_agent() -> tuple[Snapshot, str]:
+    surface = Surface(
+        ref="surface:h1", pane_ref="pane:h1", workspace_ref="workspace:h1",
+        kind="terminal", title="some-tab", tty="ttys009",
+        cwd="/home/u/repo", is_agent=True,
+    )
+    ws = Workspace(ref="workspace:h1", title="Heuristic WS",
+                   window_ref="window:1", surfaces=[surface])
+    agent = Agent(
+        surface_ref="surface:h1", workspace_ref="workspace:h1",
+        type="claude_code", type_source="heuristic", type_confidence=0.7,
+        state="unknown", state_source="heuristic", pid=None,
+    )
+    snap = Snapshot(
+        schema_version=1,
+        captured_at=datetime.now(timezone.utc),
+        host="h", cmux_version="x",
+        workspaces=[ws], agents=[agent], themes=[],
+        productivity=None, history=None, failures=[],
+    )
+    raw_screen = "❯ working on something\nctx:42%\n"
+    return snap, raw_screen
+
+
+def test_heuristic_state_hint_updates_agent_no_disagreement(tmp_path):
+    """Heuristic agents start state=unknown. record_from_agent must adopt the
+    summarizer's state_hint as the authoritative state (heuristic path), not
+    emit a disagreement failure. agent.state_source is set to
+    'agent_summary' so downstream consumers can match on it.
+    """
+    snap, raw_screen = _snap_with_one_heuristic_agent()
+    screens = {"surface:h1": raw_screen}
+
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+        assert len(pending) == 1
+        screen_hashes = {"surface:h1": pending[0]["screen_hash"]}
+
+        failures = record_from_agent(
+            {"summaries": [{
+                "surface_ref": "surface:h1",
+                "summary": "running the parser tests",
+                "state_hint": "running",
+                "needs_input_reason": None,
+                "confidence": 0.9,
+            }]},
+            snap, conn,
+            prompt_version=1,
+            screen_hashes=screen_hashes,
+            redactions_by_surface={"surface:h1": []},
+        )
+
+    # No disagreement failures emitted on the heuristic path.
+    msgs = [f.message for f in failures]
+    assert not any("disagreed with cmux tag" in m for m in msgs), msgs
+
+    agent = snap.agents[0]
+    assert agent.summary is not None
+    assert agent.state == "running"
+    assert agent.state_source == "agent_summary"
+
+
+def test_cmux_tag_state_hint_disagreement_records_failure(tmp_path):
+    """cmux_tag path is unchanged: state hint disagreeing with cmux tag
+    produces a non-fatal failure and the agent's tag-derived state stands.
+    """
+    snap, raw_screen = _snap_with_one_running_agent()
+    # Force cmux-tagged agent into needs_input so the summary's "running"
+    # hint actually disagrees.
+    snap.agents[0].state = "needs_input"
+    screens = {"surface:1": raw_screen}
+
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+        screen_hashes = {"surface:1": pending[0]["screen_hash"]}
+
+        failures = record_from_agent(
+            {"summaries": [{
+                "surface_ref": "surface:1",
+                "summary": "writing tests",
+                "state_hint": "running",
+                "needs_input_reason": None,
+                "confidence": 0.9,
+            }]},
+            snap, conn,
+            prompt_version=1,
+            screen_hashes=screen_hashes,
+            redactions_by_surface={"surface:1": ["SK_TOKEN:1"]},
+        )
+
+    assert any("disagreed with cmux tag" in f.message for f in failures)
+    # Tag wins: state stays as cmux gave it.
+    assert snap.agents[0].state == "needs_input"
+    assert snap.agents[0].state_source == "cmux_tag"
+    # Summary is still attached.
+    assert snap.agents[0].summary is not None
+
+
 def test_malformed_and_unknown_summary_entries_produce_non_fatal_failures(tmp_path):
     snap, raw_screen = _snap_with_one_running_agent()
     screens = {"surface:1": raw_screen}
