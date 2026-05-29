@@ -33,9 +33,11 @@ def test_sweep_deletes_when_surface_gone(tmp_registry):
     assert not p.exists()
 
 
-def test_sweep_marks_stale_when_ttl_expired_but_keeps_file(tmp_registry):
+def test_sweep_ignores_last_seen_age(tmp_registry):
+    """An old `last_seen` does not mark a manifest stale — liveness is
+    grounded in cmux tree only."""
     p = registry.manifest_path("surface:1")
-    old = int(time.time()) - registry.TTL_SECONDS - 5
+    old = int(time.time()) - 86400  # one day old
     _write(p, {"title": "idle", "surface_ref": "surface:1",
                "workspace_ref": "ws:1",
                "started_at": old, "last_seen": old})
@@ -43,12 +45,13 @@ def test_sweep_marks_stale_when_ttl_expired_but_keeps_file(tmp_registry):
         live_set={"surface:1"},
         surfaces=_surface_index([("surface:1", "ws:1", "idle")]))
     assert p.exists()
-    assert out[0]["status"] == "stale"
-    on_disk = json.loads(p.read_text())
-    assert on_disk["status"] == "stale"
+    assert "status" not in out[0]
+    assert "status" not in json.loads(p.read_text())
 
 
-def test_sweep_clears_stale_when_fresh_again(tmp_registry):
+def test_sweep_drops_legacy_stale_status(tmp_registry):
+    """Manifests written before the TTL removal carried `status="stale"`.
+    Sweep strips the field so old data doesn't keep a phantom status."""
     p = registry.manifest_path("surface:1")
     _write(p, {"title": "back", "surface_ref": "surface:1",
                "workspace_ref": "ws:1",
@@ -199,15 +202,14 @@ def test_sweep_reaps_when_surface_gone_even_with_former_titles(tmp_registry):
     assert out == []
 
 
-def test_touch_self_revives_stale_keeps_title(tmp_registry):
+def test_touch_self_bumps_last_seen(tmp_registry):
     p = registry.manifest_path("surface:9")
     _write(p, {"title": "sleeper", "surface_ref": "surface:9",
                "workspace_ref": "ws:1",
-               "started_at": 1, "last_seen": 1, "status": "stale"})
+               "started_at": 1, "last_seen": 1})
     registry.touch_self("surface:9")
     m = json.loads(p.read_text())
     assert m["title"] == "sleeper"
-    assert "status" not in m
     assert m["last_seen"] >= int(time.time()) - 5
 
 

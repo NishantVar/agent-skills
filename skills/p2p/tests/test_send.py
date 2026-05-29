@@ -70,27 +70,29 @@ def test_live_first_contact_sends_bootstrap(tmp_registry, fc):
     assert "First message from me: hi" in text
 
 
-def test_stale_peer_bootstraps_with_manifest_title(tmp_registry, fc):
-    """Stale manifest: re-bootstrap using the manifest's title as the
-    suggested title."""
+def test_idle_peer_sends_plain_message_no_rebootstrap(tmp_registry, fc):
+    """An idle peer (manifest exists, very old last_seen) is fully
+    reachable. Send a plain `[from: ...]` framed message, not a
+    bootstrap. Liveness is grounded in cmux tree, not heartbeat age."""
     _seed_self(tmp_registry)
     fc.add(workspace_ref=MY_WS, workspace_title="Self",
-           surface_ref="surface:200", title="stalewalker")
-    old = int(time.time()) - registry.TTL_SECONDS - 60
+           surface_ref="surface:200", title="sleepy")
+    old = int(time.time()) - 86400  # one day old
     p = registry.manifest_path("surface:200")
     p.write_text(json.dumps({
-        "title": "stalewalker", "surface_ref": "surface:200",
+        "title": "sleepy", "surface_ref": "surface:200",
         "workspace_ref": MY_WS,
         "started_at": old, "last_seen": old,
     }))
-    out = send.send("stalewalker", "wake up", my_title=None,
+    out = send.send("sleepy", "wake up", my_title=None,
                     fallback_self_title=None, rerun_argv=[])
     assert out["ok"]
-    assert out["kind"] == "bootstrap"
-    assert out["peer_status"] == "stale"
-    assert out["title"] == "stalewalker"
+    assert out["kind"] == "message"
+    assert "peer_status" not in out
+    assert out["title"] == "sleepy"
     text = fc.sent[0][2]
-    assert "suggested_title=stalewalker" in text
+    assert text.startswith("[from: ")
+    assert "[p2p-bootstrap]" not in text
 
 
 def test_cross_workspace_returns_ambiguous_under_default_scope(
@@ -399,27 +401,27 @@ def test_explicit_peer_surface_unknown_falls_back_to_spawn(
     os.unlink(payload)
 
 
-def test_explicit_peer_surface_with_stale_manifest_still_plain(
+def test_explicit_peer_surface_with_idle_manifest_sends_plain(
         tmp_registry, fc):
-    """Explicit surface skips the stale-triggers-bootstrap branch — the
-    inbound bootstrap already established the channel."""
+    """Explicit surface routing sends a plain framed message
+    regardless of manifest age — idle peers are still live."""
     _seed_self(tmp_registry)
     fc.add(workspace_ref="workspace:8", workspace_title="Old",
-           surface_ref="surface:800", title="stale_one")
-    old = int(time.time()) - registry.TTL_SECONDS - 60
+           surface_ref="surface:800", title="idle_one")
+    old = int(time.time()) - 86400
     p = registry.manifest_path("surface:800")
     p.write_text(json.dumps({
-        "title": "stale_one", "surface_ref": "surface:800",
+        "title": "idle_one", "surface_ref": "surface:800",
         "workspace_ref": "workspace:8",
         "started_at": old, "last_seen": old,
     }))
-    out = send.send("stale_one", "yo", my_title=None,
+    out = send.send("idle_one", "yo", my_title=None,
                     fallback_self_title=None, rerun_argv=[],
                     peer_surface="surface:800")
     assert out["ok"]
     assert out["kind"] == "message"
-    assert out["title"] == "stale_one"
-    assert out["peer_status"] == "stale"
+    assert out["title"] == "idle_one"
+    assert "peer_status" not in out
     text = fc.sent[0][2]
     assert text == "[from: me] yo\n\nTo reply: Load p2p"
 

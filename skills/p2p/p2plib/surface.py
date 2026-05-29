@@ -132,8 +132,8 @@ def my_surface() -> str | None:
             return env_surf
         print(
             f"warning: cmux identify says {env_surf} but controlling tty "
-            f"says {tty_surf}. Trusting tty. $CMUX_SURFACE_ID is likely "
-            f"stale (inherited from another pane). Override with "
+            f"says {tty_surf}. Trusting tty. $CMUX_SURFACE_ID was likely "
+            f"inherited from another pane. Override with "
             f"AGENT_MSG_SURFACE_ID=surface:<N> to silence.",
             file=sys.stderr,
         )

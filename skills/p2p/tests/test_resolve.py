@@ -1,5 +1,5 @@
 """Peer resolution: workspace-scoped tab title match, live /
-live_first_contact / stale / ambiguous / unknown."""
+live_first_contact / ambiguous / unknown / renamed."""
 
 from __future__ import annotations
 
@@ -40,15 +40,16 @@ def test_live_first_contact_when_no_manifest():
     assert r.title == "fresh"
 
 
-def test_stale_when_manifest_marked_stale():
+def test_idle_peer_resolves_live_regardless_of_last_seen():
+    """An idle peer is still live — no TTL-derived stale status."""
     surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
                         "surface_ref": "surface:1", "title": "sleepy"}])
     manifests = [{"title": "sleepy", "surface_ref": "surface:1",
                   "workspace_ref": "ws:1",
-                  "started_at": 1, "last_seen": 1, "status": "stale"}]
+                  "started_at": 1, "last_seen": 1}]
     r = resolve.resolve_peer("sleepy", manifests, surfaces,
                              scope_workspace_ref="ws:1")
-    assert r.kind == "stale"
+    assert r.kind == "live"
     assert r.title == "sleepy"
 
 
