@@ -1,0 +1,44 @@
+{# T11: blocked-work banner — one card per needs_input surface, in
+   capture-time order (the order agents appear in `snapshot.agents`).
+
+   Field-name mapping (spec → model):
+     - needs_input_count       → derived: count of agents with state == "needs_input"
+     - needs_input_surfaces    → derived: (workspace, surface, agent) tuples for
+                                 those agents, in snapshot.agents order
+     - needs_input_reason      → agent.summary.needs_input_reason
+
+   Identifier-strip rule (acceptance criterion): the literal `surface:N` MUST
+   appear ONLY inside the copy-ref chip element (chip body + its `title`
+   attribute). Never in the card heading or body. #}
+{% set _blocked = [] %}
+{% for a in snapshot.agents if a.state == "needs_input" %}
+  {% set _surface = (snapshot.workspaces | map(attribute="surfaces") | sum(start=[])
+                     | selectattr("ref","equalto", a.surface_ref) | list | first) %}
+  {% set _ws = (snapshot.workspaces
+                | selectattr("ref","equalto", a.workspace_ref) | list | first) %}
+  {% if _surface and _ws %}
+    {% set _ = _blocked.append((_ws, _surface, a)) %}
+  {% endif %}
+{% endfor %}
+{% if _blocked %}
+<section class="blocked-banner" aria-label="Blocked work">
+  {% for ws, s, agent in _blocked %}
+    <article class="blocked-card">
+      <div class="blocked-workspace">{{ ws.title }}</div>
+      <div class="blocked-surface-title">{{ s.title }}</div>
+      <div class="blocked-summary">{{ agent.summary.text }}</div>
+      {% if agent.summary and agent.summary.needs_input_reason %}
+        <em class="blocked-reason">{{ agent.summary.needs_input_reason }}</em>
+      {% endif %}
+      <div class="blocked-stamp">captured {{ snapshot.captured_at | relative_time }}</div>
+      {# T22 (qa_lead HOLD) + follow-up (Reviewer HOLD): chip is a <span>
+         (non-interactive); a <button> without a click handler promises
+         action that does not happen. Chip body is icon glyph ⧉ (U+29C9);
+         the ref lives in data-cmux-focus + title only. #}
+      {# blocked-ref-start #}
+      <span class="chip blocked-ref" data-cmux-focus="{{ s.ref }}" title="cmux focus {{ s.ref }}">⧉</span>
+      {# blocked-ref-end #}
+    </article>
+  {% endfor %}
+</section>
+{% endif %}

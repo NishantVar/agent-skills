@@ -1,0 +1,13 @@
+  [redacted multi-line agent output above]
+
+※ recap: [redacted goal summary]. Verdict is [redacted]; I've drafted a
+  5-step plan covering [redacted areas]. Next: confirm whether to close
+  the loop with [redacted peer], or just leave it? (disable recaps in /config)
+
+────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────
+  ctx:34%  /redacted/path  main  O
+  -- INSERT -- ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agent
+
+                           Update available! Run: brew upgrade claude-code

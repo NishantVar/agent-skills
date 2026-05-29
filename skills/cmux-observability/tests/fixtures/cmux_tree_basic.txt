@@ -1,0 +1,11 @@
+window window:1 [current] ◀ active
+├── workspace workspace:2 "Meta Eval"
+│   ├── pane pane:2 [focused]
+│   │   └── surface surface:2 [terminal] "design_coordinator" [selected] tty=ttys005
+│   └── pane pane:3
+│       └── surface surface:3 [terminal] "CMeta" [selected] tty=ttys006
+└── workspace workspace:17 "⠐ Build C-MUX agent observability dashboard"
+    ├── pane pane:60 [focused]
+    │   └── surface surface:67 [terminal] "observability_designer" [selected] tty=ttys040
+    └── pane pane:61
+        └── surface surface:68 [terminal] "Reviewer" [selected] tty=ttys041

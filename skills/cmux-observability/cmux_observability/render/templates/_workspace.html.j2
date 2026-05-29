@@ -1,0 +1,61 @@
+{# T12: workspace card. Header shows title (basename + muted full path when
+   the title looks like a filesystem path), an activity dot whose color encodes
+   the highest-priority surface state in the workspace, and a surface count.
+   Body is wrapped in <details>, `open` when any surface is needs_input or
+   running. #}
+{%- set _ws_agents = snapshot.agents | selectattr("workspace_ref","equalto",ws.ref) | list -%}
+{%- set _has_needs_input = _ws_agents | selectattr("state","equalto","needs_input") | list | length > 0 -%}
+{%- set _has_running = _ws_agents | selectattr("state","equalto","running") | list | length > 0 -%}
+{%- set _has_idle = _ws_agents | selectattr("state","equalto","idle") | list | length > 0 -%}
+{%- if _has_needs_input -%}
+  {%- set _activity = "needs_input" -%}
+{%- elif _has_running -%}
+  {%- set _activity = "running" -%}
+{%- elif _has_idle -%}
+  {%- set _activity = "idle" -%}
+{%- else -%}
+  {%- set _activity = "unknown" -%}
+{%- endif -%}
+{%- set _title = ws.title or "" -%}
+{%- set _is_path = _title.startswith("/") or "/" in _title -%}
+{%- if _is_path -%}
+  {%- set _basename = _title.rstrip("/").rsplit("/", 1)[-1] or _title -%}
+{%- endif -%}
+<div class="card">
+  {# T22 (qa_lead HOLD): the copy-ref chip used to live INSIDE <h3>, so screen
+     readers announced the bare workspace ref as part of the heading. The
+     chip now sits as a sibling element after the activity dot + surface
+     count; <h3> holds the workspace title only. T22 follow-up (Reviewer
+     HOLD): chip is a <span> (non-interactive) — promoting to <button>
+     promises action without a click handler; v1.1.1 will pair the promotion
+     with clipboard wiring. Chip body is the icon glyph ⧉ (U+29C9); ref
+     lives in data-cmux-focus + title. #}
+  <header class="card-header">
+    <h3 class="card-title">
+      {% if _is_path %}
+        <span class="ws-title-basename">{{ _basename }}</span>
+        <span class="ws-path-full">{{ _title }}</span>
+      {% else %}
+        <span class="ws-title-basename">{{ _title }}</span>
+      {% endif %}
+    </h3>
+    <span class="activity-dot" data-activity="{{ _activity }}" aria-label="activity: {{ _activity }}"></span>
+    <span class="surface-count" title="surface count">{{ ws.surfaces | length }}</span>
+    {# workspace-copy-ref-start #}
+    <span class="chip workspace-copy-ref" data-cmux-focus="{{ ws.ref }}" title="cmux focus {{ ws.ref }}">⧉</span>
+    {# workspace-copy-ref-end #}
+  </header>
+  <details class="card-body"{% if _has_needs_input or _has_running %} open{% endif %}>
+    <summary>surfaces ({{ ws.surfaces | length }})</summary>
+    {# T13: surface rows are now flex <div class="surface-row"> entries; the
+       legacy <table>/<tr> wrapper is gone so the flex layout (state pill,
+       mono title, ellipsized summary, captured stamp, copy-ref chip) is
+       not constrained by table-cell box behaviour. #}
+    <div class="surface-row-list">
+      {% for s in ws.surfaces %}
+        {% set agent = snapshot.agents | selectattr("surface_ref","equalto",s.ref) | list | first %}
+        {% include "_agent_row.html.j2" %}
+      {% endfor %}
+    </div>
+  </details>
+</div>

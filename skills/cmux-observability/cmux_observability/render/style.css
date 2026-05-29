@@ -1,0 +1,52 @@
+html{color-scheme: light dark;}
+:root{--bg:#fff;--bg-soft:#f6f7f9;--fg:#15181d;--mute:#6b7280;--border:#dfe3ea;--accent:#2a5bd7;--good:#1d7a3a;--warn:#b1601e;--bad:#b22231;}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 ui-sans-serif,system-ui,sans-serif;}
+header{padding:12px 18px;border-bottom:1px solid var(--border);}
+h1{margin:0;font-size:17px;}
+.meta{color:var(--mute);font-size:12px;}
+main{max-width:1080px;margin:0 auto;padding:18px;}
+section{margin:22px 0;}
+h2{font-size:15px;margin:0 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th,td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;}
+th{background:var(--bg-soft);font-weight:600;color:#4a525c;}
+.card{background:#fff;border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin:8px 0;}
+.card-title{margin:0 0 6px;font-size:13px;}
+.chip{display:inline-block;font-size:11px;padding:1px 8px;border:1px solid var(--border);border-radius:999px;background:var(--bg-soft);margin-right:4px;}
+.state-running{color:var(--good);}
+.state-needs_input{color:var(--bad);}
+.state-idle{color:var(--mute);}
+.state-unknown{color:var(--warn);}
+details{border:1px solid var(--border);border-radius:4px;margin:6px 0;}
+details>summary{padding:6px 10px;cursor:pointer;font-weight:600;}
+details[open]>summary{border-bottom:1px solid var(--border);}
+details>.body{padding:8px 12px;}
+pre{background:#f3f4f7;border:1px solid var(--border);border-radius:4px;padding:8px 10px;overflow-x:auto;white-space:pre-wrap;}
+.failures{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 10px;font-size:12px;}
+.sparkline{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:var(--accent);}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115;
+    --bg-soft: #181b22;
+    --fg: #e6e8ec;
+    --mute: #8a8f99;
+    --border: #2a2f38;
+    --accent: #6f9bff;
+    --good: #4fc279;
+    --warn: #d2a247;
+    --bad: #e36b78;
+  }
+  .card { background: var(--bg-soft); }
+  th { color: #c1c6d0; }
+  pre { background: #14171d; }
+  .failures { background: #2a2014; border-color: #5a4422; }
+}
+
+@media print {
+  header { border-bottom-width: 2px; }
+  main { max-width: none; padding: 0 12pt; }
+  details { border: none; }
+  details[open] > summary { border-bottom: 1px solid var(--border); }
+  .chip { border: 1px solid #999; }
+}

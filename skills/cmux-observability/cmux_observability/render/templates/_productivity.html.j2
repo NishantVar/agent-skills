@@ -1,0 +1,37 @@
+<section><h2>Productivity</h2>
+<table>
+  <thead><tr><th>repo</th><th>today</th><th>week</th><th>30d</th><th>last commit</th></tr></thead>
+  <tbody>
+    {% for r in snapshot.productivity.repos %}
+      <tr>
+        <td>{{ r.name }} <span class="meta">{{ r.path }}</span></td>
+        <td>{{ r.commits.today }}</td>
+        <td>{{ r.commits.week }}</td>
+        <td>{{ r.commits["30d"] }}</td>
+        <td>{{ r.last_commit_at.isoformat() if r.last_commit_at else "—" }}</td>
+      </tr>
+    {% endfor %}
+    <tr><td><b>Total</b></td><td><b>{{ snapshot.productivity.totals.today }}</b></td><td><b>{{ snapshot.productivity.totals.week }}</b></td><td><b>{{ snapshot.productivity.totals["30d"] }}</b></td><td></td></tr>
+  </tbody>
+</table>
+{# T16 follow-up: honest empty-state label. When every productivity bucket
+   reads zero (totals + per-repo commits), render a single muted line below
+   the strip. Copy is neutral about collection status — the predicate only
+   proves "zero activity in the today/week/30d windows", not "data not
+   collected" — so the label names what's measured rather than implying the
+   git history walker hasn't run. None and 0 are treated alike. #}
+{% set _p_totals = snapshot.productivity.totals %}
+{% set _p_total_today = _p_totals.today or 0 %}
+{% set _p_total_week = _p_totals.week or 0 %}
+{% set _p_total_30d = _p_totals["30d"] or 0 %}
+{% set _p_repo_any = namespace(nz=false) %}
+{% for r in snapshot.productivity.repos %}
+  {% set _c = r.commits or {} %}
+  {% if (_c.get("today") or 0) or (_c.get("week") or 0) or (_c.get("30d") or 0) %}
+    {% set _p_repo_any.nz = true %}
+  {% endif %}
+{% endfor %}
+{% if not _p_total_today and not _p_total_week and not _p_total_30d and not _p_repo_any.nz %}
+  <small class="muted">No git activity in the today/week/30d windows</small>
+{% endif %}
+</section>
