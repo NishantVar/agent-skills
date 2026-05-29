@@ -83,6 +83,10 @@ def parse_args(argv):
                         help="surface ref or tab title to place next to; "
                              "default: the caller's own surface. Mutually "
                              "exclusive with --workspace.")
+    parser.add_argument("--cwd", default=None,
+                        help="working directory the forked command runs in; "
+                             "default: the caller's cwd. Path is expanded "
+                             "and must exist as a directory.")
     parser.add_argument("--type", choices=("agent", "command"), default=None,
                         help="force the type label; otherwise post-hoc")
     parser.add_argument("--title", default=None,
@@ -101,7 +105,7 @@ def main(argv=None):
         result = run_fork(args.command, placement=args.placement,
                           anchor=args.anchor, type_override=args.type,
                           title=args.title, delay=args.delay,
-                          workspace=args.workspace)
+                          workspace=args.workspace, cwd=args.cwd)
     except ForkError as exc:
         print(json.dumps(exc.handoff()))
         return EXIT_CODES.get(exc.code, 1)

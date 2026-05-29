@@ -23,7 +23,7 @@ from .verify import DEFAULT_DELAY, verify_fork
 
 
 def run_fork(command_words, placement=None, anchor=None, type_override=None,
-             title=None, delay=None, workspace=None, terminal=None,
+             title=None, delay=None, workspace=None, cwd=None, terminal=None,
              nonce=None, registry_path=REGISTRY_PATH):
     """Fork, verify, label, persist, and return the result dict.
 
@@ -40,6 +40,13 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
         raise err_bad_arguments("no command given after '--'")
     if workspace is not None and anchor is not None:
         raise err_workspace_anchor_conflict()
+    if cwd is None:
+        cwd = os.getcwd()
+    else:
+        cwd = os.path.abspath(os.path.expanduser(cwd))
+        if not os.path.isdir(cwd):
+            raise err_bad_arguments(
+                f"--cwd {cwd!r} is not an existing directory")
     word = command_words[0]
     # The post-``--`` values are argv tokens (the caller's shell already split
     # them). shlex.join re-quotes them so a token with spaces, quotes, or a
@@ -56,9 +63,9 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
 
     workspace_info = None
     if workspace is not None:
-        workspace_info = terminal.resolve_workspace(workspace, os.getcwd())
+        workspace_info = terminal.resolve_workspace(workspace, cwd)
 
-    session = terminal.fork(command_str, placement, os.getcwd(), nonce, anchor,
+    session = terminal.fork(command_str, placement, cwd, nonce, anchor,
                             workspace=workspace_info)
 
     title_note = ""
