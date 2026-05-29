@@ -3,7 +3,8 @@
 Invocation contract::
 
     fork_terminal.py
-        --placement {right,left,top,bottom,new-workspace}
+        [--placement {right,left,top,bottom}]
+        [--workspace <title-or-ref>]
         [--anchor <surface-ref-or-tab-name>]
         [--type {agent,command}]
         [--delay N]
@@ -12,7 +13,9 @@ Invocation contract::
 Everything after ``--`` is the command (an alias or a literal command, free
 to contain its own flags and spaces); its first word is the registry key.
 ``--anchor`` accepts either a ``surface:N`` ref or a cmux tab title; without
-it, the new pane is placed next to the caller's own surface.
+it, the new pane is placed next to the caller's own surface. ``--workspace``
+accepts a cmux workspace title or ref (created when a title doesn't match);
+mutually exclusive with ``--anchor``.
 
 On success ``main`` prints, on stdout, and exits 0 with::
 
@@ -37,9 +40,9 @@ import json
 
 from .errors import EXIT_CODES, ForkError, err_bad_arguments
 from .orchestrate import run_fork
-from .terminal import NEW_WORKSPACE, SPLIT_DIRS
+from .terminal import SPLIT_DIRS
 
-PLACEMENT_CHOICES = SPLIT_DIRS + (NEW_WORKSPACE,)
+PLACEMENT_CHOICES = SPLIT_DIRS
 
 
 class _ForkArgParser(argparse.ArgumentParser):
@@ -68,11 +71,18 @@ def parse_args(argv):
     parser = _ForkArgParser(prog="fork_terminal.py", add_help=True,
                             description="Deterministic terminal fork.")
     parser.add_argument("--placement", choices=PLACEMENT_CHOICES,
-                        default="right",
-                        help="where the new pane opens (default: right)")
+                        default=None,
+                        help="where the new pane opens (default: right "
+                             "when --workspace is absent; otherwise fresh "
+                             "pane in the target workspace)")
+    parser.add_argument("--workspace", default=None,
+                        help="cmux workspace title or ref; created when "
+                             "a title doesn't match. Mutually exclusive "
+                             "with --anchor.")
     parser.add_argument("--anchor", default=None,
                         help="surface ref or tab title to place next to; "
-                             "default: the caller's own surface")
+                             "default: the caller's own surface. Mutually "
+                             "exclusive with --workspace.")
     parser.add_argument("--type", choices=("agent", "command"), default=None,
                         help="force the type label; otherwise post-hoc")
     parser.add_argument("--title", default=None,
@@ -90,7 +100,8 @@ def main(argv=None):
         args = parse_args(argv)
         result = run_fork(args.command, placement=args.placement,
                           anchor=args.anchor, type_override=args.type,
-                          title=args.title, delay=args.delay)
+                          title=args.title, delay=args.delay,
+                          workspace=args.workspace)
     except ForkError as exc:
         print(json.dumps(exc.handoff()))
         return EXIT_CODES.get(exc.code, 1)

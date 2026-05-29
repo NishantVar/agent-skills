@@ -16,15 +16,15 @@ import secrets
 import shlex
 
 from .classify import classify_observed
-from .errors import err_bad_arguments
+from .errors import err_bad_arguments, err_workspace_anchor_conflict
 from .registry import REGISTRY_PATH, read_registry, write_registry_entry
 from .terminal import resolve_terminal
 from .verify import DEFAULT_DELAY, verify_fork
 
 
-def run_fork(command_words, placement="right", anchor=None, type_override=None,
-             title=None, delay=None, terminal=None, nonce=None,
-             registry_path=REGISTRY_PATH):
+def run_fork(command_words, placement=None, anchor=None, type_override=None,
+             title=None, delay=None, workspace=None, terminal=None,
+             nonce=None, registry_path=REGISTRY_PATH):
     """Fork, verify, label, persist, and return the result dict.
 
     Raises ``ForkError`` only for argument, terminal, surface-resolution,
@@ -38,6 +38,8 @@ def run_fork(command_words, placement="right", anchor=None, type_override=None,
     """
     if not command_words:
         raise err_bad_arguments("no command given after '--'")
+    if workspace is not None and anchor is not None:
+        raise err_workspace_anchor_conflict()
     word = command_words[0]
     # The post-``--`` values are argv tokens (the caller's shell already split
     # them). shlex.join re-quotes them so a token with spaces, quotes, or a
@@ -52,7 +54,12 @@ def run_fork(command_words, placement="right", anchor=None, type_override=None,
     if nonce is None:
         nonce = secrets.token_hex(4)
 
-    session = terminal.fork(command_str, placement, os.getcwd(), nonce, anchor)
+    workspace_info = None
+    if workspace is not None:
+        workspace_info = terminal.resolve_workspace(workspace, os.getcwd())
+
+    session = terminal.fork(command_str, placement, os.getcwd(), nonce, anchor,
+                            workspace=workspace_info)
 
     title_note = ""
     if title:
@@ -112,6 +119,20 @@ def run_fork(command_words, placement="right", anchor=None, type_override=None,
     else:
         write_registry_entry(word, label == "agent", registry_path)
 
+    if workspace_info is not None:
+        ws_title = workspace_info.get("title") or ""
+        ws_created = bool(workspace_info.get("created"))
+        ws_label = repr(ws_title) if ws_title else workspace_info.get("ref")
+        ws_state = "created" if ws_created else "reused"
+        note = f"{note}; opened in workspace {ws_label} ({ws_state})"
+        ws_result = {
+            "ref": workspace_info.get("ref"),
+            "title": ws_title,
+            "created": ws_created,
+        }
+    else:
+        ws_result = None
+
     return {
         "ok": True,
         "session": session,
@@ -120,5 +141,6 @@ def run_fork(command_words, placement="right", anchor=None, type_override=None,
         "verified": verified,
         "foreground": foreground,
         "exit_status": exit_status,
+        "workspace": ws_result,
         "note": note,
     }

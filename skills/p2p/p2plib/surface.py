@@ -17,8 +17,30 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+
+
+# A cmux workspace ref looks like ``workspace:N`` or a long
+# UUID-shaped string. The title path runs only when neither form matches.
+_WORKSPACE_REF_RE = re.compile(r"^(?:workspace:\d+|[0-9a-fA-F-]{16,})$")
+
+
+def is_workspace_ref(value: str) -> bool:
+    return bool(_WORKSPACE_REF_RE.match(value or ""))
+
+
+def list_workspaces(tree: dict | None = None) -> list[tuple[str, str]]:
+    """``(ref, title)`` for every live cmux workspace."""
+    tree = cmux_tree() if tree is None else tree
+    out: list[tuple[str, str]] = []
+    for window in tree.get("windows", []):
+        for ws in window.get("workspaces", []):
+            ref = ws.get("ref")
+            if ref:
+                out.append((ref, ws.get("title") or ""))
+    return out
 
 
 def _run(cmd: list[str], timeout: int = 10) -> subprocess.CompletedProcess:

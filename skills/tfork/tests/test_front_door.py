@@ -16,13 +16,15 @@ def test_skill_md_exists():
 
 def test_front_door_declares_the_parameters():
     text = SKILL_MD.read_text()
-    for parameter in ("command", "placement", "anchor", "type_override"):
+    for parameter in ("command", "placement", "anchor", "workspace",
+                      "type_override"):
         assert parameter in text, f"SKILL.md does not declare {parameter!r}"
 
 
 def test_front_door_maps_onto_the_binary_invocation():
     text = SKILL_MD.read_text()
-    for token in ("fork_terminal.py", "--placement", "--anchor", "--type", "--"):
+    for token in ("fork_terminal.py", "--placement", "--anchor",
+                  "--workspace", "--type", "--"):
         assert token in text, f"SKILL.md does not reference {token!r}"
 
 
@@ -30,9 +32,11 @@ def test_front_door_invokes_the_binary_explicitly():
     """The compiled skill must pin an unambiguous invocation: run via
     ``python3``, with the binary addressed by its skill-directory path —
     not a bare ``fork_terminal.py`` that would not resolve from a project
-    working directory."""
+    working directory. Placement is now optional, so the boilerplate
+    invocation no longer pins ``--placement`` — flags are inserted
+    conditionally per the steps."""
     text = SKILL_MD.read_text()
-    assert "python3 <skill-dir>/fork_terminal.py --placement" in text, (
+    assert "python3 <skill-dir>/fork_terminal.py" in text, (
         "SKILL.md does not pin the explicit python3 <skill-dir> invocation"
     )
 

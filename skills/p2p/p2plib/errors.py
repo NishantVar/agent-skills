@@ -125,7 +125,21 @@ def info_needed(missing: list[str], rerun_argv: list[str]) -> dict:
     )
 
 
-def peer_unknown(peer: str, payload_file: str, rerun_argv: list[str]) -> dict:
+def peer_unknown(peer: str, payload_file: str, rerun_argv: list[str],
+                 workspace: str | None = None) -> dict:
+    """``workspace`` is the original ``--workspace <value>`` the caller
+    passed (title preferred over ref for stability). When set, the
+    bootstrap-payload tfork handoff also asks the caller to pass
+    ``--workspace <value>`` to tfork so the spawned peer lands in the
+    right workspace. None means no workspace pinning — tfork spawns
+    next to the caller as it always has."""
+    if workspace:
+        ws_clause = (
+            f" Also pass --workspace {workspace} to tfork so the spawned "
+            f"peer lands in the workspace the original send targeted."
+        )
+    else:
+        ws_clause = ""
     return _base(
         "peer_unknown",
         f"Peer {peer!r} is not running in cmux. A spawn-bootstrap "
@@ -134,12 +148,51 @@ def peer_unknown(peer: str, payload_file: str, rerun_argv: list[str]) -> dict:
         f"{payload_file} as its first user-turn prompt. The new agent "
         "will register itself, parse the bootstrap, and reply. p2p does "
         "not name a specific tfork flag — pass the payload via whatever "
-        "delayed-input mechanism that skill currently exposes.",
+        "delayed-input mechanism that skill currently exposes."
+        + ws_clause,
         action="spawn_peer",
         handoff_skill="tfork",
         retryable=True,
         payload_file=payload_file,
+        workspace=workspace,
         rerun_argv=rerun_argv,
+    )
+
+
+def workspace_unknown(requested: str,
+                      rerun_argv: list[str] | None = None) -> dict:
+    """``--workspace <value>`` did not resolve to a live workspace.
+    Either ``value`` was a ref (workspace:N or UUID) that no longer
+    exists, or it was a title with zero matches. p2p never silently
+    falls back to the caller's workspace — that would mask a typo."""
+    return _base(
+        "workspace_unknown",
+        f"No cmux workspace matched {requested!r}.",
+        "Do not retry verbatim. Pick a valid workspace title or ref "
+        "(see `cmux list-workspaces`) and rerun with --workspace "
+        "<value>, drop --workspace to scope to your own workspace, or "
+        "pass --workspace all for global scope.",
+        action="pick_workspace",
+        retryable=True,
+        rerun_argv=rerun_argv or [],
+        requested=requested,
+    )
+
+
+def workspace_ambiguous(requested: str, candidates: list[dict],
+                        rerun_argv: list[str] | None = None) -> dict:
+    """``--workspace <title>`` matched two or more live workspaces.
+    ``candidates`` is a list of ``{ref, title}``."""
+    return _base(
+        "workspace_ambiguous",
+        f"Workspace title {requested!r} matches more than one live "
+        f"workspace ({len(candidates)} candidates).",
+        "Do not retry verbatim. Pick one of the listed refs and rerun "
+        "with --workspace <ref>.",
+        action="pick_candidate",
+        retryable=True,
+        rerun_argv=rerun_argv or [],
+        candidates=candidates,
     )
 
 

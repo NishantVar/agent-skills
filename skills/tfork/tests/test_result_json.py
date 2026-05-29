@@ -8,7 +8,9 @@ HANDOFF_KEYS = {"ok", "code", "human_message", "agent_instruction",
 
 def _assert_handoff(err, code, retryable):
     handoff = err.handoff()
-    assert set(handoff) == HANDOFF_KEYS
+    # Every handoff carries the base fields; per-code factories may add
+    # structured extras (e.g. workspace_ambiguous adds requested + candidates).
+    assert HANDOFF_KEYS <= set(handoff)
     assert handoff["ok"] is False
     assert handoff["code"] == code
     assert handoff["retryable"] is retryable
@@ -60,9 +62,41 @@ def test_anchor_ambiguous_lists_candidates():
     assert "workspace:2" in err.human_message and "HRI" in err.human_message
 
 
+def test_workspace_unknown_carries_requested():
+    err = ft.err_workspace_unknown("workspace:99999")
+    _assert_handoff(err, "workspace_unknown", False)
+    assert "workspace:99999" in err.human_message
+    # `requested` is a structured field so the calling agent can act on
+    # the handoff without parsing human_message.
+    assert err.handoff()["requested"] == "workspace:99999"
+
+
+def test_workspace_ambiguous_lists_candidates():
+    candidates = [
+        {"ref": "workspace:1", "title": "ambig"},
+        {"ref": "workspace:2", "title": "ambig"},
+    ]
+    err = ft.err_workspace_ambiguous("ambig", candidates)
+    _assert_handoff(err, "workspace_ambiguous", False)
+    assert "workspace:1" in err.human_message
+    assert "workspace:2" in err.human_message
+    # `requested` and `candidates` are structured JSON fields, not just
+    # prose — agents pick a ref by reading candidates directly.
+    handoff = err.handoff()
+    assert handoff["requested"] == "ambig"
+    assert handoff["candidates"] == candidates
+
+
+def test_workspace_anchor_conflict():
+    _assert_handoff(ft.err_workspace_anchor_conflict(),
+                    "workspace_anchor_conflict", False)
+
+
 def test_taxonomy_codes_all_map_to_nonzero_exits():
     expected = {"no_terminal", "bad_arguments", "surface_resolution_failed",
                 "split_failed", "spawn_failed",
-                "anchor_not_found", "anchor_ambiguous"}
+                "anchor_not_found", "anchor_ambiguous",
+                "workspace_unknown", "workspace_ambiguous",
+                "workspace_anchor_conflict"}
     assert set(ft.EXIT_CODES) == expected
     assert all(code != 0 for code in ft.EXIT_CODES.values())
