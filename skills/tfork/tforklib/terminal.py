@@ -361,6 +361,14 @@ class CmuxTerminal(Terminal):
         if workspace is not None:
             ws_ref = workspace.get("ref")
             if placement is None:
+                # cmux new-workspace already created an initial pane with
+                # a single surface; reusing it avoids leaving an orphan
+                # blank pane next to the one tfork actually runs in.
+                if workspace.get("created"):
+                    seeded = self._initial_workspace_surface(ws_ref)
+                    if seeded:
+                        self._workspaces[seeded] = ws_ref
+                        return seeded
                 return self._new_pane_in_workspace(ws_ref, direction=None)
             if placement not in SPLIT_DIRS:
                 raise err_split_failed(
@@ -493,6 +501,26 @@ class CmuxTerminal(Terminal):
         if not ws_ref:
             return None, "could not capture the new workspace ref"
         return ws_ref, None
+
+    def _initial_workspace_surface(self, ws_ref):
+        """Return the workspace's existing surface ref when it holds
+        exactly one pane with one surface; ``None`` otherwise.
+
+        This is the post-``new-workspace`` shape: cmux always seeds the
+        workspace with an initial terminal. Reusing that surface keeps
+        the workspace from accumulating an empty pane next to ours."""
+        for window in _cmux_tree().get("windows", []):
+            for ws in window.get("workspaces", []):
+                if ws.get("ref") != ws_ref:
+                    continue
+                panes = ws.get("panes", []) or []
+                if len(panes) != 1:
+                    return None
+                surfaces = panes[0].get("surfaces", []) or []
+                if len(surfaces) != 1:
+                    return None
+                return surfaces[0].get("ref")
+        return None
 
     def _new_pane_in_workspace(self, ws_ref, direction):
         """Open a pane in ``ws_ref`` — fresh when ``direction`` is None,

@@ -26,17 +26,18 @@ class ForkError(Exception):
     """A fork failure carrying everything the calling agent needs to recover."""
 
     def __init__(self, code, human_message, agent_instruction, retryable,
-                 suggested_next_command):
+                 suggested_next_command, extras=None):
         super().__init__(human_message)
         self.code = code
         self.human_message = human_message
         self.agent_instruction = agent_instruction
         self.retryable = retryable
         self.suggested_next_command = suggested_next_command
+        self.extras = dict(extras) if extras else {}
 
     def handoff(self):
         """The handoff JSON object the binary prints on failure."""
-        return {
+        out = {
             "ok": False,
             "code": self.code,
             "human_message": self.human_message,
@@ -44,6 +45,8 @@ class ForkError(Exception):
             "retryable": self.retryable,
             "suggested_next_command": self.suggested_next_command,
         }
+        out.update(self.extras)
+        return out
 
 
 def err_no_terminal():
@@ -138,6 +141,7 @@ def err_workspace_unknown(requested, detail=None):
         "rerun with the right title or ref.",
         False,
         "fork_terminal.py --workspace <title-or-ref> -- <command>",
+        extras={"requested": requested},
     )
 
 
@@ -160,6 +164,8 @@ def err_workspace_ambiguous(requested, candidates):
         "with --workspace <ref>.",
         False,
         f"fork_terminal.py --workspace <one of: {listed_refs}> -- <command>",
+        extras={"requested": requested,
+                "candidates": [dict(c) for c in candidates]},
     )
 
 

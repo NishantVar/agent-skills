@@ -182,3 +182,80 @@ def test_workspace_unknown_main_returns_handoff(reg, capsys, monkeypatch):
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is False
     assert out["code"] == "workspace_unknown"
+
+
+# ---- CmuxTerminal._open_surface initial-pane reuse ----
+
+def test_open_surface_reuses_initial_surface_on_created(monkeypatch):
+    """When the workspace was just created (workspace.created=True) and
+    no placement is given, _open_surface reuses the workspace's initial
+    surface instead of calling cmux new-pane. cmux new-workspace seeds
+    one pane/surface; spawning another would leave a blank pane."""
+    from tforklib import terminal as term_mod
+    monkeypatch.setattr(term_mod, "_cmux_tree", lambda: {"windows": [
+        {"workspaces": [
+            {"ref": "workspace:42", "panes": [
+                {"surfaces": [{"ref": "surface:777"}]}
+            ]}
+        ]}
+    ]})
+    called = []
+    cmx = term_mod.CmuxTerminal()
+    monkeypatch.setattr(cmx, "_new_pane_in_workspace",
+                        lambda *a, **k: called.append(("new_pane", a, k)))
+    seeded = cmx._open_surface(
+        placement=None, anchor=None,
+        workspace={"ref": "workspace:42", "title": "x", "created": True},
+    )
+    assert seeded == "surface:777"
+    assert called == []
+    # The surface→workspace cache is seeded so downstream per-pane calls
+    # carry --workspace.
+    assert cmx._workspaces["surface:777"] == "workspace:42"
+
+
+def test_open_surface_calls_new_pane_when_workspace_reused(monkeypatch):
+    """A reused workspace already had whatever panes the user opened;
+    tfork must open its own fresh pane, not stomp into one of theirs."""
+    from tforklib import terminal as term_mod
+    monkeypatch.setattr(term_mod, "_cmux_tree", lambda: {"windows": []})
+    cmx = term_mod.CmuxTerminal()
+    called = []
+    monkeypatch.setattr(cmx, "_new_pane_in_workspace",
+                        lambda ws_ref, direction:
+                            called.append((ws_ref, direction))
+                            or "surface:fresh")
+    out = cmx._open_surface(
+        placement=None, anchor=None,
+        workspace={"ref": "workspace:9", "title": "x", "created": False},
+    )
+    assert out == "surface:fresh"
+    assert called == [("workspace:9", None)]
+
+
+def test_open_surface_skips_reuse_when_created_workspace_has_extra_panes(
+        monkeypatch):
+    """Defensive: if a TOCTOU race let someone open more panes between
+    cmux new-workspace and our reuse lookup, fall back to new-pane —
+    reusing an arbitrary one of their panes would be wrong."""
+    from tforklib import terminal as term_mod
+    monkeypatch.setattr(term_mod, "_cmux_tree", lambda: {"windows": [
+        {"workspaces": [
+            {"ref": "workspace:5", "panes": [
+                {"surfaces": [{"ref": "surface:1"}]},
+                {"surfaces": [{"ref": "surface:2"}]},
+            ]}
+        ]}
+    ]})
+    cmx = term_mod.CmuxTerminal()
+    called = []
+    monkeypatch.setattr(cmx, "_new_pane_in_workspace",
+                        lambda ws_ref, direction:
+                            called.append((ws_ref, direction))
+                            or "surface:new")
+    out = cmx._open_surface(
+        placement=None, anchor=None,
+        workspace={"ref": "workspace:5", "title": "x", "created": True},
+    )
+    assert out == "surface:new"
+    assert called == [("workspace:5", None)]

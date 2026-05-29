@@ -172,9 +172,11 @@ def cmd_send(args) -> int:
     elif args.workspace:
         workspace_for_spawn = args.workspace
         if surface.is_workspace_ref(args.workspace):
-            # Validate the ref points at a live workspace; titles win
-            # for spawn payload stability, so swap to title when we
-            # have it.
+            # Validate the ref points at a live workspace. Prefer the
+            # title for the spawn payload so a downstream tfork lands
+            # the new peer in the same workspace by name — but only if
+            # the title is globally unique; otherwise keep the
+            # unambiguous ref so tfork does not see workspace_ambiguous.
             ws_list = surface.list_workspaces()
             match = next((t for (r, t) in ws_list if r == args.workspace),
                          None)
@@ -182,7 +184,7 @@ def cmd_send(args) -> int:
                 _print_json(errors.workspace_unknown(args.workspace, rerun))
                 return EXIT_HANDOFF
             scope_workspace_ref = args.workspace
-            if match:
+            if match and sum(1 for (_, t) in ws_list if t == match) == 1:
                 workspace_for_spawn = match
         else:
             ws_list = surface.list_workspaces()

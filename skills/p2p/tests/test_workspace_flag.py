@@ -200,10 +200,10 @@ def test_peer_unknown_carries_workspace_title_for_spawn(
     assert "--workspace Sandbox" in out["agent_instruction"]
 
 
-def test_peer_unknown_ref_surfaces_title_when_resolvable(
+def test_peer_unknown_ref_surfaces_title_when_unique(
         tmp_registry, fc, monkeypatch, capsys):
-    """When --workspace is a ref but the ref maps to a live workspace
-    with a title, the spawn payload prefers the title (per spec
+    """When --workspace is a ref and the title is unique across live
+    workspaces, the spawn payload prefers the title (per spec
     'Title preferred over ref in the payload for stability')."""
     _seed_self()
     fc.add(workspace_ref="workspace:7", workspace_title="Sandbox",
@@ -214,6 +214,27 @@ def test_peer_unknown_ref_surfaces_title_when_resolvable(
     assert rc == cli.EXIT_HANDOFF
     assert out["code"] == "peer_unknown"
     assert out["workspace"] == "Sandbox"
+
+
+def test_peer_unknown_ref_keeps_ref_when_title_is_duplicated(
+        tmp_registry, fc, monkeypatch, capsys):
+    """When --workspace is a ref and another live workspace shares the
+    same title, the spawn payload keeps the ref. Downgrading to the
+    duplicated title would make tfork return workspace_ambiguous on
+    the spawn handoff, even though the original send was scoped to a
+    single unambiguous workspace."""
+    _seed_self()
+    fc.add(workspace_ref="workspace:7", workspace_title="Dup",
+           surface_ref="surface:700", title="x")
+    fc.add(workspace_ref="workspace:8", workspace_title="Dup",
+           surface_ref="surface:800", title="y")
+    rc, out = _run_send(monkeypatch, capsys, [
+        "--peer", "ghost", "--workspace", "workspace:7",
+    ])
+    assert rc == cli.EXIT_HANDOFF
+    assert out["code"] == "peer_unknown"
+    assert out["workspace"] == "workspace:7"
+    assert "--workspace workspace:7" in out["agent_instruction"]
 
 
 def test_peer_unknown_ref_without_title_keeps_ref(
