@@ -29,7 +29,7 @@ description: 'P2P messaging between cmux agents: one verb (`send`) handles first
 2. Decide whether The helper returned ok:false. Read `agent_instruction` and act applies and, if so:
    a. Follow the follow-handoff-instruction procedure.
 3. Decide whether A teammate's message in your own scrollback was truncated. Read the full body from the peer's surface applies and, if so:
-   a. Follow the recover-truncated-peer-message procedure.
+   a. When a teammate's message in your own scrollback is cut off (a piped `grep | head` truncation, a long HOLD that scrolled, etc.), read it directly from the peer's surface instead of guessing or asking. The peer's own tab shows the full body they sent. Get the peer's surface from the prior `send` success object (`surface:N`) or from `agent_msg.py list`. Run `cmux read-screen --surface surface:<N> --lines 3000` and scan the tail for the `[from: <peer>]` block; copy the full body from there.
 
 ### Procedure: reply-to-inline-bootstrap
 
@@ -48,10 +48,4 @@ description: 'P2P messaging between cmux agents: one verb (`send`) handles first
 6. `info_needed` with `missing: ["self_title"]` → safety net: you should have passed --my-title upfront on the first send. Choose a snake_case role-reflective title from your own context and rerun with `--my-title <t>`. Do NOT ask the human.
 7. `title_collision` → another live agent in the workspace already holds that title. Pick a different --my-title and rerun.
 8. `empty_message` → write a non-empty body and rerun.
-
-### Procedure: recover-truncated-peer-message
-
-1. When a teammate's message in your own scrollback is cut off (a piped `grep | head` truncation, a long HOLD that scrolled, etc.), read it directly from the peer's surface instead of guessing or asking. The peer's own tab shows the full body they sent.
-2. Get the peer's surface from the prior `send` success object (`surface:N`) or from `agent_msg.py list`.
-3. Run `cmux read-screen --surface surface:<N> --lines 3000` and scan the tail for the `[from: <peer>]` block; copy the full body from there.
 
