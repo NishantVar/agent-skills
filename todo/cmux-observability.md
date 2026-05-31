@@ -55,6 +55,22 @@ codex NEEDS_INPUT (additional rule):
 
 **Out of scope for v1.2.** Filed as v1.2.1.
 
+## Monitor (not yet actionable)
+
+### State window sizing under pane-shape drift
+The 24-line / 2-KB tail window is heuristic. Very long single lines (codex horizontal-rule continuations are ~80–300 chars each) could in principle consume the byte budget; in practice Worked-for + chrome stays well inside the window today. Act if classifier false-idle rate on codex climbs, or if a new agent kind ships with wider chrome.
+
+### Pyright `reportMissingImports` noise on classifier tests
+Editable-install + `_json_path` convention; pre-existing across the branch. Act when the broader repo Pyright config is normalized.
+
+### gemini classification still punted
+No gemini-specific patterns; gemini panes resolve via generic patterns or fall to unknown. No live gemini surfaces during Phase B capture window. When a live gemini corpus is available: same shape as the codex Phase B work — capture, derive patterns, pin fixtures.
+
+## Shipped
+
+- 2026-05-28 · v1.2 scrollback-driven state classifier — PR #19 (HEAD `862c579`). Landing review: `$OBSIDIAN/plans/cmux-observability-scrollback-state-v1.2-review-2026-05-28.html`.
+- 2026-05-28 · Phase E follow-up: codex idle relaxation + chrome-only fallback — `0f9f314` + `862c579` (closed qa_lead HOLD on surface:160 + Reviewer P2/P3).
+
 ## Spec/coverage drift to watch
 
 - The 15th fixture `tests/fixtures/scrollback/codex_idle__chrome_only_no_worked_for.txt` was added late by Monitor at Reviewer's request to cover the chrome-alone `(idle, 0.6)` fallback branch (previously unexercised). If anyone tightens the chrome-alone fallback later, that fixture is the canary.

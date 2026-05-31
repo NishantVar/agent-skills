@@ -16,6 +16,9 @@ skill p2p(my_title = "" <"REQUIRED on first send for this agent EXCEPT on inline
         if follow_handoff_instruction.applies()
             follow_handoff_instruction()
 
+        if recover_truncated_peer_message.applies()
+            recover_truncated_peer_message()
+
 
 block send_via_helper()
     description: "Issue one `send` call. The helper handles registration, title resolution, plain-vs-bootstrap framing, cross-workspace routing, and payload-file generation."
@@ -45,6 +48,14 @@ block follow_handoff_instruction()
         "`info_needed` with `missing: [\"self_title\"]` → safety net: you should have passed --my-title upfront on the first send. Choose a snake_case role-reflective title from your own context and rerun with `--my-title <t>`. Do NOT ask the human."
         "`title_collision` → another live agent in the workspace already holds that title. Pick a different --my-title and rerun."
         "`empty_message` → write a non-empty body and rerun."
+
+
+block recover_truncated_peer_message()
+    description: "A teammate's message in your own scrollback was truncated. Read the full body from the peer's surface."
+    flow:
+        "When a teammate's message in your own scrollback is cut off (a piped `grep | head` truncation, a long HOLD that scrolled, etc.), read it directly from the peer's surface instead of guessing or asking. The peer's own tab shows the full body they sent."
+        "Get the peer's surface from the prior `send` success object (`surface:N`) or from `agent_msg.py list`."
+        "Run `cmux read-screen --surface surface:<N> --lines 3000` and scan the tail for the `[from: <peer>]` block; copy the full body from there."
 
 
 const single_stable_title = """Pick one short, lowercase, snake_case title on the first call and keep it for life. Peers route by `(workspace, title)`; renaming mid-session makes this agent unreachable under the prior title. The helper renames the cmux tab cosmetically to match the registered title."""
