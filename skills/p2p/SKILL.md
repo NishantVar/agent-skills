@@ -29,7 +29,7 @@ description: 'P2P messaging between cmux agents: one verb (`send`) handles first
 2. Decide whether The helper returned ok:false. Read `agent_instruction` and act applies and, if so:
    a. Follow the follow-handoff-instruction procedure.
 3. Decide whether A teammate's message in your own scrollback was truncated. Read the full body from the peer's surface applies and, if so:
-   a. When a teammate's message in your own scrollback is cut off (a piped `grep | head` truncation, a long HOLD that scrolled, etc.), read it directly from the peer's surface instead of guessing or asking. The peer's own tab shows the full body they sent. Get the peer's surface from the prior `send` success object (`surface:N`) or from `agent_msg.py list`. Run `cmux read-screen --surface surface:<N> --lines 3000` and scan the tail for the `[from: <peer>]` block; copy the full body from there.
+   a. When a teammate's message in your own scrollback is cut off (a piped `grep | head` truncation, a long HOLD that scrolled, etc.), read it directly from the peer's surface instead of guessing or asking. The peer's own tab shows the full body they sent. Get the peer's surface from the prior `send` success object (`surface:N`). Run `cmux read-screen --surface surface:<N> --lines 3000` and scan the tail for the `[from: <peer>]` block; copy the full body from there.
 
 ### Procedure: reply-to-inline-bootstrap
 

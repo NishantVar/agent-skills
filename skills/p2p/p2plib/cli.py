@@ -259,7 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agent_msg")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("list").set_defaults(func=cmd_list)
+    # `list` disabled for now: agents kept reaching for it despite SKILL.md
+    # teaching `send` as the single verb. cmd_list stays defined so a human
+    # can re-enable by uncommenting this line.
+    # sub.add_parser("list").set_defaults(func=cmd_list)
 
     s = sub.add_parser("send")
     # --peer is not argparse-required because --bootstrap-file can

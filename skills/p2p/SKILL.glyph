@@ -54,7 +54,7 @@ block recover_truncated_peer_message()
     description: "A teammate's message in your own scrollback was truncated. Read the full body from the peer's surface."
     flow:
         "When a teammate's message in your own scrollback is cut off (a piped `grep | head` truncation, a long HOLD that scrolled, etc.), read it directly from the peer's surface instead of guessing or asking. The peer's own tab shows the full body they sent."
-        "Get the peer's surface from the prior `send` success object (`surface:N`) or from `agent_msg.py list`."
+        "Get the peer's surface from the prior `send` success object (`surface:N`)."
         "Run `cmux read-screen --surface surface:<N> --lines 3000` and scan the tail for the `[from: <peer>]` block; copy the full body from there."
 
 
