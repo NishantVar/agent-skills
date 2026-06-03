@@ -5,3 +5,4 @@ tmp/
 .obsidian
 research
 *ir.json
+.claude/worktrees
