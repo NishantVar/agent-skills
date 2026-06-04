@@ -98,6 +98,31 @@ def test_api_error_only_in_recent_tail():
     assert w.detect_api_error(screen) is None
 
 
+def test_api_error_ignores_token_count_in_thinking_status_line():
+    # Claude/Codex thinking status lines render token counts that collide with
+    # HTTP codes ("429 tokens", "500 tokens") — must NOT flag a healthy agent.
+    assert w.detect_api_error("✳ Billowing… (9s · ↓ 429 tokens · thinking with high effort)\n") is None
+    assert w.detect_api_error("✽ Working… (12s · ↑ 500 tokens)\n") is None
+    assert w.detect_api_error("● thinking (3s · ↓ 503 tokens · esc to interrupt)\n") is None
+
+
+def test_api_error_still_fires_on_real_codes_and_phrases():
+    # The tightening must not suppress genuine errors.
+    assert w.detect_api_error("hmm\n429 Too Many Requests\n") is not None
+    assert w.detect_api_error("HTTP 503 Service Unavailable\n") is not None
+    assert w.detect_api_error("Error: rate limit exceeded\n") is not None
+    assert w.detect_api_error("API Error: 500 internal server error\n") is not None
+    # "Too Many Requests" phrase alone (no bare code) still flags.
+    assert w.detect_api_error("Error: Too Many Requests, please retry\n") is not None
+
+
+def test_api_error_token_count_without_error_phrase_is_accepted_blind_spot():
+    # Documented tradeoff: a bare "<code> tokens" status never flags. A real error
+    # that ONLY says "<code> tokens ... exceeded" with no rate-limit/HTTP phrase is
+    # the accepted residual blind spot (rare — real API errors carry a phrase).
+    assert w.detect_api_error("✳ Billowing… (9s · ↓ 429 tokens)\n") is None
+
+
 # --- redaction ------------------------------------------------------------
 
 def test_redact_masks_token_in_evidence():
@@ -313,6 +338,48 @@ def test_filter_scope_caller_workspace_env(monkeypatch):
     surfaces = w.parse_tree(TREE)
     got = w.filter_scope(surfaces, None)
     assert {s.surface_ref for s in got} == {"surface:9"}
+
+
+_WS_UUID = "8E6903E5-D90D-4F88-BE5D-1C0A29E70746"
+
+
+def test_filter_scope_resolves_uuid_to_caller_ref():
+    # The overnight regression: a workspace UUID scope (cmux tree only yields
+    # workspace:N refs) must resolve to the caller's ref, NOT match zero.
+    surfaces = w.parse_tree(TREE)
+    got = w.filter_scope(surfaces, _WS_UUID, caller_ws_ref="workspace:5")
+    assert {s.surface_ref for s in got} == {"surface:9"}
+
+
+def test_filter_scope_default_uuid_env_resolves(monkeypatch):
+    # bare scan/watch (scope=None) inheriting a UUID CMUX_WORKSPACE_ID resolves
+    # via the caller ref instead of journaling zero — the exact overnight bug.
+    monkeypatch.setenv("CMUX_WORKSPACE_ID", _WS_UUID)
+    surfaces = w.parse_tree(TREE)
+    got = w.filter_scope(surfaces, None, caller_ws_ref="workspace:5")
+    assert {s.surface_ref for s in got} == {"surface:9"}
+
+
+def test_filter_scope_uuid_unresolvable_degrades_to_all(monkeypatch):
+    # If the UUID can't be resolved (no CMUX_SURFACE_ID), degrade to all rather
+    # than silently matching zero.
+    monkeypatch.delenv("CMUX_SURFACE_ID", raising=False)
+    surfaces = w.parse_tree(TREE)
+    got = w.filter_scope(surfaces, _WS_UUID)  # caller_ws_ref None -> identify -> None -> all
+    assert len(got) == len(surfaces)
+
+
+def test_filter_scope_ref_and_title_unchanged_with_uuid_support():
+    # ref / title / all paths must still behave exactly as before.
+    surfaces = w.parse_tree(TREE)
+    assert len(w.filter_scope(surfaces, "all")) == 2
+    assert {s.surface_ref for s in w.filter_scope(surfaces, "workspace:5")} == {"surface:9"}
+    assert {s.surface_ref for s in w.filter_scope(surfaces, "Meta Eval")} == {"surface:2"}
+
+
+def test_scope_matches_resolves_uuid():
+    assert w._scope_matches("workspace:5", "Meta Eval", _WS_UUID, caller_ws_ref="workspace:5")
+    assert not w._scope_matches("workspace:6", "Other", _WS_UUID, caller_ws_ref="workspace:5")
 
 
 # --- journaling -----------------------------------------------------------

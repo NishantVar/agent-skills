@@ -78,8 +78,12 @@ _ACTIVE_RE = re.compile(
 # Known API / transport failure signatures. Order matters only for the label.
 _API_ERROR_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("overloaded",     re.compile(r"overloaded_error|\boverloaded\b", re.IGNORECASE)),
-    ("rate_limit",     re.compile(r"rate[ _]?limit|\b429\b", re.IGNORECASE)),
-    ("server_5xx",     re.compile(r"\b5(00|02|03|29)\b|internal server error|bad gateway|service unavailable", re.IGNORECASE)),
+    # Bare numeric codes carry a negative-lookahead for "tokens" so they don't
+    # false-fire on agent thinking status lines ("↓ 429 tokens", "500 tokens"),
+    # where the number is a token count, not an HTTP status. Explicit textual
+    # phrases (rate limit / server error words) still match regardless.
+    ("rate_limit",     re.compile(r"rate[ _]?limit|too many requests|\b429\b(?!\s*tokens?\b)", re.IGNORECASE)),
+    ("server_5xx",     re.compile(r"\b5(00|02|03|29)\b(?!\s*tokens?\b)|internal server error|bad gateway|service unavailable", re.IGNORECASE)),
     ("api_error",      re.compile(r"\bAPI Error\b|api_error", re.IGNORECASE)),
     ("connection",     re.compile(r"connection error|ECONNRESET|ETIMEDOUT|ENOTFOUND|socket hang up|fetch failed|getaddrinfo", re.IGNORECASE)),
     ("timeout",        re.compile(r"request timed out|\btimeout\b", re.IGNORECASE)),
@@ -250,14 +254,49 @@ def parse_tree(stdout: str) -> list[SurfaceRef]:
     return surfaces
 
 
-def filter_scope(surfaces: list[SurfaceRef], scope: str | None) -> list[SurfaceRef]:
-    """scope is None (caller workspace), 'all', a workspace ref, or a title."""
-    if scope == "all":
-        return surfaces
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _caller_workspace_ref() -> str | None:
+    """The watchdog's own workspace as a workspace:N ref, resolved from
+    CMUX_SURFACE_ID via `cmux identify` -> caller.workspace_ref. Mirrors
+    _controller_surface_ref. Returns None when the env is unset or resolution
+    fails (degrade, never crash)."""
+    sid = os.environ.get("CMUX_SURFACE_ID", "").strip()
+    if not sid:
+        return None
+    try:
+        out = _run_cmux("identify", "--surface", sid)
+        ref = json.loads(out).get("caller", {}).get("workspace_ref")
+    except (CmuxError, json.JSONDecodeError, KeyError, AttributeError):
+        return None
+    return ref or None
+
+
+def _resolve_scope_token(scope: str | None, caller_ws_ref: str | None = None) -> str | None:
+    """Map a workspace-UUID scope to its workspace:N ref. `cmux tree` only yields
+    workspace:N refs, so a UUID scope (e.g. the inherited CMUX_WORKSPACE_ID of an
+    un-scoped launch) matches nothing and silently journals zero panes — the exact
+    overnight regression. A UUID is assumed to be the caller's own workspace and
+    resolved via `cmux identify`; if it can't be resolved, degrade to 'all' rather
+    than match zero. Non-UUID scopes (None/'all'/ref/title) pass through unchanged.
+    caller_ws_ref is injectable for tests so the resolution stays unit-testable."""
+    if not scope or not _UUID_RE.match(scope):
+        return scope
+    resolved = caller_ws_ref if caller_ws_ref is not None else _caller_workspace_ref()
+    return resolved or "all"
+
+
+def filter_scope(surfaces: list[SurfaceRef], scope: str | None,
+                 caller_ws_ref: str | None = None) -> list[SurfaceRef]:
+    """scope is None (caller workspace), 'all', a workspace ref, a title, or a
+    workspace UUID (resolved to a ref via _resolve_scope_token)."""
     if scope is None:
         scope = os.environ.get("CMUX_WORKSPACE_ID", "")
-        if not scope:
-            return surfaces  # no anchor — degrade to all rather than nothing
+    scope = _resolve_scope_token(scope, caller_ws_ref)
+    if scope == "all" or not scope:
+        return surfaces  # 'all' or no anchor — degrade to all rather than nothing
     return [
         s for s in surfaces
         if scope in (s.workspace_ref, s.workspace_title)
@@ -506,16 +545,17 @@ def apply_known_resolution(f: Finding, resolutions: dict[str, str]) -> Finding:
     return replace(f, tier="safe", remediation=action, known_resolution=action)
 
 
-def _scope_matches(ws_ref: str, ws_title: str, scope: str | None) -> bool:
+def _scope_matches(ws_ref: str, ws_title: str, scope: str | None,
+                   caller_ws_ref: str | None = None) -> bool:
     """Mirror filter_scope() exactly so digest selects the same workspaces watch
     journaled: token in {workspace_ref, workspace_title}, or 'all', or the
-    CMUX_WORKSPACE_ID default (degrading to all when there is no anchor)."""
-    if scope == "all":
-        return True
-    if not scope:
+    CMUX_WORKSPACE_ID default — including the same UUID->ref resolution, so a
+    default/UUID scope matches the caller's panes instead of zero."""
+    if scope is None:
         scope = os.environ.get("CMUX_WORKSPACE_ID", "")
-        if not scope:
-            return True  # no anchor — degrade to all, as filter_scope does
+    scope = _resolve_scope_token(scope, caller_ws_ref)
+    if scope == "all" or not scope:
+        return True  # 'all' or no anchor — degrade to all, as filter_scope does
     return scope in (ws_ref, ws_title)
 
 
