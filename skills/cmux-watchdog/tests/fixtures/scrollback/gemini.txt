@@ -1,0 +1,10 @@
+✦ Thinking about your request...
+
+  I will help you refactor the function. Here is the plan:
+  1. Extract the helper
+  2. Update callers
+  3. Run the tests
+
+  Using gemini-2.5-pro · ~/git/agent-skills
+
+> implement step 1

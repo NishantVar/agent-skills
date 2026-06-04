@@ -1,0 +1,11 @@
+  [redacted earlier narrative]
+
+  Verification: git diff --check passed, and I scanned for the old
+  pattern; no remaining matches in design/eval markdown.
+
+─ Worked for 4m 53s ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+› Find and fix a bug in @filename
+
+  gpt-5.5 xhigh · Context 53% left · ~/redacted/path · main

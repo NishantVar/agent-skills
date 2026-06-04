@@ -1,0 +1,9 @@
+nishant@host project % ls
+README.md  src/  tests/  pyproject.toml
+nishant@host project % git status
+On branch main
+nothing to commit, working tree clean
+nishant@host project % python -m pytest -q
+.................                                                       [100%]
+17 passed in 0.42s
+nishant@host project %

@@ -1,0 +1,6 @@
+total 24
+drwxr-xr-x  4 user  staff   128 May 27 14:33 .
+drwxr-xr-x  9 user  staff   288 May 27 14:30 ..
+-rw-r--r--  1 user  staff  1234 May 27 14:32 README.md
+drwxr-xr-x  3 user  staff    96 May 27 14:33 src
+user@host:~/project$

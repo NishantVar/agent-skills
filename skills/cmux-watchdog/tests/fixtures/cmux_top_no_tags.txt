@@ -1,0 +1,6 @@
+  CPU%    MEMORY  PROC  NODE
+ 167.7%   13.5 GB   237  total
+ 167.7%   13.5 GB   237  window window:1 [key]
+   8.0%    1.2 GB    25  ├── workspace workspace:14 "watchwise"
+   1.1%  980.1 MB     9  │   ├── pane pane:38
+   1.1%  980.1 MB     9  │   │   └── surface surface:39 [terminal] "sim_driver" [selected] tty=ttys026
