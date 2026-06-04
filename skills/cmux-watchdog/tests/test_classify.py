@@ -3,13 +3,20 @@
 The classifier inspects the last ~2 KB of a surface's read-screen output and
 returns ``(agent_kind, confidence)``. See ``classify_from_scrollback`` for the
 full contract.
+
+Migrated from cmux-observability (v1.2 classifier) when watchdog became the
+sole cmux reader/classifier; the module now lives as a sibling of watchdog.py.
 """
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
-from cmux_observability.collector.classify import (
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from classify import (  # noqa: E402
     SCROLLBACK_WINDOW_BYTES,
     classify_from_scrollback,
 )

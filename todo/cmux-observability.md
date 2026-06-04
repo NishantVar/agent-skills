@@ -2,6 +2,33 @@
 
 Open work items for the `cmux-observability` skill. Update as items land or new ones surface. Last refreshed 2026-05-28 at v1.2 sign-off.
 
+## ✅ Architecture change LANDED (2026-06-04): pure view layer — branch feat/cmux-capture-layer
+cmux-watchdog is now the sole cmux reader/classifier; this skill is a **pure view
+layer**. Implemented:
+- `collect` no longer reads cmux. It ingests cmux-watchdog's **capture envelope**
+  (`--input <path>` or stdin) via `ingest.py` (deterministic mapper -> Snapshot,
+  `validate_capture_envelope` rejects unsupported `capture_schema_version` majors).
+  The agent runs `watchdog.py snapshot` and pipes it in (skill-boundary: obs never
+  shells out to watchdog).
+- `summarize_io.pending_for_agent`/`attach_cached_summaries` gained a
+  `redaction_meta` param: the envelope's `screen_hash` + `redactions_applied` are
+  authoritative; obs never re-redacts/re-hashes and never sees raw text.
+- DELETED: `collector/cmux.py`, `normalize.py`, `collector/classify.py`, and the
+  cmux/classifier tests (test_collector_cmux, test_normalize, test_classify,
+  test_state_classifier, test_classifier_integration, test_cli_state_wiring) —
+  the v1.2 classifier + its tests now live in watchdog (`classify.py`,
+  `test_state_wiring.py`). KEPT: `collector/discovery.py` + `collector/git.py`
+  (git/productivity, not cmux), themes, finalize, render.
+- test_cli/test_cli_finalize rewritten to feed envelopes; `test_capture_contract.py`
+  asserts golden ingest + **zero cmux calls**. Obs suite **140 passed**.
+- SKILL.glyph desc → pure view layer consuming the envelope; recompiled + validate
+  clean. Shared golden fixture: `tests/fixtures/golden_snapshot.json` (byte-identical
+  to watchdog's, regen via `skills/cmux-watchdog/tests/gen_golden.py`).
+
+Design doc: `$OBSIDIAN/plans/cmux-capture-layer-design-2026-06-04.md`. The v1.2
+classifier items below are now the spec of record FOR WATCHDOG (where the code
+moved); kept here for history.
+
 ## Status of in-flight work
 
 - **v1.1 — PR #18** (`feat/cmux-observability-dashboard-v1.1`): open, awaiting merge.

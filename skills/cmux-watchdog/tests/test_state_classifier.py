@@ -14,12 +14,19 @@ the post-Phase-B calibration ladder:
 
 After the Phase C follow-up, missing fixture files assert/fail rather
 than skip — the corpus is authoritative.
+
+Migrated from cmux-observability when watchdog became the sole cmux
+reader/classifier; imports the sibling `classify` module.
 """
+import os
+import sys
 from pathlib import Path
 
 import pytest
 
-from cmux_observability.collector.classify import state_from_scrollback
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from classify import state_from_scrollback  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "scrollback"
 

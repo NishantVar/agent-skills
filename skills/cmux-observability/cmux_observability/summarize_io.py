@@ -77,9 +77,29 @@ def _is_summary_eligible(agent) -> bool:
     return agent.state in ("running", "needs_input")
 
 
+def _redacted_and_hash(
+    raw: str, surface_ref: str,
+    redaction_meta: dict[str, dict] | None,
+) -> tuple[str, str, list[str]]:
+    """Resolve (redacted_text, screen_hash, redactions_applied) for a surface.
+
+    When `redaction_meta` carries an entry for this surface (the watchdog
+    capture path), `raw` is already redacted and the authoritative screen_hash +
+    redactions list come straight from the envelope — observability never
+    re-redacts and never re-hashes. Otherwise (legacy/raw path) redact + hash
+    locally.
+    """
+    if redaction_meta is not None and surface_ref in redaction_meta:
+        meta = redaction_meta[surface_ref]
+        return raw, meta["screen_hash"], list(meta.get("redactions_applied", []))
+    redacted, applied = redact(raw)
+    return redacted, _screen_hash(redacted), applied
+
+
 def attach_cached_summaries(
     snap: Snapshot, conn: sqlite3.Connection,
     screens: dict[str, str], prompt_version: int,
+    redaction_meta: dict[str, dict] | None = None,
 ) -> None:
     """Attach cached summaries for the requested `prompt_version` and clear
     stale ones. Walks each summary-eligible agent (cmux_tag running /
@@ -95,8 +115,9 @@ def attach_cached_summaries(
         raw = screens.get(agent.surface_ref)
         if raw is None:
             continue
-        redacted, _applied = redact(raw)
-        h = _screen_hash(redacted)
+        _redacted, h, _applied = _redacted_and_hash(
+            raw, agent.surface_ref, redaction_meta,
+        )
         cached = _cache_lookup(conn, agent.surface_ref, h, prompt_version)
         agent.summary = cached
 
@@ -105,13 +126,20 @@ def pending_for_agent(
     snap: Snapshot, conn: sqlite3.Connection,
     screens: dict[str, str], prompt_version: int,
     max_scrollback_bytes: int = DEFAULT_MAX_SCROLLBACK_BYTES,
+    redaction_meta: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Return JSON-ready payload listing agents that still need a summary.
 
     Cache hits are short-circuited: those agents get their Summary attached
     directly to `snap` and are absent from the returned list.
+
+    When `redaction_meta` is supplied (the watchdog capture path), each screen in
+    `screens` is already redacted+capped and its authoritative screen_hash +
+    redactions come from the envelope — the payload ships that text verbatim and
+    does not re-redact, re-hash, or re-truncate. Without it, the legacy local
+    redact/hash/truncate path runs.
     """
-    attach_cached_summaries(snap, conn, screens, prompt_version)
+    attach_cached_summaries(snap, conn, screens, prompt_version, redaction_meta)
     pending: list[dict] = []
     for agent in snap.agents:
         if not _is_summary_eligible(agent):
@@ -121,8 +149,13 @@ def pending_for_agent(
         raw = screens.get(agent.surface_ref)
         if raw is None:
             continue
-        redacted, applied = redact(raw)
-        h = _screen_hash(redacted)
+        redacted, h, applied = _redacted_and_hash(
+            raw, agent.surface_ref, redaction_meta,
+        )
+        if redaction_meta is not None and agent.surface_ref in redaction_meta:
+            scrollback = redacted          # already capped by watchdog
+        else:
+            scrollback = _truncate_scrollback(redacted, max_scrollback_bytes)
         # workspace title lookup
         ws_title = next(
             (w.title for w in snap.workspaces if w.ref == agent.workspace_ref),
@@ -143,7 +176,7 @@ def pending_for_agent(
             "cmux_state": agent.state,
             "title": title,
             "cwd": cwd,
-            "scrollback": _truncate_scrollback(redacted, max_scrollback_bytes),
+            "scrollback": scrollback,
             "screen_hash": h,
             "redactions_applied": applied,
             "prompt_version": prompt_version,
@@ -211,17 +244,28 @@ def record_from_agent(
             redaction_summary=", ".join(applied),
         )
 
-        # cmux_tag agents: tag wins on state-hint disagreement.
-        # heuristic agents start state=unknown; the summarizer is how we
-        # learn their real state, so we adopt the hint instead of complaining.
+        # watchdog (cmux_tag or scrollback) is the SOLE cmux state classifier.
+        # Adopt the agent-authored state_hint ONLY when watchdog left this agent
+        # unclassified — state still "unknown", or only heuristically typed with
+        # no authoritative state. When watchdog HAS classified the state
+        # authoritatively, never overwrite it; only record a non-fatal
+        # disagreement (mirrors what the cmux_tag path always did).
         if state_hint:
-            if agent.type_source == "heuristic":
+            watchdog_authoritative = (
+                agent.state != "unknown"
+                and agent.state_source in ("cmux_tag", "scrollback")
+            )
+            if not watchdog_authoritative:
                 agent.state = state_hint
                 agent.state_source = "agent_summary"
             elif state_hint != agent.state:
+                source_label = (
+                    "cmux tag" if agent.state_source == "cmux_tag"
+                    else "watchdog scrollback"
+                )
                 failures.append(Failure(
                     component="summarize_io", target=sref,
-                    message=f"state hint {state_hint!r} disagreed with cmux tag {agent.state!r}",
+                    message=f"state hint {state_hint!r} disagreed with {source_label} {agent.state!r}",
                 ))
 
         cache_payload = {

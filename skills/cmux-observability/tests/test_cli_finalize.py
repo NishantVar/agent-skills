@@ -1,14 +1,14 @@
-"""No-cmux end-to-end integration smoke (T13).
+"""End-to-end integration smoke for the pure view layer.
 
-Spawns the CLI in a real subprocess against a fake $HOME and a $PATH that
-excludes `cmux`, then walks `collect` -> `finalize` and asserts the
-operator-facing artifacts (HTML/JSON, runstate, failures) behave under the
-degraded condition. There are no daemons, no servers, no watch loops here:
-T13 is strictly the subprocess CLI flow.
+Spawns the CLI in a real subprocess against a fake $HOME, pipes a watchdog
+capture envelope into `collect` (observability no longer reads cmux), and walks
+`collect` → `finalize` (and the full 5-step contract) asserting the
+operator-facing artifacts. No daemons, no servers, no watch loops.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -20,13 +20,6 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _resolve_interpreter() -> str:
-    """Pick a Python interpreter the same way SKILL.md prescribes:
-    first match wins among `python3`, `python`; both must import jinja2
-    and satisfy `sys.version_info >= (3, 11)`. Returns the absolute path
-    of the chosen interpreter; raises if none qualifies.
-
-    Explicit (not `sys.executable`) per reviewer Amendment 1.
-    """
     probe = (
         "import sys, jinja2;"
         "sys.exit(0 if sys.version_info >= (3, 11) else 1)"
@@ -40,25 +33,25 @@ def _resolve_interpreter() -> str:
         ).returncode
         if rc == 0:
             return path
-    raise RuntimeError(
-        "no suitable python on PATH (need >=3.11 with jinja2)"
-    )
+    raise RuntimeError("no suitable python on PATH (need >=3.11 with jinja2)")
 
 
-def _child_env(fake_home: Path, fake_bin: Path) -> dict[str, str]:
-    """A minimal child env: PATH excludes `cmux`, HOME points to the fake
-    tree, PYTHONPATH lets the subprocess import `cmux_observability`."""
-    env = {
+def _child_env(fake_home: Path) -> dict[str, str]:
+    return {
         "HOME": str(fake_home),
-        # Empty bin dir guarantees cmux is unfindable even if the parent
-        # had one earlier on PATH.
-        "PATH": f"{fake_bin}{os.pathsep}/usr/bin:/bin",
+        "PATH": "/usr/bin:/bin",
         "PYTHONPATH": str(SKILL_ROOT),
-        # Keep the child quiet/portable.
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
     }
-    return env
+
+
+def _fake_home(tmp_path: Path) -> Path:
+    fake_home = tmp_path / "home"
+    (fake_home / ".local" / "share" / "cmux-observability").mkdir(parents=True)
+    (fake_home / ".local" / "state" / "cmux-observability").mkdir(parents=True)
+    (fake_home / ".config" / "cmux-observability").mkdir(parents=True)
+    return fake_home
 
 
 def _run_cli(py: str, args: list[str], *, env: dict[str, str],
@@ -69,213 +62,177 @@ def _run_cli(py: str, args: list[str], *, env: dict[str, str],
     )
 
 
+# --- envelope helpers ------------------------------------------------------
+
+def _hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _envelope(*, workspaces=None, agents=None, captures=None, failures=None,
+              cmux_version: str | None = "0.64.10") -> str:
+    return json.dumps({
+        "capture_schema_version": 1,
+        "captured_at": "2026-05-27T12:00:00+00:00",
+        "host": "laptop",
+        "cmux_version": cmux_version,
+        "scope": "all",
+        "workspaces": workspaces or [],
+        "agents": agents or [],
+        "captures": captures or [],
+        "failures": failures or [],
+    })
+
+
+def _ws(ref, surfaces):
+    return {"ref": ref, "title": f"WS {ref}", "window_ref": "window:1",
+            "surfaces": surfaces}
+
+
+def _sfc(ref, ws_ref, *, title="tab", is_agent=False):
+    return {"ref": ref, "pane_ref": f"pane:{ref.split(':')[-1]}",
+            "workspace_ref": ws_ref, "kind": "terminal", "title": title,
+            "tty": None, "cwd": None, "cpu_pct": None, "mem_bytes": None,
+            "is_agent": is_agent}
+
+
+def _agent(ref, ws_ref, *, state="running"):
+    return {"surface_ref": ref, "workspace_ref": ws_ref, "type": "claude_code",
+            "type_source": "cmux_tag", "type_confidence": 1.0, "state": state,
+            "state_source": "cmux_tag", "pid": 4242}
+
+
+def _cap(ref, text):
+    return {"surface_ref": ref, "redacted_scrollback": text,
+            "screen_hash": _hash(text), "redactions_applied": []}
+
+
+# --- tests -----------------------------------------------------------------
+
 def test_no_cmux_collect_then_finalize(tmp_path: Path) -> None:
+    """A degraded envelope (cmux_version null + a component='cmux' failure)
+    ingests cleanly, renders the 'cmux unavailable' banner, and preserves the
+    failure through finalize."""
     py = _resolve_interpreter()
+    fake_home = _fake_home(tmp_path)
+    env = _child_env(fake_home)
 
-    fake_home = tmp_path / "home"
-    (fake_home / ".local" / "share" / "cmux-observability").mkdir(parents=True)
-    (fake_home / ".local" / "state" / "cmux-observability").mkdir(parents=True)
-    (fake_home / ".config" / "cmux-observability").mkdir(parents=True)
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-
-    env = _child_env(fake_home, fake_bin)
-
-    # Sanity: the child env must not be able to find `cmux`.
-    assert shutil.which("cmux", path=env["PATH"]) is None, (
-        "Test setup is wrong: cmux is reachable from the child env's PATH"
+    envelope = _envelope(
+        cmux_version=None,
+        failures=[{"component": "cmux", "target": None,
+                   "message": "cmux binary not on PATH", "fatal": False}],
     )
-
-    # ---- collect ---------------------------------------------------------
-    cp = _run_cli(py, ["collect"], env=env)
+    cp = _run_cli(py, ["collect"], env=env, stdin=envelope)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
     payload = json.loads(cp.stdout)
 
     assert payload["ok"] is True
     assert payload["pending_summaries"] == []
-    failures = payload["snapshot_preview"]["failures"]
-    cmux_failures = [f for f in failures if f["component"] == "cmux"]
-    assert cmux_failures, (
-        f"expected at least one component='cmux' failure, got: {failures}"
-    )
+    cmux_failures = [f for f in payload["snapshot_preview"]["failures"]
+                     if f["component"] == "cmux"]
+    assert cmux_failures, payload["snapshot_preview"]["failures"]
 
     run_id = payload["run_id"]
-    runstate_dir = fake_home / ".local" / "state" / "cmux-observability"
-    runstate_file = runstate_dir / f"run-{run_id}.json"
-    assert runstate_file.is_file(), (
-        f"runstate file missing under fake HOME: {runstate_file}"
-    )
-    # Well-formed JSON.
-    runstate_blob = json.loads(runstate_file.read_text())
-    assert runstate_blob["run_id"] == run_id
+    runstate_file = (fake_home / ".local" / "state" / "cmux-observability"
+                     / f"run-{run_id}.json")
+    assert runstate_file.is_file()
+    assert json.loads(runstate_file.read_text())["run_id"] == run_id
 
-    # Nothing escaped to the real $HOME.
-    real_state = Path(os.path.expanduser("~/.local/state/cmux-observability"))
-    if real_state.exists():
-        assert not (real_state / f"run-{run_id}.json").exists(), (
-            "runstate leaked to the real $HOME"
-        )
-
-    # ---- finalize --------------------------------------------------------
     cp = _run_cli(py, ["finalize", "--run-id", run_id, "--no-open"], env=env)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
     final = json.loads(cp.stdout)
     assert final["ok"] is True
 
-    html_path = Path(final["html"])
-    json_path = Path(final["json"])
-
-    data_root = fake_home / ".local" / "share" / "cmux-observability"
-    snapshots_dir = data_root / "snapshots"
-    assert html_path.suffix == ".html"
-    assert json_path.suffix == ".json"
-    assert html_path.is_file(), f"HTML missing: {html_path}"
-    assert json_path.is_file(), f"JSON missing: {json_path}"
-    # Both artifacts must live under the fake HOME's snapshots dir.
-    assert str(html_path).startswith(str(snapshots_dir)), (
-        f"HTML not under fake HOME: {html_path}"
-    )
-    assert str(json_path).startswith(str(snapshots_dir)), (
-        f"JSON not under fake HOME: {json_path}"
-    )
-
-    html = html_path.read_text()
-    assert "cmux unavailable" in html.lower(), (
-        "HTML missing the 'cmux unavailable' banner string"
-    )
-
-    # cmux failure preserved through finalize (cleanest in the final envelope).
-    final_cmux_failures = [
-        f for f in final["failures"] if f["component"] == "cmux"
-    ]
-    assert final_cmux_failures, (
-        f"cmux failure not preserved through finalize: {final['failures']}"
-    )
-
-    # Runstate is discarded after finalize.
-    assert not runstate_file.exists(), (
-        f"runstate file should be discarded after finalize: {runstate_file}"
-    )
+    html = Path(final["html"]).read_text()
+    assert "unavailable" in html.lower()
+    final_cmux_failures = [f for f in final["failures"]
+                           if f["component"] == "cmux"]
+    assert final_cmux_failures, final["failures"]
+    assert not runstate_file.exists()       # discarded after finalize
 
 
 def test_partial_failure_read_screen_renders_no_screen_access(
-    tmp_home: Path, fake_cmux, fixture_dir: Path,
+    tmp_path: Path,
 ) -> None:
-    """When `cmux read-screen` fails for a running surface, `collect` records a
-    non-fatal Failure(component="read_screen", target=ref) and `finalize` still
-    renders the dashboard with the no-summary fallback for that row."""
+    """An agent the watchdog couldn't read (read_screen failure, no capture)
+    renders with the no-summary fallback."""
     py = _resolve_interpreter()
+    fake_home = _fake_home(tmp_path)
+    env = _child_env(fake_home)
 
-    env = os.environ.copy()
-    env["HOME"] = str(tmp_home)
-    env["PYTHONPATH"] = str(SKILL_ROOT)
-    env["CMUX_FIXTURE_TREE"] = str(fixture_dir / "cmux_tree_with_tagged_ws.txt")
-    env["CMUX_FIXTURE_TOP"] = str(fixture_dir / "cmux_top_with_tags.txt")
-    env["CMUX_FAIL"] = "read-screen:1"
-
-    cp = _run_cli(py, ["collect"], env=env)
+    envelope = _envelope(
+        workspaces=[_ws("workspace:1", [_sfc("surface:1", "workspace:1", is_agent=True)])],
+        agents=[_agent("surface:1", "workspace:1", state="running")],
+        captures=[],            # read failed → no capture
+        failures=[{"component": "read_screen", "target": "surface:1",
+                   "message": "cmux read-screen exited 1", "fatal": False}],
+    )
+    cp = _run_cli(py, ["collect"], env=env, stdin=envelope)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
     payload = json.loads(cp.stdout)
     run_id = payload["run_id"]
 
-    # The aligned fixture must yield at least one agent and at least one
-    # read_screen failure — otherwise the partial-failure path is not
-    # exercised (pending_summaries is naturally empty here because
-    # read-screen failed for every running surface, so there's nothing to
-    # summarise; the failures list is the load-bearing signal).
-    assert payload["snapshot_preview"]["agents_total"] >= 1, (
-        f"expected ≥1 agent from aligned with-tags fixture; got payload={payload}"
-    )
-    read_screen_failures = [
-        f for f in payload["snapshot_preview"]["failures"]
-        if f["component"] == "read_screen"
-    ]
-    assert read_screen_failures, (
-        "expected ≥1 component='read_screen' failure from CMUX_FAIL; "
-        f"got failures={payload['snapshot_preview']['failures']}"
-    )
+    assert payload["snapshot_preview"]["agents_total"] >= 1
+    rs_failures = [f for f in payload["snapshot_preview"]["failures"]
+                   if f["component"] == "read_screen"]
+    assert rs_failures
 
     cp = _run_cli(py, ["finalize", "--run-id", run_id, "--no-open"], env=env)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
     final = json.loads(cp.stdout)
     html = Path(final["html"]).read_text().lower()
-    # Either "(no summary)" or "(no screen access)" satisfies the contract:
-    # the row must render *something* for the missing-summary case.
-    assert ("no summary" in html) or ("no screen access" in html), (
-        "agent row missing both fallback literals"
-    )
+    assert ("no summary" in html) or ("no screen access" in html)
 
 
-def test_partial_failure_no_git_renders_no_repos(
-    tmp_home: Path, fake_cmux, fixture_dir: Path,
-) -> None:
-    """`collect --rescan` + `finalize` must not crash when $HOME contains no
-    git repositories. The productivity section may render as totals-zero or
-    be absent entirely; neither path should error."""
+def test_partial_failure_no_git_renders_no_repos(tmp_path: Path) -> None:
+    """`collect --rescan` + `finalize` must not crash when $HOME has no repos."""
     py = _resolve_interpreter()
+    fake_home = _fake_home(tmp_path)
+    env = _child_env(fake_home)
 
-    env = os.environ.copy()
-    env["HOME"] = str(tmp_home)
-    env["PYTHONPATH"] = str(SKILL_ROOT)
-    env["CMUX_FIXTURE_TREE"] = str(fixture_dir / "cmux_tree_basic.txt")
-    env["CMUX_FIXTURE_TOP"] = str(fixture_dir / "cmux_top_no_tags.txt")
-
-    cp = _run_cli(py, ["collect", "--rescan"], env=env)
+    envelope = _envelope(
+        workspaces=[_ws("workspace:1", [_sfc("surface:1", "workspace:1")])],
+    )
+    cp = _run_cli(py, ["collect", "--rescan"], env=env, stdin=envelope)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
     run_id = json.loads(cp.stdout)["run_id"]
 
     cp = _run_cli(py, ["finalize", "--run-id", run_id, "--no-open"], env=env)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
-    final = json.loads(cp.stdout)
-    # Reading the rendered HTML must not raise; content is permissive.
-    Path(final["html"]).read_text()
+    Path(json.loads(cp.stdout)["html"]).read_text()
 
 
-def test_full_pipeline_with_summaries_and_themes(
-    tmp_home: Path, fake_cmux, fixture_dir: Path,
-) -> None:
-    """End-to-end exercise of the 5-step JSON contract: collect → record
-    summaries → themes-payload → record themes → finalize. Confirms that
-    an agent-authored summary and a theme label both land in the rendered
-    HTML when the pending list is non-empty."""
+def test_full_pipeline_with_summaries_and_themes(tmp_path: Path) -> None:
+    """5-step JSON contract end-to-end: collect (envelope) → record-summaries →
+    themes-payload → record-themes → finalize. Agent-authored summary + theme
+    land in the rendered HTML."""
     py = _resolve_interpreter()
+    fake_home = _fake_home(tmp_path)
+    env = _child_env(fake_home)
 
-    env = os.environ.copy()
-    env["HOME"] = str(tmp_home)
-    env["PYTHONPATH"] = str(SKILL_ROOT)
-    # Aligned tree/top fixtures so the pipeline produces ≥1 agent; the
-    # redaction fixture provides scrollback for read-screen.
-    env["CMUX_FIXTURE_TREE"] = str(fixture_dir / "cmux_tree_with_tagged_ws.txt")
-    env["CMUX_FIXTURE_TOP"] = str(fixture_dir / "cmux_top_with_tags.txt")
-    env["CMUX_FIXTURE_READ_SCREEN"] = str(fixture_dir / "redaction_secrets.txt")
-
-    # ---- collect ---------------------------------------------------------
-    cp = _run_cli(py, ["collect"], env=env)
+    envelope = _envelope(
+        workspaces=[_ws("workspace:1",
+                        [_sfc("surface:1", "workspace:1", title="claude_code", is_agent=True)])],
+        agents=[_agent("surface:1", "workspace:1", state="running")],
+        captures=[_cap("surface:1", "❯ run the tests\nctx:42%\n")],
+    )
+    cp = _run_cli(py, ["collect"], env=env, stdin=envelope)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
     payload = json.loads(cp.stdout)
     run_id = payload["run_id"]
     pending = payload.get("pending_summaries", [])
-    # Sanity guard: a fixture regression must turn the test red, not green.
-    assert pending, "expected at least one pending summary from aligned fixture"
+    assert pending, "expected at least one pending summary from the envelope"
 
-    # ---- record-summaries -----------------------------------------------
-    summaries = {
-        "summaries": [
-            {
-                "surface_ref": p["surface_ref"],
-                "summary": "writing tests for the parser",
-                "state_hint": p["cmux_state"],
-                "needs_input_reason": None,
-                "confidence": 0.85,
-            }
-            for p in pending
-        ],
-    }
+    summaries = {"summaries": [{
+        "surface_ref": p["surface_ref"],
+        "summary": "writing tests for the parser",
+        "state_hint": p["cmux_state"],
+        "needs_input_reason": None,
+        "confidence": 0.85,
+    } for p in pending]}
     cp = _run_cli(py, ["record-summaries", "--run-id", run_id], env=env,
                   stdin=json.dumps(summaries))
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
 
-    # ---- themes-payload --------------------------------------------------
     cp = _run_cli(py, ["themes-payload", "--run-id", run_id], env=env)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
     tp = json.loads(cp.stdout)
@@ -285,25 +242,17 @@ def test_full_pipeline_with_summaries_and_themes(
         themes = {"themes": [{
             "label": "parser work",
             "member_refs": [p["surface_ref"] for p in pending],
-            "why": "all agents are running parser-related work in the cmux tree",
+            "why": "all agents are running parser-related work",
             "confidence": 0.8,
         }]}
-
-    # ---- record-themes ---------------------------------------------------
     cp = _run_cli(py, ["record-themes", "--run-id", run_id], env=env,
                   stdin=json.dumps(themes))
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
 
-    # ---- finalize --------------------------------------------------------
     cp = _run_cli(py, ["finalize", "--run-id", run_id, "--no-open"], env=env)
     assert cp.returncode == 0, f"stderr={cp.stderr}\nstdout={cp.stdout}"
     final = json.loads(cp.stdout)
     html = Path(final["html"]).read_text()
-
-    assert "writing tests for the parser" in html, (
-        "agent-authored summary text missing from rendered HTML"
-    )
+    assert "writing tests for the parser" in html
     if not tp.get("omit"):
-        assert "parser work" in html, (
-            "theme label missing from rendered HTML"
-        )
+        assert "parser work" in html

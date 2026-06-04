@@ -33,30 +33,15 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-
-# --------------------------------------------------------------------------
-# Redaction — tight patterns; false positives beat leaking a real secret into
-# the calling agent's context via an evidence snippet.
-# --------------------------------------------------------------------------
-
-_REDACT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("SK_TOKEN",       re.compile(r"sk-[A-Za-z0-9_-]{20,}")),
-    ("AWS_ACCESS_KEY", re.compile(r"AKIA[0-9A-Z]{16}")),
-    ("GH_TOKEN",       re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}")),
-    ("SLACK_TOKEN",    re.compile(r"xox[bopa]-[A-Za-z0-9-]{10,}")),
-    ("BEARER",         re.compile(r"Bearer\s+[A-Za-z0-9._-]{20,}")),
-    ("PASSWORD",       re.compile(r"""password\s*[:=]\s*('|")?[^\s'"]{4,}('|")?""", re.IGNORECASE)),
-]
-
-
-def redact(text: str) -> str:
-    out = text
-    for kind, pat in _REDACT_PATTERNS:
-        out = pat.sub(f"<REDACTED:{kind}>", out)
-    return out
+import capture  # sibling: the dashboard capture/classification layer
+# Redaction lives in a pure sibling module (the sole place raw pane text is
+# masked before it leaves the process). `redact(text)->str` keeps the
+# evidence/journal callers unchanged; the richer redact_meta/screen_hash feed
+# the snapshot capture envelope.
+from redact import redact  # noqa: E402
 
 
 # --------------------------------------------------------------------------
@@ -303,11 +288,16 @@ def filter_scope(surfaces: list[SurfaceRef], scope: str | None,
     ]
 
 
-def read_screen(surface_ref: str, workspace_ref: str, lines: int = 120) -> str:
-    return _run_cmux(
-        "read-screen", "--workspace", workspace_ref,
-        "--surface", surface_ref, "--lines", str(lines),
-    )
+def read_screen(surface_ref: str, workspace_ref: str, lines: int = 120,
+                scrollback: bool = False) -> str:
+    args = ["read-screen", "--workspace", workspace_ref, "--surface", surface_ref]
+    if scrollback:
+        # Explicit for the snapshot capture path: scrollback (not just the live
+        # viewport) is the payload observability summarizes. scan/watch keep the
+        # default viewport read for failure detection.
+        args.append("--scrollback")
+    args += ["--lines", str(lines)]
+    return _run_cmux(*args)
 
 
 def send_key(surface_ref: str, workspace_ref: str, key: str) -> None:
@@ -691,6 +681,52 @@ def cmd_send_enter(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    """One-shot dashboard capture. Reads `tree --all` + `top --all` + `version`,
+    classifies every surface (type + state), redacts each read screen, and prints
+    the versioned capture envelope observability rebuilds its Snapshot from.
+
+    READ-ONLY and daemon-independent: it never touches journal / digest / cursor
+    / journal-index / inbox state and needs no producer running. It shares the
+    pure parse/classify/redact helpers with scan/watch but is NOT a watch tick
+    (watch mutates journal state + drives exactly-once summarization).
+    """
+    try:
+        tree_stdout = _run_cmux("tree", "--all")
+        top_stdout = _run_cmux("top", "--all")
+    except CmuxError as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+        return 1
+    try:
+        version = _run_cmux("version").strip() or None
+    except CmuxError:
+        version = None
+
+    workspaces = capture.parse_tree(tree_stdout)
+    scope = args.workspace or "all"
+    if scope != "all":
+        workspaces = [w for w in workspaces if scope in (w.ref, w.title)]
+    top = capture.parse_top(top_stdout)
+
+    lines = args.lines
+
+    def reader(surface_ref: str, workspace_ref: str) -> str:
+        return read_screen(surface_ref, workspace_ref, lines=lines, scrollback=True)
+
+    agents, captures, failures = capture.classify_surfaces(
+        workspaces=workspaces, top=top, read_screen=reader,
+        max_scrollback_bytes=args.max_scrollback_bytes,
+    )
+    envelope = capture.build_envelope(
+        workspaces=workspaces, agents=agents, captures=captures, failures=failures,
+        host=os.uname().nodename, cmux_version=version,
+        captured_at=datetime.now(timezone.utc).isoformat(),
+        scope=scope,
+    )
+    print(json.dumps(envelope))
+    return 0
+
+
 def cmd_resend(args: argparse.Namespace) -> int:
     """Self-verifying resend for a stalled agent: recall the last input (Up) and
     submit it (Enter), then confirm the agent resumed — an active marker appeared
@@ -821,6 +857,17 @@ def main(argv: list[str] | None = None) -> int:
     wp.add_argument("--summary-interval", type=float, default=3600.0,
                     help="seconds between summarize_due events (0 disables)")
     wp.set_defaults(func=cmd_watch)
+
+    np = sub.add_parser(
+        "snapshot",
+        help="one-shot dashboard capture envelope (read-only; no journal state)")
+    np.add_argument("--workspace", default="all",
+                    help="workspace ref/title, or 'all'. Default: all workspaces.")
+    np.add_argument("--lines", type=int, default=150,
+                    help="scrollback depth read per surface (default 150)")
+    np.add_argument("--max-scrollback-bytes", type=int, default=4096,
+                    help="per-surface byte cap on redacted scrollback (default 4096)")
+    np.set_defaults(func=cmd_snapshot)
 
     dp = sub.add_parser("digest", help="flush unread journal lines to digest files")
     dp.add_argument("--workspace", default=None,

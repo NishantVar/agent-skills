@@ -1,0 +1,2 @@
+Removing 47 files. This cannot be undone.
+Are you sure you want to continue? (y/N)

@@ -1,0 +1,6 @@
+window window:1 [current] ◀ active
+├── workspace workspace:17 "⠐ Build C-MUX agent observability dashboard" [selected] ◀ active
+│   ├── pane pane:60 [focused] ◀ active
+│   │   └── surface surface:67 [terminal] "observability_designer" [selected] ◀ active ◀ here tty=ttys040
+│   └── pane pane:61
+│       └── surface surface:68 [terminal] "Reviewer" [selected] tty=ttys041

@@ -407,8 +407,37 @@ Detection is screen-only. Could cross-check `cmux top --all` tag state
 (running / needs input) to raise/lower confidence, but tag→surface mapping is
 per-workspace, not per-surface — punted for v0.1.
 
-### Reuse vs duplication with cmux-observability
-The sibling `cmux-observability` skill already reads screens + redacts across
-workspaces. Kept standalone per the skill-boundary rule (skills don't shell out
-to each other). Revisit only if the redaction/read-screen logic drifts apart in
-a way that causes real bugs.
+### Reuse vs duplication with cmux-observability — DECISION: consolidate (2026-06-04)
+Superseded "keep standalone." Agreed design: **watchdog becomes the sole cmux
+reader/classifier**, observability becomes a **pure view layer** that renders a
+JSON snapshot watchdog produces. observability's v1.2 state classifier (+199
+tests) **moves fully into watchdog**. New one-shot `watchdog.py snapshot`
+subcommand (separate from `watch`, so the dashboard needs no daemon) emits the
+per-pane state + redacted scrollback observability consumes. Agent wires the two
+(observability must NOT shell out to watchdog.py — skill-boundary rule).
+
+Design doc: `$OBSIDIAN/plans/cmux-capture-layer-design-2026-06-04.md`.
+
+#### IMPLEMENTED (2026-06-04, branch feat/cmux-capture-layer)
+Capture-layer consolidation landed. Watchdog is now the sole cmux reader/classifier:
+- `redact.py` — richer redactor (`redact_meta -> (text, applied)`, `screen_hash`),
+  `redact(text)->str` wrapper kept for evidence/journal callers.
+- `capture.py` — dashboard `parse_tree` (keeps browsers + pane_ref) / `parse_top`
+  (cmux tags + cpu/mem), tag→surface pairing, heuristic type classification,
+  v1.2 scrollback state ladder (incl. tag↔scrollback disagreement Failure),
+  scrollback byte cap, versioned **capture envelope** (`capture_schema_version=1`)
+  + `validate_envelope` (rejects bad majors).
+- `watchdog.py snapshot [--workspace all] [--lines] [--max-scrollback-bytes]` —
+  one-shot, READ-ONLY (no journal/digest/cursor/index/inbox), emits the envelope.
+- Tests: test_redact, test_capture, test_snapshot (incl. read-only boundary),
+  test_state_wiring (8-cell ladder ported from observability), test_golden
+  (shared golden contract). Watchdog suite **179 passed**.
+- SKILL.glyph desc → "cmux capture/classification layer + remediator"; snapshot
+  documented in binary-contract. Recompiled + validate-output clean.
+
+NOTE (pre-existing, not a regression): `cmux 0.64.10 top --all` emits a
+CPU/MEMORY table with NO `tag <kind> "<state>" pid=N` lines, so the cmux_tag
+path yields 0 agents on live data and everything classifies via the scrollback
+heuristic. `parse_top` is ported verbatim from observability, so this matches
+observability's prior live behavior — but the tag fixtures encode a stale `top`
+format. Worth revisiting whether cmux exposes tags via a different call now.

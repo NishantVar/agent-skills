@@ -18,24 +18,16 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from . import runstate
-from .collector.classify import classify_from_scrollback, state_from_scrollback
-from .collector.cmux import (
-    CmuxUnavailable,
-    cmux_version,
-    fetch_top,
-    fetch_tree,
-    read_screen,
-)
 from .collector.discovery import discover_repos
 from .collector.git import productivity
 from .config import Config, default_config_path, load
 from .errors import Failure
-from .model import Agent, HistoryPoint, HistorySeries, Snapshot
-from .normalize import normalize
+from .ingest import ingest
+from .model import HistoryPoint, HistorySeries
 from .persist import append_snapshot, connect, migrate
 from .render.render import render_snapshot
 from .summarize_io import (
@@ -63,85 +55,41 @@ def _load_config(args: argparse.Namespace) -> Config:
     return load(path)
 
 
-def _classify_from_scrollback(
-    snap: Snapshot, screens: dict[str, str], failures: list[Failure]
-) -> None:
-    """Apply scrollback-driven state classification per the v1.2 precedence ladder.
+def _read_envelope(args: argparse.Namespace) -> dict:
+    """Load the watchdog capture envelope from `--input <path>` or stdin.
 
-    Mutates ``snap.agents`` in place and may append to ``failures``. Skips
-    agents with no entry in ``screens`` (cmux-tagged idle/unknown agents have
-    no scrollback read). Runs after heuristic-promotion so heuristic-promoted
-    agents (state=unknown, state_source=heuristic) are considered.
-
-    Precedence rules:
-      * ``state_from_scrollback`` returning ``"unknown"`` or confidence < 0.5
-        is a no-op.
-      * ``a.state == "needs_input"`` already wins (cmux detected the strongest
-        signal); leave untouched.
-      * scrollback ``needs_input`` with confidence >= 0.7 overrides any other
-        state. When the prior ``state_source`` was ``"cmux_tag"``, emit a
-        non-fatal ``Failure(component="state_classifier", ...)`` recording the
-        disagreement. Promotions from ``"heuristic"`` (state=unknown) do NOT
-        emit a Failure — that's promotion, not contradiction.
-      * For an agent currently ``state == "unknown"``, scrollback with
-        confidence >= 0.5 promotes the state. No Failure.
+    Per the skill-boundary rule, observability never shells out to watchdog —
+    the calling agent runs `watchdog.py snapshot` and pipes (or hands) the JSON
+    envelope here.
     """
-    for a in snap.agents:
-        tail = screens.get(a.surface_ref)
-        if not tail:
-            continue
-        state, conf = state_from_scrollback(tail, a.type)
-        if state == "unknown" or conf < 0.5:
-            continue
-        if a.state == "needs_input":
-            # cmux_tag already detected the strongest user-impact signal; do
-            # not downgrade based on scrollback patterns.
-            continue
-        prior_state = a.state
-        prior_source = a.state_source
-        if state == "needs_input" and conf >= 0.7:
-            if prior_source == "cmux_tag":
-                failures.append(Failure(
-                    component="state_classifier",
-                    target=a.surface_ref,
-                    message=(
-                        f"scrollback overrode cmux_tag={prior_state!r} "
-                        f"→ needs_input"
-                    ),
-                    fatal=False,
-                ))
-            a.state = "needs_input"
-            a.state_source = "scrollback"
-        elif a.state == "unknown" and conf >= 0.5:
-            a.state = state
-            a.state_source = "scrollback"
+    if getattr(args, "input", None):
+        raw = Path(args.input).read_text()
+    else:
+        raw = sys.stdin.read()
+    if not raw.strip():
+        raise ValueError(
+            "no capture envelope on stdin; run `watchdog.py snapshot` and pipe "
+            "its JSON into `collect` (or pass --input <path>)"
+        )
+    return json.loads(raw)
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
     cfg = _load_config(args)
-    failures: list[Failure] = []
 
+    # Ingest the watchdog capture envelope (deterministic mapper, ZERO cmux
+    # calls). The envelope already carries the classified workspaces/agents,
+    # redacted scrollback + redaction metadata, and any cmux/read/state failures.
     try:
-        workspaces = fetch_tree()
-        top = fetch_top()
-        version = cmux_version()
-    except CmuxUnavailable as e:
-        workspaces, top, version = [], None, None
-        failures.append(Failure(
-            component="cmux", target=None, message=str(e), fatal=False,
-        ))
+        envelope = _read_envelope(args)
+        snap, screens, redaction_meta = ingest(envelope)
+    except (ValueError, json.JSONDecodeError, KeyError, TypeError) as e:
+        return _emit({"ok": False, "error": f"invalid capture envelope: {e}"})
 
-    if top is None:
-        from .collector.cmux import TopResult
-        top = TopResult()
+    failures: list[Failure] = list(snap.failures)
 
-    snap = normalize(
-        workspaces=workspaces, top=top,
-        host=os.uname().nodename, cmux_version=version,
-        now=datetime.now(timezone.utc),
-    )
-
-    # Productivity (best-effort; failures attached non-fatally).
+    # Productivity (best-effort; failures attached non-fatally). git/repo
+    # discovery is NOT cmux — it stays in observability.
     try:
         repos, disc_failures = discover_repos(cfg, force_rescan=args.rescan)
         snap.productivity = productivity(repos, cfg)
@@ -150,66 +98,6 @@ def cmd_collect(args: argparse.Namespace) -> int:
         failures.append(Failure(
             component="discovery", target=None, message=str(e), fatal=False,
         ))
-
-    # Read scrollback for all running/needs-input agents.
-    screens: dict[str, str] = {}
-    lines = (cfg.summarizer.read_screen_lines if cfg.summarizer else 150)
-    lines = max(1, min(300, lines))
-    for a in snap.agents:
-        if a.state in ("running", "needs_input"):
-            try:
-                screens[a.surface_ref] = read_screen(
-                    a.surface_ref,
-                    workspace_ref=a.workspace_ref,
-                    lines=lines,
-                )
-            except CmuxUnavailable as e:
-                failures.append(Failure(
-                    component="read_screen", target=a.surface_ref,
-                    message=str(e), fatal=False,
-                ))
-
-    # Heuristic fallback: for terminal surfaces not yet attached to an agent,
-    # read scrollback and ask the classifier. Tagged surfaces are untouched
-    # (cmux_tag wins on precedence — they're already in snap.agents).
-    agent_refs = {a.surface_ref for a in snap.agents}
-    for w in snap.workspaces:
-        for s in w.surfaces:
-            if s.ref in agent_refs or s.kind != "terminal":
-                continue
-            try:
-                tail = read_screen(
-                    s.ref, workspace_ref=w.ref, lines=lines,
-                )
-            except CmuxUnavailable as e:
-                failures.append(Failure(
-                    component="read_screen", target=s.ref,
-                    message=str(e), fatal=False,
-                ))
-                continue
-            kind, confidence = classify_from_scrollback(tail)
-            # Heuristic with confidence < 0.7 is too weak to promote: a single
-            # brand mention (e.g. README-style "codex") would otherwise drag a
-            # plain shell into pending_summaries.
-            if kind is None or confidence < 0.7:
-                continue
-            s.is_agent = True
-            screens[s.ref] = tail
-            snap.agents.append(Agent(
-                surface_ref=s.ref,
-                workspace_ref=w.ref,
-                type=kind,
-                type_source="heuristic",
-                type_confidence=confidence,
-                state="unknown",
-                state_source="heuristic",
-                pid=None,
-            ))
-
-    # v1.2 — scrollback-driven state classification. Runs after heuristic
-    # promotion so promoted agents are included. May override cmux_tag for
-    # high-confidence needs_input (logs a non-fatal Failure on disagreement).
-    _classify_from_scrollback(snap, screens, failures)
 
     snap.failures = failures
 
@@ -225,6 +113,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         pending = pending_for_agent(
             snap, conn, screens, prompt_version=pv,
             max_scrollback_bytes=cap,
+            redaction_meta=redaction_meta,
         )
 
     screen_hashes = {p["surface_ref"]: p["screen_hash"] for p in pending}
@@ -378,6 +267,8 @@ def build_parser() -> argparse.ArgumentParser:
     pc = sub.add_parser("collect")
     _add_config_arg(pc)
     pc.add_argument("--run-id", help="Provide to resume; new id minted if omitted")
+    pc.add_argument("--input", default=None,
+                    help="Path to a watchdog capture envelope JSON. Default: read stdin.")
     pc.add_argument("--rescan", action="store_true")
     pc.add_argument(
         "--max-scrollback-bytes", type=int, default=None,

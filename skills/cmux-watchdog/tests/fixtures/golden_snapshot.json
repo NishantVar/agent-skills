@@ -1,0 +1,105 @@
+{
+  "agents": [
+    {
+      "pid": 4242,
+      "state": "needs_input",
+      "state_source": "scrollback",
+      "surface_ref": "surface:1",
+      "type": "claude_code",
+      "type_confidence": 1.0,
+      "type_source": "cmux_tag",
+      "workspace_ref": "workspace:1"
+    },
+    {
+      "pid": null,
+      "state": "running",
+      "state_source": "scrollback",
+      "surface_ref": "surface:3",
+      "type": "codex",
+      "type_confidence": 0.8,
+      "type_source": "heuristic",
+      "workspace_ref": "workspace:2"
+    }
+  ],
+  "capture_schema_version": 1,
+  "captured_at": "2026-06-04T00:00:00+00:00",
+  "captures": [
+    {
+      "redacted_scrollback": "\u276f run the tests\nctx:42%\nDo you want to proceed?\n  1. yes\n  2. no\ntoken <REDACTED:SK_TOKEN>\n",
+      "redactions_applied": [
+        "SK_TOKEN:1"
+      ],
+      "screen_hash": "07d760ab3d67c2f0e94345fda1f5f5c75dc02f6d1596ccf9acbc50b256f467ef",
+      "surface_ref": "surface:1"
+    },
+    {
+      "redacted_scrollback": "\u203a working on the parser\n\u2022 Working (3s \u2022 esc to interrupt)\nContext 51% left\n\u2500 Worked for 0m 3s\ncodex\n",
+      "redactions_applied": [],
+      "screen_hash": "1582418d436af10fe019d02b252f6fb0a00e8e9d694239df88a01e5e0c01b107",
+      "surface_ref": "surface:3"
+    }
+  ],
+  "cmux_version": "cmux 0.64.10",
+  "failures": [
+    {
+      "component": "state_classifier",
+      "fatal": false,
+      "message": "scrollback overrode cmux_tag='running' \u2192 needs_input",
+      "target": "surface:1"
+    }
+  ],
+  "host": "golden-host",
+  "scope": "all",
+  "workspaces": [
+    {
+      "ref": "workspace:1",
+      "surfaces": [
+        {
+          "cpu_pct": 1.5,
+          "cwd": null,
+          "is_agent": true,
+          "kind": "terminal",
+          "mem_bytes": 536870912,
+          "pane_ref": "pane:1",
+          "ref": "surface:1",
+          "title": "claude_code worker",
+          "tty": "ttys001",
+          "workspace_ref": "workspace:1"
+        },
+        {
+          "cpu_pct": null,
+          "cwd": null,
+          "is_agent": false,
+          "kind": "browser",
+          "mem_bytes": null,
+          "pane_ref": "pane:2",
+          "ref": "surface:2",
+          "title": "cmux docs",
+          "tty": null,
+          "workspace_ref": "workspace:1"
+        }
+      ],
+      "title": "Capture Demo",
+      "window_ref": "window:1"
+    },
+    {
+      "ref": "workspace:2",
+      "surfaces": [
+        {
+          "cpu_pct": null,
+          "cwd": null,
+          "is_agent": true,
+          "kind": "terminal",
+          "mem_bytes": null,
+          "pane_ref": "pane:3",
+          "ref": "surface:3",
+          "title": "some-tab",
+          "tty": "ttys003",
+          "workspace_ref": "workspace:2"
+        }
+      ],
+      "title": "Heuristic WS",
+      "window_ref": "window:1"
+    }
+  ]
+}

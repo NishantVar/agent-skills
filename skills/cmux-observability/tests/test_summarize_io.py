@@ -369,6 +369,47 @@ def test_cmux_tag_state_hint_disagreement_records_failure(tmp_path):
     assert snap.agents[0].summary is not None
 
 
+def test_scrollback_state_not_overwritten_by_conflicting_hint(tmp_path):
+    """BLOCKING regression: watchdog is the sole cmux state classifier. A
+    heuristic-typed agent whose state watchdog classified via scrollback
+    (state_source='scrollback') must NOT be overwritten by a conflicting
+    agent-authored state_hint — the watchdog state stands and a non-fatal
+    disagreement is recorded.
+    """
+    snap, raw_screen = _snap_with_one_heuristic_agent()
+    # watchdog classified this heuristic agent's state via the scrollback ladder.
+    snap.agents[0].state = "running"
+    snap.agents[0].state_source = "scrollback"
+    screens = {"surface:h1": raw_screen}
+
+    with connect(tmp_path / "obs.sqlite") as conn:
+        migrate(conn)
+        pending = pending_for_agent(snap, conn, screens, prompt_version=1)
+        screen_hashes = {"surface:h1": pending[0]["screen_hash"]}
+
+        failures = record_from_agent(
+            {"summaries": [{
+                "surface_ref": "surface:h1",
+                "summary": "looks idle to me",
+                "state_hint": "idle",
+                "needs_input_reason": None,
+                "confidence": 0.9,
+            }]},
+            snap, conn,
+            prompt_version=1,
+            screen_hashes=screen_hashes,
+            redactions_by_surface={"surface:h1": []},
+        )
+
+    # Watchdog scrollback state stands; obs did NOT overwrite it.
+    assert snap.agents[0].state == "running"
+    assert snap.agents[0].state_source == "scrollback"
+    # Disagreement recorded non-fatally.
+    assert any("disagreed with watchdog scrollback" in f.message for f in failures)
+    # Summary still attached.
+    assert snap.agents[0].summary is not None
+
+
 def test_malformed_and_unknown_summary_entries_produce_non_fatal_failures(tmp_path):
     snap, raw_screen = _snap_with_one_running_agent()
     screens = {"surface:1": raw_screen}

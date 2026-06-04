@@ -1,0 +1,7 @@
+window window:1 [current] ◀ active
+├── workspace workspace:12 "p2p-sim"
+│   └── pane pane:38 [focused]
+│       └── surface surface:39 [terminal] "sim_driver" [selected] tty=ttys026
+└── workspace workspace:15 "p2p-sim-2"
+    └── pane pane:54 [focused]
+        └── surface surface:61 [terminal] "sim_driver" [selected] tty=ttys034
