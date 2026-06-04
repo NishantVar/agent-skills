@@ -240,15 +240,20 @@ def load_config(env: dict | None = None, env_files: list[Path] | None = None) ->
 
 # --- LLM call (OpenAI-compatible chat completions) -------------------------
 
+def _user_message(digest_text: str, ws_title: str, title: str) -> str:
+    """The user-turn text framing one pane's digest. Shared so the HTTP payload
+    and the in-agent subagent prompt present the digest identically. Pure."""
+    return (f"Pane: {title} (workspace: {ws_title}).\n"
+            f"Captured output to summarize:\n\n{digest_text}")
+
+
 def build_payload(digest_text: str, model: str, *, ws_title: str, title: str) -> dict:
     """Build the chat-completions request body. Pure — no network."""
-    user = (f"Pane: {title} (workspace: {ws_title}).\n"
-            f"Captured output to summarize:\n\n{digest_text}")
     return {
         "model": model,
         "messages": [
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": user},
+            {"role": "user", "content": _user_message(digest_text, ws_title, title)},
         ],
         "stream": False,
     }
@@ -454,6 +459,123 @@ def run_catchup(scope: str | None, today: str, config: dict, *, max_days: int = 
     }
 
 
+# --- in-agent subagent path (collect -> author -> record) ------------------
+# An alternative to call_llm for when a coding agent is attached: instead of the
+# script POSTing the digest to an LLM, it hands the prompts back to the agent,
+# whose own subagents author the bullets (no API key, no provider SDK), then
+# records them. Mirrors cmux-observability's collect / record-summaries contract.
+# The durable summary_state.json manifest is the same retry guard run_pass uses,
+# so a collect with no matching record (agent crash, subagent failure) leaves the
+# digest un-summarized for the next collect — content is never lost.
+
+def collect_pending(scope: str | None, today: str, *, max_days: int = 1,
+                    catch_up: bool = False, skill_dir: Path | None = None) -> dict:
+    """Digest new journal bytes, register them in the manifest, and return the
+    per-surface prompts the agent's subagents should summarize — WITHOUT calling
+    any LLM. Same date/cap/deferred policy as run_catchup: only days within
+    max_days run automatically; older backlog is returned in `deferred` with a
+    `resume_cmd`. Each pending item carries the shared SUMMARY_SYSTEM_PROMPT
+    (`system`) and the framed digest (`user`) so the subagent prompt matches the
+    HTTP payload exactly."""
+    pending_d = sorted(set(pending_dates(today)) | set(unsummarized_dates()))
+    cutoff = (date.fromisoformat(today) - timedelta(days=max_days)).isoformat()
+    if catch_up:
+        eligible, deferred = pending_d, []
+    else:
+        eligible = [d for d in pending_d if d >= cutoff]
+        deferred = [d for d in pending_d if d < cutoff]
+
+    state = _load_summary_state()
+    for d in eligible:                       # flush new bytes into digest FILES
+        for sfc in run_digest(scope, d, skill_dir):
+            if sfc.get("unread_line_count", 0) <= 0:
+                continue
+            state.setdefault(sfc["digest_file"], {
+                "workspace_title": sfc["workspace_title"],
+                "title": sfc["title"],
+                "surface_ref": sfc["surface_ref"],
+                "date": d,
+                "summarized": False,
+            })
+    _save_summary_state(state)               # record work durably BEFORE authoring
+
+    eligible_set = set(eligible)
+    pending: list[dict] = []
+    for path, meta in state.items():
+        if meta["date"] not in eligible_set or meta.get("summarized"):
+            continue
+        try:
+            digest_text = Path(path).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            meta["summarized"] = True         # digest vanished -> don't retry forever
+            continue
+        pending.append({
+            "digest_file": path,
+            "date": meta["date"],
+            "workspace_title": meta["workspace_title"],
+            "title": meta["title"],
+            "surface_ref": meta["surface_ref"],
+            "system": SUMMARY_SYSTEM_PROMPT,
+            "user": _user_message(digest_text, meta["workspace_title"], meta["title"]),
+        })
+    _save_summary_state(state)               # persist any vanished->summarized
+
+    resume_cmd = None
+    note = None
+    if deferred:
+        ws = scope or "all"
+        resume_cmd = " ".join(shlex.quote(a) for a in (
+            "python3", str(Path(__file__).resolve()), "collect", "--catch-up",
+            "--workspace", ws))
+        note = (f"{len(deferred)} day(s) of backlog older than {cutoff} were NOT "
+                "collected automatically (>1 day). Confirm with the user, then run "
+                "resume_cmd to collect them.")
+    return {"ok": True, "today": today, "pending": pending,
+            "deferred": deferred, "resume_cmd": resume_cmd, "note": note}
+
+
+def record_summaries(summaries: list[dict], obsidian: str) -> dict:
+    """Append agent-authored bullets to the worklog and mark those digests
+    summarized — the in-agent counterpart to run_pass's append+commit tail.
+    `summaries` is [{digest_file, bullets}]. A digest is marked summarized ONLY
+    after its bullets are appended; an append failure (per date) marks nothing for
+    that date, so it retries on the next collect. Unknown digest_files, already-
+    summarized ones, and blank bullets are skipped."""
+    state = _load_summary_state()
+    by_date: dict[str, list[tuple[str, dict]]] = {}
+    for item in summaries:
+        path = item.get("digest_file")
+        meta = state.get(path) if path else None
+        if not path or not meta or meta.get("summarized"):
+            continue
+        bullets = (item.get("bullets") or "").strip()
+        if not bullets:
+            continue
+        by_date.setdefault(meta["date"], []).append((path, {
+            "workspace_title": meta["workspace_title"],
+            "title": meta["title"],
+            "surface_ref": meta["surface_ref"],
+            "bullets": bullets,
+        }))
+
+    recorded = 0
+    worklogs: list[str] = []
+    failed: list[dict] = []
+    for d, items in by_date.items():
+        section = format_worklog([r for _, r in items], datetime.now().strftime("%H:%M"))
+        try:
+            worklogs.append(str(append_worklog(section, obsidian, d)))
+        except OSError as e:                  # nothing marked for this date -> retry
+            failed.append({"date": d, "error": str(e)[:200]})
+            continue
+        for path, _ in items:
+            state[path]["summarized"] = True
+            recorded += 1
+    _save_summary_state(state)
+    return {"ok": not failed, "surfaces_recorded": recorded,
+            "worklogs": worklogs, "failed": failed}
+
+
 # --- launchd install -------------------------------------------------------
 
 def render_plist(*, label: str, python: str, script: str, scope: str,
@@ -501,6 +623,34 @@ def cmd_run(args: argparse.Namespace) -> int:
                                  max_days=int(args.max_days), catch_up=args.catch_up)
         print(json.dumps(report))
     return 0
+
+
+def cmd_collect(args: argparse.Namespace) -> int:
+    # No LLM_API_KEY needed: the agent's subagents do the summarizing. digest
+    # advances the shared cursor, so we still hold the advisory lock.
+    with _summarizer_lock() as got:
+        if not got:
+            print(json.dumps({"ok": True, "skipped": "already_running", "pending": []}))
+            return 0
+        report = collect_pending(args.workspace, _today(),
+                                 max_days=int(args.max_days), catch_up=args.catch_up)
+    print(json.dumps(report))
+    return 0
+
+
+def cmd_record(args: argparse.Namespace) -> int:
+    config = load_config()
+    if not config["obsidian"]:
+        print(json.dumps({"ok": False, "error": "no OBSIDIAN in env or summarizer.env"}))
+        return 1
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError as e:
+        print(json.dumps({"ok": False, "error": f"invalid JSON on stdin: {e}"}))
+        return 1
+    report = record_summaries(data.get("summaries", []), config["obsidian"])
+    print(json.dumps(report))
+    return 0 if report["ok"] else 1
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -580,6 +730,22 @@ def main(argv: list[str] | None = None) -> int:
                     help="lift the max-days cap and summarize ALL pending days "
                          "(run this after the user approves a >1-day backlog).")
     rp.set_defaults(func=cmd_run)
+
+    cp = sub.add_parser("collect", help="digest + return per-surface prompts for the "
+                                        "agent's subagents to summarize (no LLM call)")
+    cp.add_argument("--workspace", default=None,
+                    help="workspace ref/title, or 'all'. Default: caller workspace.")
+    cp.add_argument("--max-days", type=int, default=1,
+                    help="autonomous catch-up window in days back from today (default 1). "
+                         "Older backlog is deferred with a resume_cmd, not auto-collected.")
+    cp.add_argument("--catch-up", action="store_true",
+                    help="lift the max-days cap and collect ALL pending days.")
+    cp.set_defaults(func=cmd_collect)
+
+    rsp = sub.add_parser("record-summaries",
+                         help="append agent-authored bullets (JSON {summaries:[...]} on "
+                              "stdin) to the worklog and mark those digests summarized")
+    rsp.set_defaults(func=cmd_record)
 
     ip = sub.add_parser("install", help="render + (optionally) load a launchd LaunchAgent")
     ip.add_argument("--interval", type=float, default=3600.0,

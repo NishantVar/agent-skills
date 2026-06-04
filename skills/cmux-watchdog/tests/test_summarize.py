@@ -370,3 +370,137 @@ def test_resume_cmd_is_shell_quoted(tmp_path, monkeypatch):
     rep = s.run_catchup("Work Space", "2026-06-04", cfg, max_days=1, transport=_stub_transport)
     assert rep["deferred"] == ["2026-06-01"]
     assert "'Work Space'" in rep["resume_cmd"]  # spacey scope is a single quoted token
+
+
+# --- in-agent subagent summary path (collect -> author -> record) ----------
+# Mirrors cmux-observability's collect/record-summaries contract: collect digests
+# + registers the durable manifest and hands back pending per-surface prompts;
+# the calling AGENT (its subagents) authors the bullets — no LLM client here —
+# and record-summaries appends them to the worklog and marks the manifest.
+
+def test_user_message_shared_with_build_payload():
+    # build_payload's user content must equal the standalone helper collect uses,
+    # so the subagent prompt and the HTTP payload frame the digest identically.
+    um = s._user_message("log text", "meta-eval", "builder")
+    p = s.build_payload("log text", "m", ws_title="meta-eval", title="builder")
+    assert p["messages"][1]["content"] == um
+    assert "builder" in um and "log text" in um
+
+
+def test_collect_returns_pending_prompts_and_registers_manifest(tmp_path, monkeypatch):
+    monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
+    _write_journal(tmp_path, "2026-06-04", "meta-eval__builder__surface:2.log",
+                   "# 2026-06-04T10:00:00\n● built the thing\n● ran tests\n")
+    rep = s.collect_pending("all", "2026-06-04")
+    assert rep["ok"] and len(rep["pending"]) == 1
+    item = rep["pending"][0]
+    assert item["workspace_title"] == "meta-eval"
+    assert item["title"] == "builder"
+    assert item["surface_ref"] == "surface:2"
+    assert item["date"] == "2026-06-04"
+    assert "never invent" in item["system"]          # the shared SUMMARY_SYSTEM_PROMPT
+    assert "built the thing" in item["user"]          # digest text reaches the subagent
+    assert item["digest_file"]
+    # registered un-summarized in the durable manifest for retry safety
+    assert s.unsummarized_dates() == ["2026-06-04"]
+
+
+def test_collect_then_record_writes_worklog_and_marks_summarized(tmp_path, monkeypatch):
+    monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
+    vault = tmp_path / "vault"
+    _write_journal(tmp_path, "2026-06-04", "meta-eval__builder__surface:2.log",
+                   "# h\n● did important work\n")
+    rep = s.collect_pending("all", "2026-06-04")
+    df = rep["pending"][0]["digest_file"]
+
+    # the AGENT authors bullets (here a stand-in for a dispatched subagent)
+    rec = s.record_summaries([{"digest_file": df, "bullets": "- Done: built the thing"}],
+                             obsidian=str(vault))
+    assert rec["ok"] and rec["surfaces_recorded"] == 1
+    worklog = (vault / "worklog" / "2026-06-04.md").read_text()
+    assert "## " in worklog and "— meta-eval" in worklog
+    assert "**builder** (surface:2)" in worklog
+    assert "- Done: built the thing" in worklog
+    assert s.unsummarized_dates() == []               # marked summarized
+
+    # a second collect has nothing pending (cursor advanced + manifest marked)
+    rep2 = s.collect_pending("all", "2026-06-04")
+    assert rep2["pending"] == []
+
+
+def test_record_append_failure_keeps_work_retryable(tmp_path, monkeypatch):
+    monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
+    _write_journal(tmp_path, "2026-06-04", "w__a__surface:1.log", "● x\n")
+    rep = s.collect_pending("all", "2026-06-04")
+    df = rep["pending"][0]["digest_file"]
+
+    def _boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(s, "append_worklog", _boom)
+    rec = s.record_summaries([{"digest_file": df, "bullets": "- Done: x"}],
+                             obsidian=str(tmp_path / "v"))
+    assert rec["ok"] is False and rec["failed"]
+    assert s.unsummarized_dates() == ["2026-06-04"]   # nothing marked -> retry
+
+
+def test_record_ignores_unknown_and_blank_bullets(tmp_path, monkeypatch):
+    monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
+    vault = tmp_path / "vault"
+    _write_journal(tmp_path, "2026-06-04", "w__a__surface:1.log", "● x\n")
+    rep = s.collect_pending("all", "2026-06-04")
+    df = rep["pending"][0]["digest_file"]
+    rec = s.record_summaries(
+        [{"digest_file": "/no/such/digest", "bullets": "- ghost"},   # unknown -> skipped
+         {"digest_file": df, "bullets": "   "}],                      # blank -> skipped
+        obsidian=str(vault))
+    assert rec["surfaces_recorded"] == 0
+    assert not (vault / "worklog" / "2026-06-04.md").exists()
+    assert s.unsummarized_dates() == ["2026-06-04"]   # the real one is still pending
+
+
+def test_collect_defers_backlog_older_than_one_day(tmp_path, monkeypatch):
+    monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
+    _write_journal(tmp_path, "2026-06-02", "w__a__surface:1.log", "● two\n")
+    _write_journal(tmp_path, "2026-06-04", "w__a__surface:1.log", "● four\n")
+    rep = s.collect_pending("all", "2026-06-04", max_days=1)
+    dates = {p["date"] for p in rep["pending"]}
+    assert dates == {"2026-06-04"}                    # only today within the cap
+    assert rep["deferred"] == ["2026-06-02"]          # >1 day old deferred
+    assert rep["resume_cmd"] and "--catch-up" in rep["resume_cmd"]
+
+
+def test_record_marks_only_authored_digests_others_retry(tmp_path, monkeypatch):
+    # two surfaces collected; the agent authors only one (e.g. a subagent failed) —
+    # the un-authored one must remain pending for the next pass, not be lost.
+    monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
+    vault = tmp_path / "vault"
+    _write_journal(tmp_path, "2026-06-04", "w__a__surface:1.log", "● a\n")
+    _write_journal(tmp_path, "2026-06-04", "w__b__surface:2.log", "● b\n")
+    rep = s.collect_pending("all", "2026-06-04")
+    by_surface = {p["surface_ref"]: p["digest_file"] for p in rep["pending"]}
+    assert len(by_surface) == 2
+    s.record_summaries([{"digest_file": by_surface["surface:1"], "bullets": "- Done: a"}],
+                       obsidian=str(vault))
+    # surface:2 was never authored -> still pending on the next collect
+    rep2 = s.collect_pending("all", "2026-06-04")
+    assert {p["surface_ref"] for p in rep2["pending"]} == {"surface:2"}
+
+
+def test_record_is_idempotent_no_double_append(tmp_path, monkeypatch):
+    # The manifest is the exactly-once guard across the collect->author->record
+    # gap (the flock can't be held over the subagents' turn). A replayed record
+    # — or a stray launchd `run` — must NOT append the same bullets twice.
+    monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
+    vault = tmp_path / "vault"
+    _write_journal(tmp_path, "2026-06-04", "w__a__surface:1.log", "● x\n")
+    df = s.collect_pending("all", "2026-06-04")["pending"][0]["digest_file"]
+
+    rec1 = s.record_summaries([{"digest_file": df, "bullets": "- Done: x"}],
+                              obsidian=str(vault))
+    assert rec1["surfaces_recorded"] == 1
+    after_first = (vault / "worklog" / "2026-06-04.md").read_text()
+
+    rec2 = s.record_summaries([{"digest_file": df, "bullets": "- Done: x"}],
+                              obsidian=str(vault))
+    assert rec2["surfaces_recorded"] == 0          # already summarized -> skipped
+    assert (vault / "worklog" / "2026-06-04.md").read_text() == after_first  # no dup

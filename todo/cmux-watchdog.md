@@ -1,6 +1,78 @@
 # cmux-watchdog — todo
 
-Open backlog for the `cmux-watchdog` skill. Last refreshed 2026-06-04 (v0.5 autonomous summarization via DeepSeek-V4 + launchd; overnight catch-up).
+Open backlog for the `cmux-watchdog` skill. Last refreshed 2026-06-04 (v0.6 agent-authored summary backend; v0.5 autonomous summarization via DeepSeek-V4 + launchd; overnight catch-up).
+
+## v0.6 status — agent-authored summary backend (collect → subagents → record)
+
+Adds a SECOND summary backend so the attached consumer can summarize using its
+OWN subagents — no LLM API key, no provider SDK — instead of (or alongside) the
+v0.5 DeepSeek HTTP path. This is now the DEFAULT path for an attached consumer;
+the HTTP/launchd path stays in the tree, disabled, "for other people."
+
+**Why (user, 2026-06-04):** the originally-scoped antigravity-CLI backend
+(`agy -p`) was dropped — Antigravity ToS **Section 6** ("must not… use the
+Service in connection with products not provided by us") + active account
+suspensions for driving the agy/Gemini backend from third-party automation make
+shelling out to `agy` from the summarizer a real account-risk. Agent-authored
+summaries run inside the user's own subscription agent, sidestepping that
+entirely. The user also recognized the pattern already exists and is proven in
+the sibling **cmux-observability** skill (collect → agent authors → record-
+summaries, SDK-free) — v0.6 ports that contract into watchdog's worklog path.
+
+- **New `summarize.py` subcommands** (additive — `run`/`call_llm`/`run_pass`/
+  `run_catchup`/`install` and the HTTP path are untouched, so all 99 prior tests
+  stay green):
+  - `collect [--workspace] [--max-days N] [--catch-up]` — the read step. Under the
+    existing advisory `_summarizer_lock`, shells out to `watchdog.py digest`,
+    registers new digest files in the same `summary_state.json` manifest, and
+    returns `{ok, pending:[{digest_file, date, workspace_title, title,
+    surface_ref, system, user}], deferred, resume_cmd}` — NO LLM call. `system`
+    is the shared `SUMMARY_SYSTEM_PROMPT`; `user` is the framed digest (same
+    framing as the HTTP payload via the new shared `_user_message` helper). Same
+    1-day cap / `deferred` / `resume_cmd` policy as `run_catchup`. Needs OBSIDIAN
+    but no LLM_API_KEY.
+  - `record-summaries` (stdin `{summaries:[{digest_file, bullets}]}`) — the write
+    step. Appends each authored block via the existing `format_worklog` /
+    `append_worklog`, and marks ONLY those digests summarized, ONLY after a
+    successful append. **Idempotent**: unknown digest_files, already-summarized
+    ones, and blank bullets are skipped, so a replay or a stray concurrent `run`
+    never double-appends. Per-date append failure marks nothing for that date
+    (retries next pass). Needs OBSIDIAN only.
+- **Manifest is the exactly-once guard across the collect→(subagents author)→
+  record gap** — the flock can't be held over the subagents' turn, so the durable
+  `summary_state.json` is what prevents loss/dupes (raised by watchdog_fix peer;
+  verified by tests). A collect with no matching record (agent crash, subagent
+  failure) leaves the digest pending for the next collect.
+- **Single-owner invariant preserved** (peer ask): the SKILL `run_worklog_summary`
+  ownership guard is kept, not deleted — the consumer runs collect/record ONLY
+  when the launchd job is NOT the active owner (`launchctl print …` ≠ 0). Both
+  backends call `digest`, so they remain mutually exclusive.
+- **Tests**: `tests/test_summarize.py`, **8 new (107 total, all green)** via
+  `/opt/anaconda3/bin/python -m pytest tests/ -q`. Cover: collect returns
+  prompts + registers manifest; collect→record writes worklog + marks summarized
+  + second collect empty; record append-failure retryable; record skips
+  unknown/blank; collect defers >1-day backlog; partial authoring leaves the
+  rest pending; record idempotent (no double-append on replay); `_user_message`
+  shared with `build_payload`.
+- **SKILL.glyph**: `run_worklog_summary` active-owner branch rewritten to the
+  collect→subagents→record flow (single-owner deferral guard kept);
+  `summarizer_component` now documents both backends + the new subcommands (was
+  "the SINGLE summarization path"); `local_only`, `single_summary_owner`,
+  `auto_safe_handoff_risky`, the skill `description`, and the `summary_interval`
+  param doc updated to reflect the agent-authored default. Recompiled via raw
+  `glyph compile --emit-ir --strict` (validate-output clean, git diff --check
+  clean); a clean re-compile through the `/glyph:compile` skill is being run by a
+  forked Codex agent (glyph_compiler) per the user.
+
+### v0.6 open / not-yet-done
+- **No live end-to-end test yet.** The collect→subagent-dispatch→record loop is
+  authored + unit-tested but not exercised against real cmux with a real attached
+  agent dispatching real subagents on a `summarize_due` tick. Needs a smoke run.
+- **antigravity-CLI backend dropped (not shelved).** If a sanctioned programmatic
+  path appears (e.g. the official Antigravity SDK rather than driving `agy`),
+  revisit as a third backend. The `agy` interface (v1.0.0): `agy -p "<prompt>"`
+  / `--print` / `--prompt` runs one prompt non-interactively, `--print-timeout`
+  default 5m; no `--output-format`/`--system`/`--model` flags in that build.
 
 ## v0.5 status — autonomous summarization (summarize.py + LLM API + launchd)
 
