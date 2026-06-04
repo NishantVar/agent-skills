@@ -19,6 +19,19 @@ description: 'P2P messaging between cmux agents: one verb (`send`) handles first
 - **Require:** When forking an agent via tfork that you'll message, pass `--title <t>` to tfork — the new tab is renamed before tfork returns, so `send --peer <t>` resolves on the first try.
 - **Avoid:** This skill never invokes the tfork skill itself. When a spawn is needed, send returns a `peer_unknown` handoff with `handoff_skill: "tfork"` and a pre-written `payload_file`; the calling agent invokes the tfork skill using whatever delayed-input mechanism that skill currently exposes (p2p does not prescribe a flag). Same rule in reverse: tfork never calls p2p.
 
+## Context
+
+- **red-flags**
+
+  Skip these — SKILL.md is the complete interface.
+
+  | Thought | Reality |
+  |---|---|
+  | "`agent_msg.py list` first" | `send` returns `peer_*` handoffs with everything you need. |
+  | "Check `--help` for the right flag" | All flags are listed in Parameters. |
+  | "Read agent_msg.py to understand `send`" | SKILL.md is the contract. |
+  | "`cmux identify` to know my surface first" | The helper handles it. |
+
 ## Steps
 
 1. Decide which of the following applies and follow only that path:

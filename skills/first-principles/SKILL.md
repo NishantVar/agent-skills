@@ -19,6 +19,10 @@ allowed-tools:
 
 # First Principles
 
+## Goal
+
+Convert a user's claim or decision into an explicit dependency graph of assumptions, test each assumption against logic or evidence, identify the smallest set of surviving truths, and optionally rebuild a decision from only those truths.
+
 Strip away assumptions. Find what's actually true. Rebuild from there.
 
 ## How You Operate

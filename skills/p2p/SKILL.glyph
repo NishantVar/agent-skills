@@ -7,6 +7,9 @@ skill p2p(my_title = "" <"REQUIRED on first send for this agent EXCEPT on inline
     require ask_tfork_for_title
     avoid skill_calls_skill
 
+    context:
+        red_flags
+
     flow:
         if reply_to_inline_bootstrap.applies()
             reply_to_inline_bootstrap()
@@ -68,8 +71,8 @@ const skill_calls_skill = """This skill never invokes the tfork skill itself. Wh
 
 const ask_tfork_for_title = """When forking an agent via tfork that you'll message, pass `--title <t>` to tfork — the new tab is renamed before tfork returns, so `send --peer <t>` resolves on the first try."""
 
-// red_flags renders as the ### Red Flags section in SKILL.md. Hand-mirrored
-// for now; the compile pipeline does not yet emit it automatically.
+// red_flags is wired into the skill's `context:` block, so it renders as a
+// bullet under the ## Context section of SKILL.md.
 const red_flags = """Skip these — SKILL.md is the complete interface.
 
 | Thought | Reality |
