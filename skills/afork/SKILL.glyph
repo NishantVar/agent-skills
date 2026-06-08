@@ -1,0 +1,71 @@
+// afork — front door for forking ANY coding agent into a cmux pane.
+// Thin front-door, like tfork: extract the parameters, call the afork.py
+// binary, and act on its single JSON object. All resolution, permission
+// mapping, and fail-closed enforcement live in the binary (aforklib/). The
+// skill is agnostic to runtime flag names — the adapter owns the mapping. It
+// carries no enforcement logic of its own, and never forks — it hands the
+// built command to the tfork skill.
+
+skill afork(runtime = <"The coding-agent runtime, REQUIRED, positional-1: `codex`, `claude`, or `pi` (all launch plain + permission none); `antigravity` is unsupported this round.">, agent = none <"Optional agent definition to launch, resolved under <cwd>/.<runtime>/agents/ (e.g. `reviewer` -> .codex/agents/reviewer.toml, `systems-designer-agent` -> .claude/agents/systems-designer-agent.md). Omit for a plain agent (default params). pi has no agents dir — a custom agent there errors.">, permission = none <"Agnostic permission posture: `none` (yolo, default) | `read-only` | `workspace-write`. Unset resolves to the definition's declaration, else none. Restricted postures fail closed on runtimes that can't enforce them (claude/pi this round).">, model = none <"Agnostic model; falls back to the definition's declaration, else the runtime default (claude `opus`; codex/pi none).">, effort = none <"Agnostic reasoning effort; falls back to the definition's declaration, else the runtime default (codex `xhigh`; claude `high`).">, title = none <"cmux tab title for the forked pane, for p2p routing. Defaults to the agent name, else the runtime. Pass snake_case (e.g. reviewer_agent).">, cwd = none <"The target repo whose agent ports are resolved and where the agent runs. Defaults to the caller's cwd. Ports resolve relative to this, NOT the skill repo.">, placement = none <"Where the new pane opens: right, left, top, or bottom. Forwarded to tfork.">, allow_unenforced = none <"Explicitly proceed when a declared restriction cannot be runtime-enforced. Off by default — afork fails closed. Pass only on explicit user instruction to accept an unenforced launch.">)
+    description: "Front door for forking any coding agent (plain or definition-backed) across runtimes (codex, claude, pi) into a cmux pane: build a launch command and hand it to tfork. Agnostic to runtime flags; fails closed only when a declared restriction can't be runtime-enforced. Never forks."
+
+    context:
+        binary_contract
+
+    constraints:
+        must fail_closed
+        must avoid prompt_level_enforcement
+        require handoff_to_tfork
+        require no_enforcement_logic_in_skill
+
+    flow:
+        "Extract the parameters from the user's request — {runtime}, {agent}, {permission}, {model}, {effort}, {title}, {cwd}, {placement} — and forward them as-is. Do not invent values; use the defaults when the user did not name one. {runtime} is required; omit {agent} for a plain agent."
+        "Begin the invocation as: python3 <skill-dir>/afork.py {runtime}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — afork.py sits in that same directory."
+
+        if "the user named a specific agent definition"
+            "Append {agent} as the second positional argument, right after {runtime}."
+        if "the user named a permission posture"
+            "Insert --permission {permission} into the invocation."
+        if "the user named a model"
+            "Insert --model {model} into the invocation."
+        if "the user named an effort level"
+            "Insert --effort {effort} into the invocation."
+        if "the user named a title"
+            "Insert --title {title} into the invocation."
+        if "the user named a target repo or working directory"
+            "Insert --cwd {cwd} into the invocation. Ports resolve relative to this directory."
+        if "the user named a placement"
+            "Insert --placement {placement} into the invocation."
+        if "the user has explicitly accepted an unenforced launch for a runtime that cannot enforce the declared posture"
+            "Insert --allow-unenforced into the invocation. Never add this on your own initiative — only on explicit user instruction."
+
+        "Run the assembled afork.py invocation and capture its stdout as a single JSON object."
+
+        if "the JSON has ok set to true and action is ready_to_fork"
+            bridge_to_tfork(result)
+        else
+            "Treat the JSON as a fail-closed or resolution handoff: carry out its agent_instruction exactly and relay its human_message to the user. For code `unenforceable`, do NOT fork — report the refusal; only re-run with --allow-unenforced if the user explicitly accepts the risk."
+
+const fail_closed = "A declared permission restriction (read-only / workspace-write) that the runtime adapter cannot prove it enforces is a refusal, not a best effort. afork refuses to launch a restricted posture it cannot enforce unless the user explicitly passes --allow-unenforced. The default posture `none` (yolo) has nothing to enforce and never fails closed. The binary owns this decision — never second-guess an `unenforceable` handoff into a launch."
+const prompt_level_enforcement = "treating a prompt-level or persona 'please be read-only' as if it enforced the restriction. Only runtime mechanisms (e.g. the codex --sandbox flag) count as enforcement; prose does not. Persona injection is a role, not a security boundary."
+const handoff_to_tfork = "afork prepares the command but never forks. On a ready_to_fork handoff, load the tfork skill and fork the handoff's `command` verbatim after the -- separator, passing the carried --title, --cwd, --type agent, and --placement. afork.py must not invoke tfork itself — the calling agent bridges the two skills."
+const no_enforcement_logic_in_skill = "Infer only the front-door parameters and pass them through. Never parse agent definitions, map postures to runtime flags, build launch commands, or decide enforceability in the skill — the binary's adapter owns all of it. Do not hand-build runtime invocations or edit the command afork returns."
+const binary_contract = """afork.py is deterministic and self-contained, and is agnostic to runtime flag names — a per-runtime adapter owns the mapping. It picks the runtime adapter, decides plain (no agent) vs custom (definition-backed) mode, resolves the permission posture by precedence (--permission > definition's declared sandbox > default none), checks the adapter can runtime-enforce a restricted posture (else fails closed), resolves model/effort (arg > definition > runtime default), and builds the launch command. Plain agents get a flat shell-quoted argv (no temp launcher). Custom agents with a persona get a 0600 payload + generated `bash <launcher>` so multiline persona never crosses the agent->tfork shell boundary; the launcher enforces the posture via flags and injects the persona at system/developer level. It always prints exactly one JSON object. On success: a `ready_to_fork` handoff carrying command, handoff_skill ("tfork"), runtime, agent (null when plain), posture, enforced (bool; `none` is always enforced — nothing to enforce), title, cwd, type ("agent"), placement, workdir (null when plain), and an agent_instruction telling you exactly how to call tfork. On failure: ok false and a code: `port_not_found` (no definition under --cwd), `unenforceable` (fail-closed refusal — a declared restriction the adapter can't enforce), `custom_unsupported` (custom agent requested for a runtime with no agents dir, e.g. pi), `runtime_unsupported` (no adapter, e.g. antigravity), `bad_arguments`, or `port_unparsable`. Each failure carries human_message and agent_instruction."""
+
+// red_flags renders as the ### Red Flags section in SKILL.md. Hand-mirrored
+// for now; the compile pipeline does not yet emit it automatically.
+const red_flags = """| Thought | Reality |
+|---|---|
+| "Run `--help` first" | All flags are listed in Parameters. |
+| "Read afork.py / the toml/md to understand it" | SKILL.md is the contract; the binary's adapter parses the definition and maps flags. |
+| "I need to pick the codex/claude/pi flag for this posture/model" | The binary is agnostic; the adapter owns flag names. Pass agnostic permission/model/effort. |
+| "An `unenforceable` refusal is probably fine — just fork anyway / add --allow-unenforced" | Fail-closed is the point for declared restrictions. Only --allow-unenforced on explicit user acceptance. |
+| "`none` (yolo) should fail closed too" | none has nothing to enforce; it never fails closed. |
+| "I'll inject the role as a user prompt after forking" | Prompt-level is not enforcement; the binary injects persona at system/developer level. |
+| "Let afork fork it directly" | afork only prepares; the tfork skill forks the returned command. |"""
+
+block bridge_to_tfork(result)
+    flow:
+        "Read the result's command, title, cwd, type, and placement fields and its agent_instruction."
+        "Load the tfork skill and fork the command verbatim: pass it after the -- separator with --title, --cwd, --type agent, and --placement from the handoff. Do not edit the command."
+        "After tfork returns the new pane's surface/title, that is the address for this agent. When the user asks to brief or message it, load the p2p skill and use that title."
