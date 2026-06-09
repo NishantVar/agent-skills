@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 
 import pytest
@@ -318,23 +317,51 @@ def test_my_title_no_collision_renames_and_registers(tmp_registry, fc):
     assert me["title"] == "qa_lead"
 
 
-def test_peer_unknown_writes_payload_and_returns_handoff(
+def test_peer_not_found_when_workspace_empty_of_siblings(
         tmp_registry, fc):
+    """The caller is the only agent in its workspace. A title miss
+    returns peer_not_found with NO candidates and NO spawn payload —
+    p2p never spawns; the caller decides whether to start a peer via
+    tfork / afork."""
     _seed_self(tmp_registry)
     out = send.send("missing_peer", "boot me up", my_title=None,
                     fallback_self_title=None, rerun_argv=["rerun"])
     assert out["ok"] is False
-    assert out["code"] == "peer_unknown"
-    assert out["handoff_skill"] == "tfork"
-    payload = out["payload_file"]
-    assert os.path.exists(payload)
-    st = os.stat(payload)
-    assert oct(st.st_mode)[-3:] == "600"
-    body = open(payload).read()
-    assert "[p2p-bootstrap]" in body
-    assert "suggested_title=missing_peer" in body
-    assert "First message from me: boot me up" in body
-    os.unlink(payload)
+    assert out["code"] == "peer_not_found"
+    assert out["candidates"] == []
+    assert out["action_required"] == "spawn_externally"
+    assert out["handoff_skill"] is None
+    assert "payload_file" not in out
+    assert fc.sent == []
+    # Instruction points the caller at tfork / afork, not an in-p2p retry.
+    assert "tfork" in out["agent_instruction"]
+    assert "afork" in out["agent_instruction"]
+
+
+def test_peer_not_found_lists_registered_sibling_as_candidate(
+        tmp_registry, fc):
+    """The bug this fix targets: a live registered agent sits in the
+    workspace under a different title ('agent_real'); the caller
+    guesses the wrong --peer ('html'). p2p must surface the real agent
+    as a candidate rather than declaring the peer unknown (which would
+    spawn a duplicate)."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="agent_real")
+    registry.register("agent_real", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("html", "wire me up", my_title=None,
+                    fallback_self_title=None, rerun_argv=["rerun"])
+    assert out["ok"] is False
+    assert out["code"] == "peer_not_found"
+    assert "payload_file" not in out
+    assert out["action_required"] == "pick_candidate"
+    refs = {c["ref"] for c in out["candidates"]}
+    assert refs == {"surface:200"}
+    titles = {c["title"] for c in out["candidates"]}
+    assert titles == {"agent_real"}
+    # No duplicate is spawned and no message is sent to the wrong title.
+    assert fc.sent == []
 
 
 def test_empty_message(tmp_registry, fc):
@@ -385,20 +412,19 @@ def test_explicit_peer_surface_skips_resolution(tmp_registry, fc):
     assert "[p2p-bootstrap]" not in text
 
 
-def test_explicit_peer_surface_unknown_falls_back_to_spawn(
+def test_explicit_peer_surface_unknown_returns_peer_not_found(
         tmp_registry, fc):
+    """--peer-surface pointing at a surface that's gone from the tree
+    returns peer_not_found (no spawn payload) — the peer vanished."""
     _seed_self(tmp_registry)
     out = send.send("ghost_peer", "hi", my_title=None,
                     fallback_self_title=None, rerun_argv=["rerun"],
                     peer_surface="surface:404")
     assert out["ok"] is False
-    assert out["code"] == "peer_unknown"
-    assert out["handoff_skill"] == "tfork"
-    payload = out["payload_file"]
-    assert os.path.exists(payload)
-    body = open(payload).read()
-    assert "suggested_title=ghost_peer" in body
-    os.unlink(payload)
+    assert out["code"] == "peer_not_found"
+    assert "payload_file" not in out
+    assert out["handoff_skill"] is None
+    assert fc.sent == []
 
 
 def test_explicit_peer_surface_with_idle_manifest_sends_plain(

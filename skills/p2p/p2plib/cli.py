@@ -161,22 +161,13 @@ def cmd_send(args) -> int:
     # (the default). --workspace all means global. --workspace <value>
     # accepts either a workspace_ref (workspace:N or UUID) or a title.
     # Titles are resolved against live workspaces; zero matches returns
-    # workspace_unknown, multi-match returns workspace_ambiguous. The
-    # original --workspace value (title preferred over ref) is preserved
-    # for the peer_unknown spawn payload so tfork lands the new peer in
-    # the right workspace.
+    # workspace_unknown, multi-match returns workspace_ambiguous.
     scope_workspace_ref: str | None
-    workspace_for_spawn: str | None = None
     if args.workspace == "all":
         scope_workspace_ref = ""  # sentinel: global scope
     elif args.workspace:
-        workspace_for_spawn = args.workspace
         if surface.is_workspace_ref(args.workspace):
-            # Validate the ref points at a live workspace. Prefer the
-            # title for the spawn payload so a downstream tfork lands
-            # the new peer in the same workspace by name — but only if
-            # the title is globally unique; otherwise keep the
-            # unambiguous ref so tfork does not see workspace_ambiguous.
+            # Validate the ref points at a live workspace.
             ws_list = surface.list_workspaces()
             match = next((t for (r, t) in ws_list if r == args.workspace),
                          None)
@@ -184,8 +175,6 @@ def cmd_send(args) -> int:
                 _print_json(errors.workspace_unknown(args.workspace, rerun))
                 return EXIT_HANDOFF
             scope_workspace_ref = args.workspace
-            if match and sum(1 for (_, t) in ws_list if t == match) == 1:
-                workspace_for_spawn = match
         else:
             ws_list = surface.list_workspaces()
             matches = [(r, t) for (r, t) in ws_list if t == args.workspace]
@@ -211,7 +200,6 @@ def cmd_send(args) -> int:
             peer_surface=args.peer_surface,
             bootstrap_suggested_title=args.bootstrap_suggested_title,
             scope_workspace_ref=scope_workspace_ref,
-            workspace_for_spawn=workspace_for_spawn,
             one_way=args.one_way,
         )
     except transport.TransportError as exc:

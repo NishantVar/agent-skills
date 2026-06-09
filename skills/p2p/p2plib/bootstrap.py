@@ -1,12 +1,11 @@
-"""Bootstrap text + spawn-payload generation, plus a scrollback parser
-used only when explicit flags aren't supplied.
+"""First-contact bootstrap text for messaging an already-live peer,
+plus a scrollback parser used only when explicit flags aren't supplied.
+p2p does not spawn agents, so there is no spawn-payload generation here.
 """
 
 from __future__ import annotations
 
-import os
 import re
-import secrets
 
 BOOTSTRAP_TAG = "[p2p-bootstrap]"
 
@@ -50,56 +49,6 @@ def build_bootstrap(peer_title: str, peer_surface: str,
         body += (f"\n\nFirst message from {peer_title}{marker}: "
                  f"{first_message}")
     return body
-
-
-def build_spawn_bootstrap(peer_title: str, peer_surface: str,
-                          suggested_title: str | None,
-                          first_message: str | None,
-                          one_way: bool = False) -> str:
-    """Same as build_bootstrap but phrased for a freshly-spawned agent
-    that has no prior context. The tfork skill is expected to deliver
-    this as the new agent's first user-turn prompt via whatever
-    delayed-input mechanism it currently exposes — p2p does not
-    prescribe a flag."""
-    suggest_line = (f"suggested_title={suggested_title}\n"
-                    if suggested_title else "")
-    if one_way:
-        trailer = (
-            f"Pick a short snake_case title for yourself (or accept "
-            f"the suggested_title if provided), load the p2p skill, "
-            f"and register. This is a one-way notification — no reply "
-            f"is expected."
-        )
-    else:
-        trailer = (
-            f"Pick a short snake_case title for yourself (or accept "
-            f"the suggested_title if provided), load the p2p skill, "
-            f"register, and reply."
-        )
-    body = (
-        f"{BOOTSTRAP_TAG} You were spawned by peer-messaging.\n"
-        f"peer_title={peer_title}\n"
-        f"peer_surface={peer_surface}\n"
-        f"{suggest_line}"
-        f"{trailer}"
-    )
-    if first_message and first_message.strip():
-        marker = " (one-way, no reply expected)" if one_way else ""
-        body += (f"\n\nFirst message from {peer_title}{marker}: "
-                 f"{first_message}")
-    return body
-
-
-def write_spawn_payload(peer_title: str, payload: str) -> str:
-    """Write spawn payload to /tmp with O_EXCL 0600. Returns the path."""
-    path = (f"/tmp/p2p-spawn-{peer_title}-{os.getpid()}-"
-            f"{secrets.token_hex(4)}.txt")
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    try:
-        os.write(fd, payload.encode())
-    finally:
-        os.close(fd)
-    return path
 
 
 def parse_bootstrap_text(text: str) -> dict | None:

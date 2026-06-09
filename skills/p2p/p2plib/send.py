@@ -14,10 +14,13 @@ Self-naming precedence on first send (no existing manifest):
      name from its role context.
 
 The non-trivial branches:
-  * `kind="unknown"` writes a fresh spawn payload to /tmp under O_EXCL
-    0600 and returns a `peer_unknown` handoff with `payload_file` and
-    `handoff_skill="tfork"`. The CALLING AGENT invokes tfork — this
-    module never shells out to tfork.
+  * `kind="not_in_workspace"` / `kind="unknown"` both return a
+    `peer_not_found` handoff. p2p NEVER spawns: it reports the title
+    miss and, when other registered agents are live in scope
+    (not_in_workspace), lists them as candidates so the caller can
+    correct a misnamed --peer. The calling agent decides whether to
+    retarget or spawn a fresh peer itself via tfork / afork — this
+    module never writes a spawn payload and never shells out.
   * `kind="live_first_contact"` sends a bootstrap into the live peer
     so it can register and reply. `kind="live"` (manifest exists)
     sends a plain `[from: X]` framed message.
@@ -164,24 +167,15 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
                               surfaces: dict[str, dict],
                               manifests: list[dict],
                               rerun_argv: list[str],
-                              one_way: bool,
-                              workspace_for_spawn: str | None) -> dict:
+                              one_way: bool) -> dict:
     """Reply path: caller supplied --peer-surface (typically from an
     inline bootstrap). Skip resolution; route directly. Plain message
     framing — the peer already initiated contact, so no re-bootstrap."""
     s = surfaces.get(peer_surface)
     if s is None:
-        # Surface no longer in cmux tree; fall back to spawn-bootstrap.
-        payload_text = _bootstrap.build_spawn_bootstrap(
-            peer_title=me["title"],
-            peer_surface=me["surface_ref"],
-            suggested_title=peer,
-            first_message=body,
-            one_way=one_way,
-        )
-        payload_file = _bootstrap.write_spawn_payload(peer, payload_text)
-        return errors.peer_unknown(peer, payload_file, rerun_argv,
-                                   workspace=workspace_for_spawn)
+        # Surface no longer in the cmux tree — the peer is gone. p2p
+        # does not spawn; report the miss and let the caller decide.
+        return errors.peer_not_found(peer, rerun_argv=rerun_argv)
 
     by_surface = {m.get("surface_ref"): m for m in manifests}
     m = by_surface.get(peer_surface)
@@ -210,7 +204,6 @@ def send(peer: str | None, body: str,
          peer_surface: str | None = None,
          bootstrap_suggested_title: str | None = None,
          scope_workspace_ref: str | None = None,
-         workspace_for_spawn: str | None = None,
          one_way: bool = False) -> dict:
     """Orchestrator. `peer_surface` skips title resolution and routes
     directly — used when the caller already knows the peer's surface
@@ -261,8 +254,7 @@ def send(peer: str | None, body: str,
             peer=peer, body=body, me=me,
             peer_surface=peer_surface, surfaces=surfaces,
             manifests=manifests, rerun_argv=rerun_argv,
-            one_way=one_way,
-            workspace_for_spawn=workspace_for_spawn)
+            one_way=one_way)
 
     # Default scope: caller's own workspace. The caller can widen by
     # passing scope_workspace_ref explicitly (via --workspace at the
@@ -276,7 +268,8 @@ def send(peer: str | None, body: str,
         scope = None
 
     r = resolve.resolve_peer(peer, manifests, surfaces,
-                             scope_workspace_ref=scope)
+                             scope_workspace_ref=scope,
+                             self_surface_ref=my_surf)
 
     if r.kind == "ambiguous":
         return errors.peer_ambiguous(peer, r.candidates,
@@ -288,17 +281,14 @@ def send(peer: str | None, body: str,
                                    caller_workspace_ref=scope,
                                    rerun_argv=rerun_argv)
 
-    if r.kind == "unknown":
-        payload_text = _bootstrap.build_spawn_bootstrap(
-            peer_title=me["title"],
-            peer_surface=me["surface_ref"],
-            suggested_title=peer,
-            first_message=body,
-            one_way=one_way,
-        )
-        payload_file = _bootstrap.write_spawn_payload(peer, payload_text)
-        return errors.peer_unknown(peer, payload_file, rerun_argv,
-                                   workspace=workspace_for_spawn)
+    if r.kind in ("not_in_workspace", "unknown"):
+        # No live agent holds the addressed title in scope. p2p never
+        # spawns: report the miss (with sibling agents as candidates
+        # when present) and let the caller retarget or spawn via
+        # tfork / afork itself.
+        return errors.peer_not_found(peer, r.candidates,
+                                     caller_workspace_ref=scope,
+                                     rerun_argv=rerun_argv)
 
     assert r.surface_ref is not None
     addressed_string = peer

@@ -8,10 +8,15 @@ Resolution:
   1. Match `addressed` (case-insensitive) against tab titles in
      `scope_workspace_ref` when supplied; otherwise match across all
      workspaces.
-  2. 0 hits -> unknown. 1 hit -> live (or live_first_contact if no
-     manifest exists yet for that surface). >1 hits -> ambiguous with
-     candidates carrying workspace info so the caller can disambiguate
-     via --peer-surface or --workspace.
+  2. 1 hit -> live (or live_first_contact if no manifest exists yet
+     for that surface). >1 hits -> ambiguous with candidates carrying
+     workspace info so the caller can disambiguate via --peer-surface
+     or --workspace. 0 hits -> not_in_workspace when OTHER registered
+     agents are live in scope (their titles become candidates so the
+     caller can correct a misnamed --peer), else unknown. p2p never
+     spawns; both zero-hit kinds are routing-only signals, and the
+     caller decides whether to retarget or spawn a peer itself (via
+     tfork / afork).
 
 Liveness is grounded entirely in `cmux tree`. A surface present in
 the tree is reachable; manifest age is not consulted. There is no
@@ -42,13 +47,15 @@ class ResolveResult:
     # source describes which path matched. "title_in_workspace" |
     # "title_global" | None.
     source: str | None = None
-    # candidates is populated only for kind="ambiguous".
+    # candidates is populated for kind in {"ambiguous", "renamed",
+    # "not_in_workspace"}.
     candidates: list[dict] = field(default_factory=list)
 
 
 def resolve_peer(addressed: str, manifests: list[dict],
                  surfaces: dict[str, dict],
-                 scope_workspace_ref: str | None = None
+                 scope_workspace_ref: str | None = None,
+                 self_surface_ref: str | None = None
                  ) -> ResolveResult:
     """`manifests` is the post-sweep registry list; `surfaces` is the
     surface_index keyed by surface_ref. When `scope_workspace_ref` is
@@ -120,6 +127,37 @@ def resolve_peer(addressed: str, manifests: list[dict],
                     for s in out_of_scope
                 ],
             )
+        # No match under any title in scope. Before declaring the peer
+        # absent, list the OTHER registered agents that are live in
+        # scope. If the addressed title was a misname (a guess that
+        # matches no live tab) while a real agent sits right there under
+        # a different title, the caller gets a "did you mean one of
+        # these" rather than concluding the workspace is empty. p2p
+        # never spawns — this list is purely a routing aid. An empty
+        # list (kind="unknown") means no registered agent is reachable
+        # under any title in scope.
+        peer_candidates: list[dict] = []
+        for m in manifests:
+            m_ref = m.get("surface_ref") or ""
+            if m_ref == self_surface_ref:
+                continue
+            s = surfaces.get(m_ref)
+            if s is None:
+                # Manifest references a surface not in the snapshot —
+                # not live post-sweep; skip.
+                continue
+            if (scope_workspace_ref is not None
+                    and s.get("workspace_ref") != scope_workspace_ref):
+                continue
+            peer_candidates.append({
+                "ref": s["ref"],
+                "workspace_ref": s.get("workspace_ref"),
+                "workspace_title": s.get("workspace_title", ""),
+                "title": s.get("title", ""),
+            })
+        if peer_candidates:
+            return ResolveResult(kind="not_in_workspace",
+                                 candidates=peer_candidates)
         return ResolveResult(kind="unknown")
 
     if len(matches) > 1:

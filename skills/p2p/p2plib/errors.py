@@ -125,37 +125,65 @@ def info_needed(missing: list[str], rerun_argv: list[str]) -> dict:
     )
 
 
-def peer_unknown(peer: str, payload_file: str, rerun_argv: list[str],
-                 workspace: str | None = None) -> dict:
-    """``workspace`` is the original ``--workspace <value>`` the caller
-    passed (title preferred over ref for stability). When set, the
-    bootstrap-payload tfork handoff also asks the caller to pass
-    ``--workspace <value>`` to tfork so the spawned peer lands in the
-    right workspace. None means no workspace pinning — tfork spawns
-    next to the caller as it always has."""
-    if workspace:
-        ws_clause = (
-            f" Also pass --workspace {workspace} to tfork so the spawned "
-            f"peer lands in the workspace the original send targeted."
+def peer_not_found(peer: str, candidates: list[dict] | None = None,
+                   caller_workspace_ref: str | None = None,
+                   rerun_argv: list[str] | None = None) -> dict:
+    """No live agent holds the addressed title in scope. p2p NEVER
+    spawns and never writes a spawn payload — it only reports the miss
+    and (when other registered agents are live in scope) lists them so
+    the caller can correct a misnamed --peer.
+
+    Two shapes share this code:
+      (a) ``candidates`` non-empty — registered agents are live in
+          scope under different titles. The addressed title was almost
+          certainly a misname; spawning would duplicate a real agent.
+          The retry is mechanical (rerun --peer / --peer-surface) →
+          action_required=pick_candidate, retryable=True.
+      (b) ``candidates`` empty — no registered agent is reachable under
+          any title in scope. There is no in-p2p retry; if a peer is
+          wanted the caller spawns one itself via tfork / afork and
+          sends again. action_required=spawn_externally.
+    """
+    candidates = candidates or []
+    rerun_argv = rerun_argv or []
+    scope = caller_workspace_ref or "scope"
+    if candidates:
+        human = (
+            f"No live agent titled {peer!r} in {scope}, but "
+            f"{len(candidates)} other registered agent(s) are live "
+            f"there. {peer!r} was likely a misname."
         )
+        instruction = (
+            "Did you mean one of the listed candidates? Rerun with "
+            "--peer <candidates[i].title> (or --peer-surface "
+            "<candidates[i].ref> to route by surface directly). p2p "
+            "does NOT spawn agents — do not start a new agent just "
+            "because the title missed; that would duplicate a live "
+            "peer. If none of the candidates is the intended peer and "
+            "you genuinely need a NEW one, spawn it yourself via the "
+            "tfork or afork skill (give it a --title) and then send to "
+            "that title."
+        )
+        action = "pick_candidate"
     else:
-        ws_clause = ""
+        human = (
+            f"No live agent titled {peer!r} in {scope}."
+        )
+        instruction = (
+            "p2p does NOT spawn agents. If you want a peer here, spawn "
+            "one yourself via the tfork or afork skill (give it a "
+            "--title), then send to that title. Do not retry this "
+            "command verbatim — there is no agent to deliver to yet."
+        )
+        action = "spawn_externally"
     return _base(
-        "peer_unknown",
-        f"Peer {peer!r} is not running in cmux. A spawn-bootstrap "
-        f"payload has been written to {payload_file}.",
-        f"Invoke the tfork skill to spawn an agent that reads "
-        f"{payload_file} as its first user-turn prompt. The new agent "
-        "will register itself, parse the bootstrap, and reply. p2p does "
-        "not name a specific tfork flag — pass the payload via whatever "
-        "delayed-input mechanism that skill currently exposes."
-        + ws_clause,
-        action="spawn_peer",
-        handoff_skill="tfork",
+        "peer_not_found",
+        human,
+        instruction,
+        action=action,
         retryable=True,
-        payload_file=payload_file,
-        workspace=workspace,
         rerun_argv=rerun_argv,
+        candidates=candidates,
     )
 
 
@@ -290,8 +318,9 @@ def peer_renamed(peer: str, candidates: list[dict],
         "<candidates[i].current_title> or --peer-surface "
         "<candidates[i].ref>. The rename may signal a role change — "
         "verify intent (read recent scrollback or ask the peer) "
-        "before resending sensitive content. Otherwise treat as "
-        "peer_unknown and spawn via tfork.",
+        "before resending sensitive content. If the rename is a role "
+        "change and no live tab now fits, p2p does not spawn — start a "
+        "fresh peer yourself via tfork / afork if you need one.",
         action="confirm_rename",
         retryable=True,
         rerun_argv=rerun_argv,

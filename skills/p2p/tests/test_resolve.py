@@ -208,7 +208,11 @@ def test_renamed_scoped_to_caller_workspace():
     assert r.kind == "unknown"
 
 
-def test_unknown_when_addressed_not_in_titles_or_former_titles():
+def test_not_in_workspace_when_registered_sibling_agent_present():
+    """A registered agent ('alpha') is live in scope but the addressed
+    title matches no tab — the title was a misname. Surface the sibling
+    as a candidate instead of declaring the scope empty (which would
+    push the caller toward a duplicate spawn)."""
     surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
                         "surface_ref": "surface:1", "title": "alpha"}])
     manifests = [{"title": "alpha",
@@ -216,7 +220,49 @@ def test_unknown_when_addressed_not_in_titles_or_former_titles():
                   "started_at": 1, "last_seen": 1}]
     r = resolve.resolve_peer("missing", manifests, surfaces,
                              scope_workspace_ref="ws:1")
+    assert r.kind == "not_in_workspace"
+    assert len(r.candidates) == 1
+    c = r.candidates[0]
+    assert c["ref"] == "surface:1"
+    assert c["title"] == "alpha"
+    assert c["workspace_ref"] == "ws:1"
+
+
+def test_unknown_when_only_self_is_live_in_scope():
+    """The caller is the only registered agent in scope — there is no
+    sibling to route to, so a title miss is genuinely unknown."""
+    surfaces = _setup([{"workspace_ref": "ws:1", "workspace_title": "W",
+                        "surface_ref": "surface:1", "title": "me"}])
+    manifests = [{"title": "me",
+                  "surface_ref": "surface:1", "workspace_ref": "ws:1",
+                  "started_at": 1, "last_seen": 1}]
+    r = resolve.resolve_peer("missing", manifests, surfaces,
+                             scope_workspace_ref="ws:1",
+                             self_surface_ref="surface:1")
     assert r.kind == "unknown"
+
+
+def test_not_in_workspace_excludes_out_of_scope_siblings():
+    """Candidates are scoped: a registered agent in another workspace
+    is NOT offered when the caller scoped to ws:1 (and ws:1 has its own
+    sibling)."""
+    surfaces = _setup([
+        {"workspace_ref": "ws:1", "workspace_title": "Mine",
+         "surface_ref": "surface:1", "title": "local"},
+        {"workspace_ref": "ws:2", "workspace_title": "Theirs",
+         "surface_ref": "surface:2", "title": "remote"},
+    ])
+    manifests = [
+        {"title": "local", "surface_ref": "surface:1",
+         "workspace_ref": "ws:1", "started_at": 1, "last_seen": 1},
+        {"title": "remote", "surface_ref": "surface:2",
+         "workspace_ref": "ws:2", "started_at": 1, "last_seen": 1},
+    ]
+    r = resolve.resolve_peer("missing", manifests, surfaces,
+                             scope_workspace_ref="ws:1")
+    assert r.kind == "not_in_workspace"
+    refs = {c["ref"] for c in r.candidates}
+    assert refs == {"surface:1"}
 
 
 def test_source_is_title_global_when_scope_none():

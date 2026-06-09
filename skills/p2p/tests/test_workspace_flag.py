@@ -1,6 +1,6 @@
 """--workspace value handling on `send`: title vs ref vs `all`, plus
 the workspace_unknown / workspace_ambiguous handoffs and the
-peer_unknown payload's workspace passthrough."""
+peer_not_found handoff (p2p never spawns)."""
 
 from __future__ import annotations
 
@@ -178,15 +178,17 @@ def test_default_scope_unchanged_without_workspace_flag(
     assert out["surface"] == "surface:200"
 
 
-# ---------------- peer_unknown payload passthrough ----------------
+# ---------------- peer_not_found (p2p never spawns) ----------------
 
-def test_peer_unknown_carries_workspace_title_for_spawn(
+def test_peer_not_found_in_title_scoped_workspace_without_siblings(
         tmp_registry, fc, monkeypatch, capsys):
-    """Spec: title preferred over ref in the peer_unknown payload's
-    workspace field for spawn-target stability. Passing
-    --workspace <title> surfaces the title, not the resolved ref."""
+    """--workspace <title> scopes the title match. The target workspace
+    has an UNREGISTERED tab (not a p2p agent), so a miss is genuinely
+    empty of routable peers → peer_not_found with no candidates and no
+    spawn payload. p2p never spawns."""
     _seed_self()
-    # Workspace 'Sandbox' exists; nobody in it holds the addressed title.
+    # Workspace 'Sandbox' exists; its only tab is an unregistered, non-
+    # p2p surface — not a routable peer.
     fc.add(workspace_ref="workspace:7", workspace_title="Sandbox",
            surface_ref="surface:700", title="someone_else")
     rc, out = _run_send(monkeypatch, capsys, [
@@ -194,87 +196,61 @@ def test_peer_unknown_carries_workspace_title_for_spawn(
     ])
     assert rc == cli.EXIT_HANDOFF
     assert out["ok"] is False
-    assert out["code"] == "peer_unknown"
-    assert out["workspace"] == "Sandbox"
-    # Instruction tells tfork the workspace target.
-    assert "--workspace Sandbox" in out["agent_instruction"]
+    assert out["code"] == "peer_not_found"
+    assert out["candidates"] == []
+    assert "payload_file" not in out
+    assert "workspace" not in out
+    assert out["action_required"] == "spawn_externally"
+    assert fc.sent == []
 
 
-def test_peer_unknown_ref_surfaces_title_when_unique(
+def test_peer_not_found_lists_registered_sibling_in_scoped_workspace(
         tmp_registry, fc, monkeypatch, capsys):
-    """When --workspace is a ref and the title is unique across live
-    workspaces, the spawn payload prefers the title (per spec
-    'Title preferred over ref in the payload for stability')."""
+    """The cross-workspace bug fix: --workspace <W> targets a workspace
+    that holds a REGISTERED agent under a different title. A misnamed
+    --peer must surface that agent as a candidate, never spawn a
+    duplicate."""
     _seed_self()
     fc.add(workspace_ref="workspace:7", workspace_title="Sandbox",
-           surface_ref="surface:700", title="someone_else")
+           surface_ref="surface:700", title="agent_real")
+    registry.register("agent_real", "surface:700", "workspace:7",
+                      live_set={MY_SURFACE, "surface:700"})
     rc, out = _run_send(monkeypatch, capsys, [
-        "--peer", "ghost", "--workspace", "workspace:7",
+        "--peer", "html", "--workspace", "Sandbox",
     ])
     assert rc == cli.EXIT_HANDOFF
-    assert out["code"] == "peer_unknown"
-    assert out["workspace"] == "Sandbox"
+    assert out["code"] == "peer_not_found"
+    assert out["action_required"] == "pick_candidate"
+    assert "payload_file" not in out
+    refs = {c["ref"] for c in out["candidates"]}
+    assert refs == {"surface:700"}
+    assert out["candidates"][0]["title"] == "agent_real"
+    assert fc.sent == []
 
 
-def test_peer_unknown_ref_keeps_ref_when_title_is_duplicated(
+def test_peer_not_found_no_workspace_flag(
         tmp_registry, fc, monkeypatch, capsys):
-    """When --workspace is a ref and another live workspace shares the
-    same title, the spawn payload keeps the ref. Downgrading to the
-    duplicated title would make tfork return workspace_ambiguous on
-    the spawn handoff, even though the original send was scoped to a
-    single unambiguous workspace."""
-    _seed_self()
-    fc.add(workspace_ref="workspace:7", workspace_title="Dup",
-           surface_ref="surface:700", title="x")
-    fc.add(workspace_ref="workspace:8", workspace_title="Dup",
-           surface_ref="surface:800", title="y")
-    rc, out = _run_send(monkeypatch, capsys, [
-        "--peer", "ghost", "--workspace", "workspace:7",
-    ])
-    assert rc == cli.EXIT_HANDOFF
-    assert out["code"] == "peer_unknown"
-    assert out["workspace"] == "workspace:7"
-    assert "--workspace workspace:7" in out["agent_instruction"]
-
-
-def test_peer_unknown_ref_without_title_keeps_ref(
-        tmp_registry, fc, monkeypatch, capsys):
-    """A workspace_ref pointing at a live workspace with empty title
-    falls through to the ref itself."""
-    _seed_self()
-    fc.add(workspace_ref="workspace:7", workspace_title="",
-           surface_ref="surface:700", title="x")
-    rc, out = _run_send(monkeypatch, capsys, [
-        "--peer", "ghost", "--workspace", "workspace:7",
-    ])
-    assert rc == cli.EXIT_HANDOFF
-    assert out["code"] == "peer_unknown"
-    assert out["workspace"] == "workspace:7"
-
-
-def test_peer_unknown_no_workspace_flag_omits_field(
-        tmp_registry, fc, monkeypatch, capsys):
-    """No --workspace → peer_unknown.workspace is None and the spawn
-    instruction has no `--workspace` clause for tfork."""
+    """No --workspace → default scope is the caller's workspace. With
+    no sibling agent there, a miss is peer_not_found, no spawn."""
     _seed_self()
     rc, out = _run_send(monkeypatch, capsys, [
         "--peer", "ghost",
     ])
     assert rc == cli.EXIT_HANDOFF
-    assert out["code"] == "peer_unknown"
-    assert out["workspace"] is None
-    assert "--workspace" not in out["agent_instruction"]
+    assert out["code"] == "peer_not_found"
+    assert out["candidates"] == []
+    assert "payload_file" not in out
 
 
-def test_peer_unknown_all_workspace_does_not_pin_spawn(
+def test_peer_not_found_all_workspace(
         tmp_registry, fc, monkeypatch, capsys):
-    """--workspace all is global scope, not a placement directive.
-    peer_unknown.workspace stays None so tfork doesn't pin the new
-    peer to a specific workspace."""
+    """--workspace all is global scope. With no registered agent
+    anywhere holding the title, a miss is peer_not_found."""
     _seed_self()
     rc, out = _run_send(monkeypatch, capsys, [
         "--peer", "ghost", "--workspace", "all",
     ])
     assert rc == cli.EXIT_HANDOFF
-    assert out["code"] == "peer_unknown"
-    assert out["workspace"] is None
+    assert out["code"] == "peer_not_found"
+    assert out["candidates"] == []
+    assert "payload_file" not in out
