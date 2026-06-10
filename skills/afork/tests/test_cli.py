@@ -35,6 +35,35 @@ def test_plain_mode_runtime_only(tmp_path, capsys):
     assert "--dangerously-bypass-approvals-and-sandbox" in out["command"]
 
 
+def test_model_forwarded(tmp_path, capsys):
+    main(["claude", "--cwd", str(tmp_path), "--model", "opus"])
+    out = json.loads(capsys.readouterr().out)
+    assert "--model opus" in out["command"]
+
+
+def test_combined_model_spec_splits_into_model_and_effort(tmp_path, capsys):
+    main(["claude", "--cwd", str(tmp_path), "--model", "fable max"])
+    out = json.loads(capsys.readouterr().out)
+    assert "--model fable" in out["command"]
+    assert "--effort max" in out["command"]
+
+
+def test_explicit_effort_wins_over_model_spec(tmp_path, capsys):
+    main(["claude", "--cwd", str(tmp_path),
+          "--model", "fable max", "--effort", "high"])
+    out = json.loads(capsys.readouterr().out)
+    assert "--model fable" in out["command"]
+    assert "--effort high" in out["command"]
+    assert "max" not in out["command"]
+
+
+def test_model_with_nonspec_tail_passes_through(tmp_path, capsys):
+    # Only a trailing *effort token* splits; anything else is the model.
+    main(["claude", "--cwd", str(tmp_path), "--model", "claude-fable-5"])
+    out = json.loads(capsys.readouterr().out)
+    assert "--model claude-fable-5" in out["command"]
+
+
 def test_failclosed_exit_code(tmp_path, capsys):
     # claude read-only is not enforceable this round.
     rc = main(["claude", "--permission", "read-only", "--cwd", str(tmp_path)])

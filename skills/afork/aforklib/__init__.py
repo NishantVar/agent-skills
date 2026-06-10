@@ -21,6 +21,23 @@ from .errors import (
 from .launch import build_launch
 from .resolve import resolve_port
 
+# Effort tokens recognized when splitting a combined --model spec like
+# "fable max" or "gpt-5.3-codex xhigh" into model + effort. This set only
+# decides what splits off; the runtime validates the actual values.
+_EFFORT_TOKENS = {"minimal", "low", "medium", "high", "xhigh", "max"}
+
+
+def _split_model_spec(model, effort):
+    """Split a combined --model spec ("fable max") into (model, effort).
+    An explicit --effort wins; the spec's trailing effort token fills in
+    only when --effort is unset."""
+    if model:
+        parts = model.split()
+        if len(parts) > 1 and parts[-1].lower() in _EFFORT_TOKENS:
+            model = " ".join(parts[:-1])
+            effort = effort or parts[-1].lower()
+    return model, effort
+
 
 def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
               title=None, cwd=None, placement=None, allow_unenforced=False):
@@ -60,6 +77,7 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
             enforced = False
 
     # --- Resolve model/effort: arg > def-declared > adapter default. ---
+    model, effort = _split_model_spec(model, effort)
     model = model or adapter.declared_model(parsed) or adapter.default_model
     effort = effort or adapter.declared_effort(parsed) or adapter.default_effort
 
