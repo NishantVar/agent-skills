@@ -20,6 +20,36 @@ def _claude_port(tmp_path, name, body="# agent\n"):
     (d / f"{name}.md").write_text(body)
 
 
+def test_explicit_codex_definition_path_runs_in_separate_cwd(tmp_path):
+    from pathlib import Path
+
+    defs = tmp_path / "definition-repo" / ".codex" / "agents"
+    run_dir = tmp_path / "target-repo"
+    defs.mkdir(parents=True)
+    run_dir.mkdir()
+    definition = defs / "org-designer.toml"
+    persona = "You are Maya, the org designer."
+    definition.write_text(
+        'sandbox_mode = "workspace-write"\n'
+        f'developer_instructions = "{persona}"\n')
+
+    out = run_afork("codex", str(definition), cwd=str(run_dir))
+
+    assert out["ok"] is True
+    assert out["action"] == "ready_to_fork"
+    assert out["posture"] == "workspace-write"
+    assert out["agent"] == "org-designer"
+    assert out["title"] == "org-designer"
+    assert out["cwd"] == str(run_dir)
+    assert str(defs) not in out["cwd"]
+
+    launcher = Path(out["workdir"]) / "launch.sh"
+    payload = Path(out["workdir"]) / "persona.txt"
+    assert "--sandbox workspace-write" in launcher.read_text()
+    assert 'developer_instructions="$(cat "$DIR/persona.txt")"' in launcher.read_text()
+    assert payload.read_text() == persona
+
+
 # --- Plain mode (no agent) for every launchable runtime ---
 
 def test_codex_plain_none_yolo(tmp_path):

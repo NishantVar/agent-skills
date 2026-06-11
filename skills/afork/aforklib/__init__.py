@@ -19,7 +19,7 @@ from .errors import (
     ready_to_fork,
 )
 from .launch import build_launch
-from .resolve import resolve_port
+from .resolve import resolve_agent_definition
 
 # Effort tokens recognized when splitting a combined --model spec like
 # "fable max" or "gpt-5.3-codex xhigh" into model + effort. This set only
@@ -53,14 +53,15 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
 
     # --- Mode: plain (no agent) vs custom (definition-backed). ---
     parsed = {}
+    agent_name = None
     if agent is not None:
         if not adapter.has_agent_dir:
             raise err_custom_unsupported(
                 runtime,
                 f"{runtime} has no agent-definition directory; launch plain "
                 f"`afork {runtime}` or inject persona another way.")
-        path, text = resolve_port(adapter, agent, cwd)
-        parsed = adapter.parse(text, agent, path)
+        path, text, agent_name = resolve_agent_definition(adapter, agent, cwd)
+        parsed = adapter.parse(text, agent_name, path)
 
     # --- Posture precedence: --permission > definition-declared > none. ---
     posture = permission or adapter.declared_posture(parsed) or "none"
@@ -71,7 +72,7 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
         if not adapter.enforceable(posture):
             if not allow_unenforced:
                 raise err_unenforceable(
-                    runtime, agent, posture,
+                    runtime, agent_name, posture,
                     reason=(f"the {runtime} adapter has no runtime-enforced "
                             f"{posture!r} mechanism this round."))
             enforced = False
@@ -85,13 +86,13 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     persona = adapter.persona_body(parsed) if agent is not None else ""
 
     command, workdir = build_launch(
-        adapter, agent, posture, model, effort, persona)
+        adapter, agent_name, posture, model, effort, persona)
     return ready_to_fork(
         runtime=runtime,
-        agent=agent,
+        agent=agent_name,
         posture=posture,
         command=command,
-        title=title or agent or runtime,
+        title=title or agent_name or runtime,
         cwd=cwd,
         workdir=workdir,
         enforced=enforced,

@@ -9,7 +9,7 @@ description: 'Front door for forking any coding agent (plain or definition-backe
   The coding-agent runtime, REQUIRED, positional-1: `codex`, `claude`, or `pi` (all launch plain + permission none); `antigravity` is unsupported this round.
   Required.
 - **agent**:
-  Optional agent definition to launch, resolved under <cwd>/.<runtime>/agents/ (e.g. `reviewer` -> .codex/agents/reviewer.toml, `systems-designer-agent` -> .claude/agents/systems-designer-agent.md). Omit for a plain agent (default params). pi has no agents dir — a custom agent there errors.
+  Optional agent definition to launch: either a bare name resolved under <cwd>/.<runtime>/agents/ (e.g. `reviewer` -> .codex/agents/reviewer.toml, `systems-designer-agent` -> .claude/agents/systems-designer-agent.md), or an explicit definition path (e.g. `/repo/.codex/agents/reviewer.toml`). Path form loads that file directly and uses its filename stem as the agent name; --cwd still controls only where the agent runs. Omit for a plain agent (default params). pi has no agents dir — a custom agent there errors.
   Default: none.
 - **permission**:
   Agnostic permission posture: `none` (yolo, default) | `read-only` | `workspace-write`. Unset resolves to the definition's declaration, else none. Restricted postures fail closed on runtimes that can't enforce them (claude/pi this round).
@@ -22,7 +22,7 @@ description: 'Front door for forking any coding agent (plain or definition-backe
   cmux tab title for the forked pane, for p2p routing. Defaults to the agent name, else the runtime. Pass snake_case (e.g. reviewer_agent).
   Default: none.
 - **cwd**:
-  The target repo whose agent ports are resolved and where the agent runs. Defaults to the caller's cwd. Ports resolve relative to this, NOT the skill repo.
+  The target repo where the agent runs. Bare-name agent ports also resolve relative to this, NOT the skill repo. Explicit definition paths ignore this for resolution. Defaults to the caller's cwd.
   Default: none.
 - **placement**: Where the new pane opens: right, left, top, or bottom. Forwarded to tfork. Default: none.
 - **allow_unenforced**:
@@ -33,7 +33,7 @@ description: 'Front door for forking any coding agent (plain or definition-backe
 
 - **binary-contract**
 
-  afork.py is deterministic and self-contained, and is agnostic to runtime flag names — a per-runtime adapter owns the mapping. It picks the runtime adapter, decides plain (no agent) vs custom (definition-backed) mode, resolves the permission posture by precedence (--permission > definition's declared sandbox > default none), checks the adapter can runtime-enforce a restricted posture (else fails closed), resolves model/effort (arg > definition > runtime default; a combined --model spec like `fable max` splits into model + trailing effort token, an explicit --effort winning), and builds the launch command. Plain agents get a flat shell-quoted argv (no temp launcher). Custom agents with a persona get a 0600 payload + generated `bash <launcher>` so multiline persona never crosses the agent->tfork shell boundary; the launcher enforces the posture via flags and injects the persona at system/developer level. It always prints exactly one JSON object. On success: a `ready_to_fork` handoff carrying command, handoff_skill ("tfork"), runtime, agent (null when plain), posture, enforced (bool; `none` is always enforced — nothing to enforce), title, cwd, type ("agent"), placement, workdir (null when plain), and an agent_instruction telling you exactly how to call tfork. On failure: ok false and a code: `port_not_found` (no definition under --cwd), `unenforceable` (fail-closed refusal — a declared restriction the adapter can't enforce), `custom_unsupported` (custom agent requested for a runtime with no agents dir, e.g. pi), `runtime_unsupported` (no adapter, e.g. antigravity), `bad_arguments`, or `port_unparsable`. Each failure carries human_message and agent_instruction.
+  afork.py is deterministic and self-contained, and is agnostic to runtime flag names — a per-runtime adapter owns the mapping. It picks the runtime adapter, decides plain (no agent) vs custom (definition-backed) mode, resolves a bare agent name under --cwd or an explicit definition path directly, resolves the permission posture by precedence (--permission > definition's declared sandbox > default none), checks the adapter can runtime-enforce a restricted posture (else fails closed), resolves model/effort (arg > definition > runtime default; a combined --model spec like `fable max` splits into model + trailing effort token, an explicit --effort winning), and builds the launch command. In explicit-path mode, --cwd controls only where the agent runs; the handoff agent/title default uses the definition filename stem. Plain agents get a flat shell-quoted argv (no temp launcher). Custom agents with a persona get a 0600 payload + generated executable launcher path so multiline persona never crosses the agent->tfork shell boundary; the launcher enforces the posture via flags and injects the persona at system/developer level. It always prints exactly one JSON object. On success: a `ready_to_fork` handoff carrying command, handoff_skill ("tfork"), runtime, agent (null when plain), posture, enforced (bool; `none` is always enforced — nothing to enforce), title, cwd, type ("agent"), placement, workdir (null when plain), and an agent_instruction telling you exactly how to call tfork. On failure: ok false and a code: `port_not_found` (missing bare-name or explicit-path definition), `unenforceable` (fail-closed refusal — a declared restriction the adapter can't enforce), `custom_unsupported` (custom agent requested for a runtime with no agents dir, e.g. pi), `runtime_unsupported` (no adapter, e.g. antigravity), `bad_arguments`, or `port_unparsable`. Each failure carries human_message and agent_instruction.
 
 ## Constraints
 
@@ -57,7 +57,7 @@ description: 'Front door for forking any coding agent (plain or definition-backe
 7. Decide whether the user named a title applies and, if so:
    a. Insert --title {title} into the invocation.
 8. Decide whether the user named a target repo or working directory applies and, if so:
-   a. Insert --cwd {cwd} into the invocation. Ports resolve relative to this directory.
+   a. Insert --cwd {cwd} into the invocation. Bare-name ports resolve relative to this directory; explicit definition paths do not.
 9. Decide whether the user named a placement applies and, if so:
    a. Insert --placement {placement} into the invocation.
 10. Decide whether the user has explicitly accepted an unenforced launch for a runtime that cannot enforce the declared posture applies and, if so:
@@ -78,9 +78,8 @@ Skip these — SKILL.md is the complete interface.
 | "Run `--help` first" | All flags are listed in Parameters. |
 | "Read afork.py / the toml/md to understand it" | SKILL.md is the contract; the binary's adapter parses the definition and maps flags. |
 | "I need to pick the codex/claude/pi flag for this posture/model" | The binary is agnostic; the adapter owns flag names. Pass agnostic permission/model/effort. |
-| "User said `claude opus` / `claude fable max` — the second word is the agent positional" | Model names/aliases (opus, sonnet, fable, gpt-*) go to --model, optionally with a trailing effort (`fable max`); the agent positional is a definition file under .<runtime>/agents/. |
+| "User said `claude opus` / `claude fable max` — the second word is the agent positional" | Model names/aliases (opus, sonnet, fable, gpt-*) go to --model, optionally with a trailing effort (`fable max`); the agent positional is a bare definition name or explicit definition path. |
 | "An `unenforceable` refusal is probably fine — just fork anyway / add --allow-unenforced" | Fail-closed is the point for declared restrictions. Only --allow-unenforced on explicit user acceptance. |
 | "`none` (yolo) should fail closed too" | none has nothing to enforce; it never fails closed. |
 | "I'll inject the role as a user prompt after forking" | Prompt-level is not enforcement; the binary injects persona at system/developer level. |
 | "Let afork fork it directly" | afork only prepares; the tfork skill forks the returned command. |
-

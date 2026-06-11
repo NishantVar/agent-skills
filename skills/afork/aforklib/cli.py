@@ -24,8 +24,9 @@ def build_parser():
                    help="Coding-agent runtime. codex/claude/pi launch (plain + "
                         "permission none); antigravity is unsupported.")
     p.add_argument("agent", nargs="?", default=None,
-                   help="Optional agent definition to resolve under "
-                        "<cwd>/.<runtime>/agents/. Omit for a plain agent.")
+                   help="Optional agent definition: a bare name resolved under "
+                        "<cwd>/.<runtime>/agents/, or an explicit definition "
+                        "path. Omit for a plain agent.")
     p.add_argument("--permission", default=None,
                    choices=["none", "read-only", "workspace-write"],
                    help="Agnostic permission posture. Default (unset) resolves "
@@ -38,8 +39,8 @@ def build_parser():
                    help="cmux tab title for the forked pane (defaults to the "
                         "agent name, else the runtime). Forwarded to tfork.")
     p.add_argument("--cwd", default=None,
-                   help="Target repo whose agent ports are resolved and where "
-                        "the agent runs. Defaults to the caller's cwd.")
+                   help="Target repo where the agent runs. Bare-name agent "
+                        "ports also resolve here. Defaults to the caller's cwd.")
     p.add_argument("--placement", default=None,
                    choices=["right", "left", "top", "bottom"],
                    help="Pane placement, forwarded to tfork.")

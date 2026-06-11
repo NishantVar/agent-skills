@@ -12,9 +12,9 @@ Two shapes:
     with embedded quotes / ``#``. Putting it on the command line would force the
     *calling agent* to quote it through its own shell when invoking tfork. So we
     write a controlled temp launcher: the raw persona goes to a 0600 payload, and
-    a tiny launch.sh reads it back with ``$(cat …)`` inside its own shell. The
-    only thing crossing the boundary is a short ``bash <launcher>`` — shlex-quoted
-    so a temp path with spaces/metacharacters can't break out.
+    a tiny executable launch.sh reads it back with ``$(cat …)`` inside its own
+    shell. The only thing crossing the boundary is the launcher path —
+    shlex-quoted so a temp path with spaces/metacharacters can't break out.
 
 Permission enforcement stays on the *flags* (e.g. codex ``--sandbox``), never on
 prompt text.
@@ -88,7 +88,8 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None):
     os.chmod(launcher, 0o700)
 
     # tfork pastes this string into an interactive shell, so it is shell syntax
-    # — not a safe argv array. shlex.join quotes the launcher path so a temp
-    # root containing spaces or shell metacharacters can't break out.
-    command = shlex.join(["bash", str(launcher)])
+    # — not a safe argv array. The launcher is executable; returning just that
+    # one path avoids a `bash <launcher>` string becoming a literal filename if
+    # a caller passes the handoff command to tfork as one argv token.
+    command = shlex.join([str(launcher)])
     return command, str(workdir)

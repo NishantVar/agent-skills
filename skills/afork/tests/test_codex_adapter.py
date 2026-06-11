@@ -50,8 +50,8 @@ def test_build_launcher_enforces_via_flag_and_payloads_persona(tmp_path):
     payload = Path(workdir) / "persona.txt"
     script = launcher.read_text()
 
-    # The command handed to tfork is a short, shell-quoted `bash <launcher>`.
-    assert command == shlex.join(["bash", str(launcher)])
+    # The command handed to tfork is a short, shell-quoted executable launcher.
+    assert command == shlex.join([str(launcher)])
     # Posture is enforced via the FLAG, not prose.
     assert "--sandbox read-only" in script
     # Persona is injected at developer level, read from the payload file.
@@ -93,6 +93,29 @@ def test_returned_command_is_shell_safe_with_hostile_temp_root(tmp_path):
     subprocess.run(command, shell=True, env=env, cwd=str(tmp_path),
                    capture_output=True)
     assert not marker.exists(), "shell injection via temp root path executed"
+
+
+def test_launcher_command_survives_tfork_single_argument_invocation(tmp_path):
+    """If the handoff command is passed to tfork as one argv token, tfork
+    shlex-quotes that token before pasting it. A multi-word `bash <launcher>`
+    command becomes a literal filename and exits 127. The launcher is already
+    executable, so the handoff command should be just the launcher path."""
+    import subprocess
+
+    a = CodexAdapter()
+    command, _ = build_launch(
+        a, "probe", "read-only", None, None, "x", root=str(tmp_path / "w"))
+
+    stub_bin = tmp_path / "bin"
+    stub_bin.mkdir()
+    (stub_bin / "codex").write_text("#!/usr/bin/env bash\nexit 0\n")
+    (stub_bin / "codex").chmod(0o755)
+    env = {"PATH": f"{stub_bin}:/usr/bin:/bin"}
+
+    tfork_style_command = shlex.join([command])
+    result = subprocess.run(tfork_style_command, shell=True, env=env,
+                            cwd=str(tmp_path), capture_output=True)
+    assert result.returncode == 0, result.stderr.decode()
 
 
 def test_executed_launcher_neutralizes_hostile_persona_and_params(tmp_path):

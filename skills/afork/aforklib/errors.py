@@ -86,9 +86,11 @@ def err_port_not_found(runtime, agent, path):
     return AforkError(
         "port_not_found",
         f"No {runtime} agent definition for {agent!r} at {path}.",
-        "Do not retry verbatim. Check the agent name and that --cwd points at "
-        "the repo holding the agent ports (e.g. a repo with .codex/agents/). "
-        "Ports resolve relative to --cwd, not the skill repo.",
+        "Do not retry verbatim. For a bare agent name, check the name and "
+        "that --cwd points at the repo holding the agent ports (e.g. a repo "
+        "with .codex/agents/). For an explicit path, check that the file "
+        "exists at that path. Bare-name ports resolve relative to --cwd; "
+        "explicit paths do not.",
         extras={"runtime": runtime, "agent": agent, "expected_path": path},
     )
 
