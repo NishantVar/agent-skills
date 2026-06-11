@@ -83,15 +83,22 @@ def err_custom_unsupported(runtime, reason):
 
 
 def err_port_not_found(runtime, agent, path):
+    """``path`` is the location(s) searched: a single string (explicit-path
+    mode) or a list of bare-name candidates (repo-local then home)."""
+    paths = list(path) if isinstance(path, (list, tuple)) else [path]
+    primary = paths[0]
+    where = " or ".join(paths)
     return AforkError(
         "port_not_found",
-        f"No {runtime} agent definition for {agent!r} at {path}.",
+        f"No {runtime} agent definition for {agent!r} at {where}.",
         "Do not retry verbatim. For a bare agent name, check the name and "
-        "that --cwd points at the repo holding the agent ports (e.g. a repo "
-        "with .codex/agents/). For an explicit path, check that the file "
-        "exists at that path. Bare-name ports resolve relative to --cwd; "
+        f"that the definition exists under <cwd>/.{runtime}/agents/ or "
+        f"~/.{runtime}/agents/ (the repo-local dir is tried first, then home). "
+        "For an explicit path, check that the file exists at that path. "
+        "Bare-name ports resolve relative to --cwd and the home config; "
         "explicit paths do not.",
-        extras={"runtime": runtime, "agent": agent, "expected_path": path},
+        extras={"runtime": runtime, "agent": agent,
+                "expected_path": primary, "searched": paths},
     )
 
 

@@ -1,14 +1,18 @@
 """Agent-definition port resolution.
 
-Bare-name ports live relative to the *target* working directory, never the
-skill repo:
+A bare agent name is searched in two locations, in precedence order:
 
-  * codex  -> <cwd>/.codex/agents/<name>.toml
-  * claude -> <cwd>/.claude/agents/<name>.md
+  1. the *target* working directory (--cwd): <cwd>/.<runtime>/agents/<name>
+  2. the user's home config:                 ~/.<runtime>/agents/<name>
 
-The motivating repo was /Users/nishantvarshney/genesis/flux, whose
-.codex/agents and .claude/agents hold the definitions; the skill repo has
-none. afork always resolves against --cwd so it works for any caller repo.
+  * codex  -> .codex/agents/<name>.toml
+  * claude -> .claude/agents/<name>.md
+
+Project-local definitions win over user-global ones — the same project-over-user
+precedence Claude Code uses for its own agents. This means `afork claude reviewer`
+picks up a `reviewer` defined globally in ~/.claude/agents/ even when the target
+repo has no .claude/agents of its own, while a repo-local definition still
+shadows the global one. Neither location is the skill repo.
 
 Callers may also pass an explicit definition path. In that mode the path is
 expanded independently of --cwd; --cwd remains only the directory where the
@@ -65,22 +69,39 @@ def resolve_agent_definition(adapter, agent, cwd):
     return path, text, agent
 
 
+def _agents_bases(adapter, cwd):
+    """Bases searched for a bare agent name, in precedence order: the target
+    repo first (<cwd>/.<runtime>/agents), then the user's home config
+    (~/.<runtime>/agents). Project-local wins. Identical paths are collapsed
+    so the home base is skipped when --cwd already is the home directory."""
+    bases = []
+    for root in (cwd, os.path.expanduser("~")):
+        base = (Path(root) / f".{adapter.runtime}" / "agents").resolve()
+        if base not in bases:
+            bases.append(base)
+    return bases
+
+
 def resolve_port(adapter, agent, cwd):
     """Return (path_str, text) for the agent's definition, or raise
     port_not_found. ``cwd`` is the already-resolved target directory.
 
-    The agent name must name a file *inside* <cwd>/.<runtime>/agents — it is
-    rejected if it contains a path separator or NUL, or if the resolved path
-    escapes that directory (e.g. ``../../outside``). Ports never resolve
-    outside the agents dir."""
+    The agent name must name a file *inside* one of the searched agents dirs —
+    it is rejected if it contains a path separator or NUL, or if the resolved
+    path escapes that directory (e.g. ``../../outside``). Ports never resolve
+    outside an agents dir. The repo-local dir is tried before the home one."""
     if not agent or "/" in agent or "\\" in agent or "\x00" in agent:
         raise err_bad_arguments(
             f"agent name {agent!r} must be a bare name, not a path")
-    base = (Path(cwd) / f".{adapter.runtime}" / "agents").resolve()
-    path = (base / adapter.port_filename(agent)).resolve()
-    if not path.is_relative_to(base):
-        raise err_bad_arguments(
-            f"agent name {agent!r} resolves outside {base}")
-    if not path.is_file():
-        raise err_port_not_found(adapter.runtime, agent, str(path))
-    return str(path), path.read_text()
+    # The separator guard above makes traversal impossible: the port filename
+    # is a single path component, so the file always sits directly inside the
+    # resolved agents dir. We deliberately do NOT .resolve() the file itself —
+    # home agents are commonly symlinks into other repos, and following them
+    # must not be mistaken for an escape out of the agents dir.
+    searched = []
+    for base in _agents_bases(adapter, cwd):
+        path = base / adapter.port_filename(agent)
+        searched.append(str(path))
+        if path.is_file():
+            return str(path), path.read_text()
+    raise err_port_not_found(adapter.runtime, agent, searched)

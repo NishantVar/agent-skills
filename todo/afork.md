@@ -1,6 +1,23 @@
 # afork — todo
 
-_Last refreshed: 2026-06-08_
+_Last refreshed: 2026-06-11_
+
+## Home-dir agent resolution (BUILT, uncommitted, 2026-06-11)
+
+Bare agent names now resolve in two locations, repo-local first then home:
+`<cwd>/.<runtime>/agents/<name>` → `~/.<runtime>/agents/<name>`. This matches
+Claude Code's own project-over-user agent precedence, so `afork claude reviewer`
+picks up a globally-defined `~/.claude/agents/reviewer.md` even when the target
+repo has no local one; a repo-local definition still shadows the global. Changed
+`resolve.py` (`_agents_bases` + two-base search loop) and `errors.py`
+(`err_port_not_found` now reports both searched paths). Dropped the post-`.resolve()`
+`is_relative_to` containment check — the bare-name separator guard already makes
+traversal impossible, and following legitimate symlinked home agents (common —
+home agents are often symlinks into other repos) was wrongly rejected as an
+escape. Skill prose (`agent`/`cwd` params, binary_contract, --cwd flow step)
+updated in `.glyph` + `.md` lockstep. 3 new resolve tests; 48 pytest pass.
+
+_Last refreshed: 2026-06-08 (entries below)_
 
 `afork` is the agent-aware fork launcher: resolve an agent definition → map declared
 permissions to a runtime-enforced launch command → fail closed → hand a `ready_to_fork`

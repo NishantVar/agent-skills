@@ -31,6 +31,46 @@ def test_bare_agent_definition_resolves_under_cwd(tmp_path):
     assert name == "reviewer"
 
 
+def test_bare_agent_resolves_from_home_when_absent_in_cwd(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _write_port(home, "claude", "reviewer.md", "# Global reviewer\n")
+
+    path, text, name = resolve_agent_definition(
+        ClaudeAdapter(), "reviewer", str(repo))
+    assert path == str(home / ".claude" / "agents" / "reviewer.md")
+    assert "Global reviewer" in text
+    assert name == "reviewer"
+
+
+def test_repo_local_definition_shadows_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    monkeypatch.setenv("HOME", str(home))
+    _write_port(home, "claude", "reviewer.md", "# Global reviewer\n")
+    _write_port(repo, "claude", "reviewer.md", "# Repo reviewer\n")
+
+    path, text = resolve_port(ClaudeAdapter(), "reviewer", str(repo))
+    assert path == str(repo / ".claude" / "agents" / "reviewer.md")
+    assert "Repo reviewer" in text
+
+
+def test_missing_in_both_reports_both_searched_paths(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    with pytest.raises(AforkError) as exc:
+        resolve_port(ClaudeAdapter(), "ghost", str(repo))
+    assert exc.value.code == "port_not_found"
+    assert exc.value.extras["searched"] == [
+        str(repo / ".claude" / "agents" / "ghost.md"),
+        str(home / ".claude" / "agents" / "ghost.md"),
+    ]
+
+
 def test_claude_port_uses_md_extension(tmp_path):
     _write_port(tmp_path, "claude", "reviewer-agent.md", "# Reviewer\n")
     path, _ = resolve_port(ClaudeAdapter(), "reviewer-agent", str(tmp_path))
