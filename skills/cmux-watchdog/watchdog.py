@@ -346,6 +346,15 @@ def slugify(text: str) -> str:
     return _SLUG_RE.sub("-", text.lower()).strip("-")
 
 
+def slug_capped(text: str, limit: int = 40) -> str:
+    """slugify, then cap length so concatenated digest filenames stay under the
+    OS 255-byte limit. A pane titled with a long temp file path (e.g. nvim
+    editing a deep /var/folders/... path) otherwise overflows. Collision-safety
+    lives in surface_ref + cursor range, never the human-readable title slug, so
+    truncating the title here is safe."""
+    return slugify(text)[:limit].rstrip("-")
+
+
 def settled_lines(screen: str) -> list[str]:
     """Strip volatile chrome from a screen capture and return the stable,
     redacted transcript lines — the inverse of _is_agent_output applied to the
@@ -812,8 +821,8 @@ def cmd_digest(args: argparse.Namespace) -> int:
         # surface_ref + cursor range make the name collision-proof: two surfaces
         # sharing a ws/title slug, or the same surface digested twice in one
         # minute, never alias onto one file (which would break exact-once).
-        digest_name = (f"{datetime.now().strftime('%H-%M')}__{slugify(ws_title)}__"
-                       f"{slugify(title)}__{slugify(surface_ref)}__"
+        digest_name = (f"{datetime.now().strftime('%H-%M')}__{slug_capped(ws_title)}__"
+                       f"{slug_capped(title)}__{slugify(surface_ref)}__"
                        f"{start}-{to_cursor}.txt")
         digest_file = digest_dir / digest_name
         digest_file.write_text(text, encoding="utf-8")

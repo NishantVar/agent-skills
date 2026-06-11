@@ -305,6 +305,52 @@ def run_digest(scope: str | None, date: str | None, skill_dir: Path | None = Non
     return parsed.get("surfaces", [])
 
 
+def _nonagent_surface_set(scope: str | None, skill_dir: Path | None = None) -> set[str] | None:
+    """Surface refs the snapshot classifier POSITIVELY confirms are non-agents
+    (is_agent false) — shells, editors, browsers. The summary pass drops only
+    these; a surface absent from the snapshot (a since-closed pane) is left
+    unknown and kept, so work is never dropped just because its pane closed
+    between producing output and this pass. Shells out to the sibling
+    watchdog.py snapshot (same skill). Returns None on ANY snapshot failure so
+    the caller filters nothing — a broken classifier must never drop a surface."""
+    skill_dir = skill_dir or _skill_dir()
+    cmd = [sys.executable, str(skill_dir / "watchdog.py"), "snapshot"]
+    if scope:
+        cmd += ["--workspace", scope]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+        parsed = json.loads(out)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError, ValueError):
+        return None
+    nonagent = set()
+    for w in parsed.get("workspaces", []):
+        for s in w.get("surfaces", []):
+            ref = s.get("ref")
+            if ref and not s.get("is_agent"):
+                nonagent.add(ref)
+    return nonagent
+
+
+# Minimum count of alphanumeric chars (outside timestamp/gap '#' lines) for a
+# digest to be worth summarizing. Below this the pane only redrew a status or
+# footer line (e.g. an idle agent's "gpt-5.5 · Context 57%", ~19 alnum) with no
+# real work. Kept low so a short but genuine action ("committed X, opened PR #42")
+# still summarizes; the goal is only to drop pure status/footer repaints.
+_SUBSTANTIVE_MIN_CHARS = 40
+
+
+def _is_substantive(digest_text: str) -> bool:
+    """True when a digest carries real pane output, not just chrome. Strips the
+    '# <timestamp>' and '# <gap...>' marker lines and blank lines, then requires
+    a floor of alphanumeric content — the test that distinguishes a working
+    agent's transcript from an idle pane that only repainted its status bar."""
+    body = " ".join(
+        s for ln in digest_text.splitlines()
+        if (s := ln.strip()) and not s.startswith("#")
+    )
+    return sum(c.isalnum() for c in body) >= _SUBSTANTIVE_MIN_CHARS
+
+
 def format_worklog(results: list[dict], hhmm: str) -> str:
     """Group per-surface bullets under one '## HH:MM — <workspace>' heading per
     workspace. Pure — the exact text is asserted in tests."""
@@ -500,6 +546,16 @@ def collect_pending(scope: str | None, today: str, *, max_days: int = 1,
     _save_summary_state(state)               # record work durably BEFORE authoring
 
     eligible_set = set(eligible)
+    # Definition B "active pane": a coding-agent surface that produced real output.
+    # We summarize EVERYTHING pending since the last run, then exclude only two
+    # positively-identified classes: (1) panes the snapshot confirms are non-agents
+    # (shells/editors/browsers), and (2) idle slices that are just a status/footer
+    # line (content filter). A surface absent from the snapshot (since-closed pane)
+    # is unknown -> kept, never dropped on ignorance, so no date gate is needed.
+    # nonagent_set is None on snapshot failure -> nothing is agent-filtered.
+    # Skipped digests are marked summarized so they leave the backlog instead of
+    # recurring every pass; their content is intentionally not summarized.
+    nonagent_set = _nonagent_surface_set(scope, skill_dir)
     pending: list[dict] = []
     for path, meta in state.items():
         if meta["date"] not in eligible_set or meta.get("summarized"):
@@ -508,6 +564,10 @@ def collect_pending(scope: str | None, today: str, *, max_days: int = 1,
             digest_text = Path(path).read_text(encoding="utf-8")
         except FileNotFoundError:
             meta["summarized"] = True         # digest vanished -> don't retry forever
+            continue
+        confirmed_nonagent = nonagent_set is not None and meta["surface_ref"] in nonagent_set
+        if confirmed_nonagent or not _is_substantive(digest_text):
+            meta["summarized"] = True         # skip shell/editor/browser or idle
             continue
         pending.append({
             "digest_file": path,
