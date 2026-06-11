@@ -9,6 +9,7 @@ All three agents use the same core format: `SKILL.md` with `name` + `description
 | Skill | Description |
 |-------|-------------|
 | `tfork` | Deterministic terminal fork — spawns a verified new terminal window running any agentic coding tool (Claude Code, Codex, Gemini) with a plan or command, using a self-verifying binary that guarantees the window actually opens. |
+| `afork` | Front door for forking any coding agent (plain or definition-backed) across runtimes (codex, claude, pi) into a cmux pane — builds a runtime-agnostic launch command and hands it to tfork. Fails closed when a declared permission restriction can't be runtime-enforced. |
 | `p2p` | P2P messaging between cmux agents using inline-prompt transport over cmux set-buffer/paste-buffer. Per-surface manifest routing; fire-and-forget. |
 
 ## Skills
