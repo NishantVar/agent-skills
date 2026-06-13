@@ -257,12 +257,16 @@ def build_parser() -> argparse.ArgumentParser:
     # supply it. cmd_send validates manually.
     s.add_argument("--peer", default=None,
                    help="Tab title of the destination peer in your "
-                        "workspace. Title is the single routing key.")
+                        "workspace; the routing key for title "
+                        "resolution. Optional when --peer-surface is "
+                        "given — the surface routes directly and the "
+                        "title is read from it.")
     s.add_argument("--peer-surface", default=None,
-                   help="Skip title resolution and route directly. "
-                        "Used when an inline bootstrap already gave "
-                        "you the peer's surface, or to disambiguate "
-                        "a peer_ambiguous handoff.")
+                   help="Skip title resolution and route directly to a "
+                        "surface. Used when an inline bootstrap already "
+                        "gave you the peer's surface, or to disambiguate "
+                        "a peer_ambiguous handoff. Sufficient on its "
+                        "own — --peer is not required alongside it.")
     s.add_argument("--my-title", default=None,
                    help="Self title to register under on first call. "
                         "Cosmetically renames the cmux tab to match. "

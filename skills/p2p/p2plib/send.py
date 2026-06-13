@@ -162,7 +162,7 @@ def _ensure_self(my_surface: str | None,
     return m, None
 
 
-def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
+def _send_to_explicit_surface(*, peer: str | None, body: str, me: dict,
                               peer_surface: str,
                               surfaces: dict[str, dict],
                               manifests: list[dict],
@@ -170,12 +170,16 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
                               one_way: bool) -> dict:
     """Reply path: caller supplied --peer-surface (typically from an
     inline bootstrap). Skip resolution; route directly. Plain message
-    framing — the peer already initiated contact, so no re-bootstrap."""
+    framing — the peer already initiated contact, so no re-bootstrap.
+    `peer` is optional here — it's only the addressee label in the
+    envelope; the title is read off the surface itself."""
     s = surfaces.get(peer_surface)
     if s is None:
         # Surface no longer in the cmux tree — the peer is gone. p2p
         # does not spawn; report the miss and let the caller decide.
-        return errors.peer_not_found(peer, rerun_argv=rerun_argv)
+        # Fall back to the surface ref as the label when --peer absent.
+        return errors.peer_not_found(peer or peer_surface,
+                                     rerun_argv=rerun_argv)
 
     by_surface = {m.get("surface_ref"): m for m in manifests}
     m = by_surface.get(peer_surface)
@@ -188,7 +192,7 @@ def _send_to_explicit_surface(*, peer: str, body: str, me: dict,
     transport.send_buffer(peer_surface, s.get("workspace_ref"), text)
 
     return _success(
-        addressed=peer,
+        addressed=peer or title or peer_surface,
         title=title,
         surf=peer_surface,
         resolved_by="explicit_surface",
@@ -215,7 +219,11 @@ def send(peer: str | None, body: str,
     explicit sentinel to widen scope — see cli.py."""
     if not body.strip():
         return errors.empty_message(rerun_argv=rerun_argv)
-    if not peer:
+    if not peer and not peer_surface:
+        # --peer is the routing key for the resolution path, but the
+        # explicit-surface path routes by peer_surface alone and reads
+        # the title off the surface — so peer is optional when a surface
+        # is given.
         return errors.info_needed(["peer"], rerun_argv)
 
     my_surf = surface.my_surface()
@@ -255,6 +263,11 @@ def send(peer: str | None, body: str,
             peer_surface=peer_surface, surfaces=surfaces,
             manifests=manifests, rerun_argv=rerun_argv,
             one_way=one_way)
+
+    # Past the surface short-circuit, the top-of-function guard
+    # guarantees peer is set (peer or peer_surface, and peer_surface is
+    # falsy here) — narrow it for the resolution path below.
+    assert peer is not None
 
     # Default scope: caller's own workspace. The caller can widen by
     # passing scope_workspace_ref explicitly (via --workspace at the

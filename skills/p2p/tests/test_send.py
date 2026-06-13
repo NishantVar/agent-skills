@@ -412,6 +412,36 @@ def test_explicit_peer_surface_skips_resolution(tmp_registry, fc):
     assert "[p2p-bootstrap]" not in text
 
 
+def test_explicit_peer_surface_without_peer_derives_title(tmp_registry, fc):
+    """--peer-surface alone is sufficient: routing uses the surface and
+    the addressee label is read off the surface's title."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
+           surface_ref="surface:777", title="inbound_peer")
+    out = send.send(None, "thanks for the ping",
+                    my_title=None, fallback_self_title=None,
+                    rerun_argv=[], peer_surface="surface:777")
+    assert out["ok"]
+    assert out["resolved_by"] == "explicit_surface"
+    assert out["surface"] == "surface:777"
+    # Both the routed title and the envelope's addressee come from the
+    # surface, not from --peer.
+    assert out["title"] == "inbound_peer"
+    assert out["peer"] == "inbound_peer"
+    assert fc.sent[0][0] == "surface:777"
+
+
+def test_no_peer_and_no_surface_returns_info_needed(tmp_registry, fc):
+    """With neither --peer nor --peer-surface there's nothing to route
+    to — info_needed for the missing peer."""
+    _seed_self(tmp_registry)
+    out = send.send(None, "hi", my_title=None,
+                    fallback_self_title=None, rerun_argv=["rerun"])
+    assert out["ok"] is False
+    assert out["code"] == "info_needed"
+    assert "peer" in out["missing"]
+
+
 def test_explicit_peer_surface_unknown_returns_peer_not_found(
         tmp_registry, fc):
     """--peer-surface pointing at a surface that's gone from the tree
