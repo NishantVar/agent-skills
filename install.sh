@@ -4,14 +4,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILLS_DIR="$SCRIPT_DIR/skills"
 
-CLAUDE_SKILLS="$HOME/.claude/skills"
-CODEX_SKILLS="$HOME/.codex/skills"
-GEMINI_SKILLS="$HOME/.gemini/skills"
+# Agents expanded by the 'all' keyword. Any other name works too: it maps to
+# ~/.<agent>/skills, so e.g. 'hermes' installs into ~/.hermes/skills.
+DEFAULT_AGENTS=(claude codex gemini)
 
 usage() {
-  echo "Usage: $0 <claude|codex|gemini|all> [skill-name|skill-path] [--dir /path/to/skills] [--force]"
+  echo "Usage: $0 <agent|all> [skill-name|skill-path] [--dir /path/to/skills] [--force]"
   echo ""
   echo "Install agent skills for the specified agent(s)."
+  echo "<agent> is any agent name; skills are installed into ~/.<agent>/skills."
+  echo "  e.g. '$0 hermes my-skill' installs into ~/.hermes/skills."
+  echo "  'all' expands to: ${DEFAULT_AGENTS[*]}"
   echo "Second positional arg:"
   echo "  - If it contains '/', it is treated as a direct path to a skill directory"
   echo "    (must contain SKILL.md); the skill name is derived from its basename."
@@ -57,11 +60,7 @@ agent_label() {
 }
 
 dest_for_agent() {
-  case "$1" in
-    claude) echo "$CLAUDE_SKILLS" ;;
-    codex)  echo "$CODEX_SKILLS" ;;
-    gemini) echo "$GEMINI_SKILLS" ;;
-  esac
+  echo "$HOME/.$1/skills"
 }
 
 install_skill() {
@@ -113,11 +112,16 @@ skill_filter="${2:-}"
 
 agents=()
 case "$target" in
-  claude) agents=(claude) ;;
-  codex)  agents=(codex) ;;
-  gemini) agents=(gemini) ;;
-  all)    agents=(claude codex gemini) ;;
-  *)      usage ;;
+  all)
+    agents=("${DEFAULT_AGENTS[@]}")
+    ;;
+  ""|*/*|.|..)
+    echo "Error: invalid agent name '$target'" >&2
+    usage
+    ;;
+  *)
+    agents=("$target")
+    ;;
 esac
 
 # Resolve skill_filter as a filesystem path first (absolute or relative to $PWD),
