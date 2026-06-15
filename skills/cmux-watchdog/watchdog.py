@@ -24,6 +24,7 @@ send-enter  The single safe remediation. Re-reads the surface, confirms an
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -392,12 +393,19 @@ def append_new(prev_settled: list[str], curr_settled: list[str]) -> tuple[list[s
     """Overlap-anchored diff. Find the longest suffix of prev_settled that
     occurs as a contiguous run in curr_settled and return the curr lines after
     it, plus a `gap` flag. No hash-dedup — identical repeated lines survive.
-    - prev empty (first capture): (curr, False) — seed, no gap.
+    - prev empty (first capture / fresh producer): ([], False) — seed SILENTLY.
+      The whole screen is pre-existing scrollback we never watched appear, so we
+      must NOT journal it: on a producer (re)start an idle pane still shows its
+      last output (a completion from days ago), and dumping that screen would
+      back-date stale work onto today's journal/worklog/retro. We only record
+      the baseline; genuine new lines get journaled once they land below it.
     - anchor found: (lines after anchor, False); may be [] when nothing is new.
-    - no anchor, prev non-empty: (curr, True) — over-capture beats silent loss.
+    - no anchor, prev non-empty: (curr, True) — over-capture beats silent loss
+      during a genuine burst (a continuous producer already baselined this pane,
+      so a lost anchor means the screen really churned, not that it's stale).
     """
     if not prev_settled:
-        return (list(curr_settled), False)
+        return ([], False)
     for length in range(min(len(prev_settled), len(curr_settled)), 0, -1):
         end = _run_end(curr_settled, prev_settled[-length:])
         if end is not None:
@@ -414,6 +422,31 @@ def _state_root() -> Path:
 
 def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def _watch_lock_path() -> Path:
+    return _state_root() / "watch.lock"
+
+
+def acquire_watch_lock():
+    """Take an exclusive, non-blocking flock so exactly ONE producer journals at
+    a time. Returns the held fd (keep it open for the process lifetime) on
+    success, or None if another live producer already holds it.
+
+    Why a real lock and not the SKILL's advisory pgrep: a second concurrent
+    producer keeps its own in-memory prev_settled, so it re-seeds every pane and
+    re-journals pre-existing scrollback — and two interleaving producers gap-storm
+    idle panes (identical stale dumps every tick). flock is OS-released on process
+    death, so a crashed/killed producer never leaves a stale lock behind."""
+    path = _watch_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
 
 
 def _journal_path(s: "SurfaceRef", date: str) -> Path:
@@ -606,6 +639,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
+    # Single-producer guard: if another producer already holds the lock, bail
+    # cleanly (exit 0) WITHOUT emitting a watching banner or journaling anything.
+    # A second producer would re-seed every pane and double/gap-journal stale
+    # scrollback. _lock is bound for the whole process lifetime so flock is held.
+    _lock = acquire_watch_lock()
+    if _lock is None:
+        print(json.dumps({
+            "event": "already_running",
+            "note": "another watchdog producer holds the lock; not starting a second.",
+        }), flush=True)
+        return 0
     seen: set[tuple[str, str]] = set()
     prev_settled: dict[str, list[str]] = {}
     print(json.dumps({

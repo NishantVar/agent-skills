@@ -214,9 +214,12 @@ def test_settled_drops_composer_prompt_lines():
 
 # --- append_new -----------------------------------------------------------
 
-def test_append_new_seeds_on_empty_prev():
+def test_append_new_seeds_silently_on_empty_prev():
+    # Cold baseline (fresh/restarted producer): the whole screen is pre-existing
+    # scrollback we never watched appear, so journal NOTHING — just seed. This is
+    # what stops an idle pane's days-old completion from being back-dated to today.
     new, gap = w.append_new([], ["a", "b", "c"])
-    assert new == ["a", "b", "c"]
+    assert new == []
     assert gap is False
 
 
@@ -387,20 +390,22 @@ def test_scope_matches_resolves_uuid():
 DATE = "2026-06-03"
 
 
-def test_journal_surface_seeds_then_appends_only_new(tmp_path, monkeypatch):
+def test_journal_surface_seeds_silently_then_appends_only_new(tmp_path, monkeypatch):
     monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
     s = w.SurfaceRef("surface:2", "workspace:2", "Meta Eval", "builder")
     prev: dict = {}
+    # Cold seed: the pre-existing screen is baselined but NOT written — nothing
+    # the producer didn't watch appear may reach the journal.
     w.journal_surface(s, "● first line\n", prev, DATE)
     path = tmp_path / "journal" / DATE / "meta-eval__builder__surface:2.log"
-    assert path.exists()
-    body = path.read_text()
-    assert "● first line" in body
-    assert body.startswith("# ")  # ISO batch header
+    assert not path.exists()  # seed wrote nothing
+    assert prev["surface:2"] == ["● first line"]  # baseline recorded
+    # New output that lands below the baseline IS journaled.
     w.journal_surface(s, "● first line\n● second line\n", prev, DATE)
-    body2 = path.read_text()
-    assert body2.count("● first line") == 1   # seed not re-written
-    assert body2.count("● second line") == 1  # only the new line appended
+    body = path.read_text()
+    assert body.startswith("# ")  # ISO batch header
+    assert "● first line" not in body   # pre-existing scrollback never journaled
+    assert body.count("● second line") == 1  # only the genuinely new line
 
 
 def test_journal_surface_redacts_and_flags_gap(tmp_path, monkeypatch):
@@ -419,11 +424,26 @@ def test_journal_surface_noop_when_nothing_new(tmp_path, monkeypatch):
     monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
     s = w.SurfaceRef("surface:2", "workspace:2", "Meta Eval", "builder")
     prev: dict = {}
-    w.journal_surface(s, "● only line\n", prev, DATE)
+    w.journal_surface(s, "● seed line\n", prev, DATE)  # cold seed: writes nothing
+    w.journal_surface(s, "● seed line\n● only line\n", prev, DATE)  # creates file
     path = tmp_path / "journal" / DATE / "meta-eval__builder__surface:2.log"
     size1 = path.stat().st_size
-    w.journal_surface(s, "● only line\n", prev, DATE)  # identical screen
+    w.journal_surface(s, "● seed line\n● only line\n", prev, DATE)  # identical screen
     assert path.stat().st_size == size1
+
+
+def test_acquire_watch_lock_is_single_producer(tmp_path, monkeypatch):
+    # Exactly one producer may journal at a time. The first acquire succeeds; a
+    # second concurrent acquire (the 2nd producer) is refused, so it can't
+    # re-seed panes and re-journal stale scrollback.
+    monkeypatch.setenv("CMUX_WATCHDOG_HOME", str(tmp_path))
+    fd1 = w.acquire_watch_lock()
+    assert fd1 is not None
+    assert w.acquire_watch_lock() is None  # second producer refused
+    os.close(fd1)  # release (mirrors process death) — lock now free again
+    fd2 = w.acquire_watch_lock()
+    assert fd2 is not None
+    os.close(fd2)
 
 
 def test_update_journal_index_records_identity(tmp_path, monkeypatch):
