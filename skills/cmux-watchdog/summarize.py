@@ -305,30 +305,65 @@ def run_digest(scope: str | None, date: str | None, skill_dir: Path | None = Non
     return parsed.get("surfaces", [])
 
 
-def _nonagent_surface_set(scope: str | None, skill_dir: Path | None = None) -> set[str] | None:
-    """Surface refs the snapshot classifier POSITIVELY confirms are non-agents
-    (is_agent false) — shells, editors, browsers. The summary pass drops only
-    these; a surface absent from the snapshot (a since-closed pane) is left
-    unknown and kept, so work is never dropped just because its pane closed
-    between producing output and this pass. Shells out to the sibling
-    watchdog.py snapshot (same skill). Returns None on ANY snapshot failure so
-    the caller filters nothing — a broken classifier must never drop a surface."""
+def _fetch_snapshot(scope: str | None, skill_dir: Path | None = None) -> dict | None:
+    """Shell out to watchdog.py snapshot and return the parsed result, or None on
+    any failure. Shared so collect_pending only calls snapshot once per pass."""
     skill_dir = skill_dir or _skill_dir()
     cmd = [sys.executable, str(skill_dir / "watchdog.py"), "snapshot"]
     if scope:
         cmd += ["--workspace", scope]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
-        parsed = json.loads(out)
+        return json.loads(out)
     except (subprocess.CalledProcessError, json.JSONDecodeError, OSError, ValueError):
         return None
+
+
+def _nonagent_surface_set(snapshot: dict | None) -> set[str] | None:
+    """Surface refs the snapshot classifier POSITIVELY confirms are non-agents
+    (is_agent false) — shells, editors, browsers. The summary pass drops only
+    these; a surface absent from the snapshot (a since-closed pane) is left
+    unknown and kept, so work is never dropped just because its pane closed
+    between producing output and this pass. Returns None when snapshot is None
+    (fetch failed) so the caller filters nothing — a broken classifier must
+    never drop a surface."""
+    if snapshot is None:
+        return None
     nonagent = set()
-    for w in parsed.get("workspaces", []):
+    for w in snapshot.get("workspaces", []):
         for s in w.get("surfaces", []):
             ref = s.get("ref")
             if ref and not s.get("is_agent"):
                 nonagent.add(ref)
     return nonagent
+
+
+def _own_workspace_surface_set(snapshot: dict | None) -> set[str]:
+    """Surface refs belonging to this consumer's own workspace (CMUX_SURFACE_ID).
+    Resolves the surface UUID to surface:N via `cmux identify`, then returns all
+    surface refs in that workspace from the snapshot — so the running watchdog
+    session never summarizes itself. Returns empty set on any failure so no
+    surfaces are silently dropped on error."""
+    if snapshot is None:
+        return set()
+    surface_id = os.environ.get("CMUX_SURFACE_ID")
+    if not surface_id:
+        return set()
+    try:
+        out = subprocess.run(
+            ["cmux", "identify", surface_id],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        own_ref = json.loads(out).get("caller", {}).get("surface_ref")
+    except Exception:
+        return set()
+    if not own_ref:
+        return set()
+    for w in snapshot.get("workspaces", []):
+        surfaces = w.get("surfaces", [])
+        if any(s.get("ref") == own_ref for s in surfaces):
+            return {s["ref"] for s in surfaces if s.get("ref")}
+    return set()
 
 
 # Minimum count of alphanumeric chars (outside timestamp/gap '#' lines) for a
@@ -547,15 +582,19 @@ def collect_pending(scope: str | None, today: str, *, max_days: int = 1,
 
     eligible_set = set(eligible)
     # Definition B "active pane": a coding-agent surface that produced real output.
-    # We summarize EVERYTHING pending since the last run, then exclude only two
+    # We summarize EVERYTHING pending since the last run, then exclude only three
     # positively-identified classes: (1) panes the snapshot confirms are non-agents
-    # (shells/editors/browsers), and (2) idle slices that are just a status/footer
-    # line (content filter). A surface absent from the snapshot (since-closed pane)
-    # is unknown -> kept, never dropped on ignorance, so no date gate is needed.
+    # (shells/editors/browsers), (2) surfaces in the consumer's own workspace (the
+    # running watchdog session — it would only capture its own monitoring chatter),
+    # and (3) idle slices that are just a status/footer line (content filter). A
+    # surface absent from the snapshot (since-closed pane) is unknown -> kept,
+    # never dropped on ignorance, so no date gate is needed.
     # nonagent_set is None on snapshot failure -> nothing is agent-filtered.
     # Skipped digests are marked summarized so they leave the backlog instead of
     # recurring every pass; their content is intentionally not summarized.
-    nonagent_set = _nonagent_surface_set(scope, skill_dir)
+    snapshot = _fetch_snapshot(scope, skill_dir)
+    nonagent_set = _nonagent_surface_set(snapshot)
+    own_workspace_set = _own_workspace_surface_set(snapshot)
     pending: list[dict] = []
     for path, meta in state.items():
         if meta["date"] not in eligible_set or meta.get("summarized"):
@@ -566,8 +605,9 @@ def collect_pending(scope: str | None, today: str, *, max_days: int = 1,
             meta["summarized"] = True         # digest vanished -> don't retry forever
             continue
         confirmed_nonagent = nonagent_set is not None and meta["surface_ref"] in nonagent_set
-        if confirmed_nonagent or not _is_substantive(digest_text):
-            meta["summarized"] = True         # skip shell/editor/browser or idle
+        own_session = meta["surface_ref"] in own_workspace_set
+        if confirmed_nonagent or own_session or not _is_substantive(digest_text):
+            meta["summarized"] = True         # skip shell/editor/browser/own-session/idle
             continue
         pending.append({
             "digest_file": path,
