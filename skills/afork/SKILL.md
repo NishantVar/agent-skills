@@ -45,7 +45,7 @@ description: 'Front door for forking any coding agent (plain or definition-backe
 ## Steps
 
 1. Extract the parameters from the user's request — {runtime}, {agent}, {permission}, {model}, {effort}, {title}, {cwd}, {placement} — and forward them as-is. Do not invent values; use the defaults when the user did not name one. {runtime} is required; omit {agent} for a plain agent.
-2. Begin the invocation as: python3 <skill-dir>/afork.py {runtime}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — afork.py sits in that same directory.
+2. Begin the invocation as: python3 <skill-dir>/afork.py {runtime}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — afork.py sits in that same directory. On macOS, `/usr/bin/python3` may be Python 3.9 and fail with `ModuleNotFoundError: No module named 'tomllib'`; if that happens, rerun the same command with `python3.11` (or another Python >=3.11) rather than treating afork as broken.
 3. Decide whether the user named a specific agent definition applies and, if so:
    a. Append {agent} as the second positional argument, right after {runtime}.
 4. Decide whether the user named a permission posture applies and, if so:
