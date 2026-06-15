@@ -7,7 +7,9 @@ tests can inject a fake binary tree and a deterministic surface.
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,7 +73,6 @@ def run_tool(tool, args, *, binaries_root=DEFAULT_BINARIES_ROOT,
         # No stdout → real failure; surface stderr for debugging.
         jsonrpc.log(f"{fname} produced no stdout (rc={proc.returncode}): "
                     f"{proc.stderr.strip()[:500]}")
-        import json
         return json.dumps({
             "ok": False, "code": "gateway_subprocess_failed",
             "human_message": f"{fname} exited rc={proc.returncode} with no JSON output.",
@@ -79,5 +80,4 @@ def run_tool(tool, args, *, binaries_root=DEFAULT_BINARIES_ROOT,
         })
     finally:
         if tmpdir:
-            import shutil
             shutil.rmtree(tmpdir, ignore_errors=True)

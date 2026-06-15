@@ -5,7 +5,6 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_DIR))
 
-import os
 import stat
 import textwrap
 
