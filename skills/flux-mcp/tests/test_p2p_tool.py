@@ -56,6 +56,27 @@ def test_call_to_out_of_scope_tool_is_rejected(fake_binaries):
     assert "error" in resp[1]
 
 
+def test_tools_call_missing_name_is_rejected(fake_binaries):
+    call = {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {"arguments": {}}}
+    resp = _drive([INIT, call], "comms", fake_binaries)
+    assert resp[1]["error"]["code"] == -32602
+
+
+def test_unknown_method_returns_method_not_found(fake_binaries):
+    req = {"jsonrpc": "2.0", "id": 9, "method": "does/not/exist"}
+    resp = _drive([INIT, req], "comms", fake_binaries)
+    assert resp[1]["error"]["code"] == -32601
+
+
+def test_handler_exception_returns_internal_error(fake_binaries):
+    # An invalid scope makes tools_for_scope raise inside handle(); serve()
+    # must convert that into a -32603 response, not crash.
+    req = {"jsonrpc": "2.0", "id": 9, "method": "tools/list"}
+    resp = _drive([req], "bogus_scope", fake_binaries)
+    assert resp[0]["error"]["code"] == -32603
+
+
 def test_shell_magic_body_delivered_verbatim(fake_binaries):
     body = 'line1\n$(rm -rf /)\n`whoami`\n"quoted" \'single\''
     call = {"jsonrpc": "2.0", "id": 5, "method": "tools/call",

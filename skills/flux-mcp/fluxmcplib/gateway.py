@@ -31,7 +31,7 @@ def default_resolve_surface():
 
 
 def run_tool(tool, args, *, binaries_root=DEFAULT_BINARIES_ROOT,
-             resolve_surface=default_resolve_surface):
+             resolve_surface=default_resolve_surface, timeout=60):
     """Subprocess `tool`'s binary with `args`; return its stdout (str) verbatim.
 
     Never raises on a binary handoff: a non-zero exit whose stdout is the
@@ -64,10 +64,23 @@ def run_tool(tool, args, *, binaries_root=DEFAULT_BINARIES_ROOT,
             with open(tmp_message_file, "w") as fh:
                 fh.write(args["message"])
         argv = tool["build_argv"](args, tmp_message_file)
-        proc = subprocess.run(
-            ["python3", str(binary), *argv],
-            capture_output=True, text=True, env=env, timeout=60,
-        )
+        try:
+            proc = subprocess.run(
+                ["python3", str(binary), *argv],
+                capture_output=True, text=True, env=env, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            jsonrpc.log(f"{fname} timed out after {timeout}s")
+            return json.dumps({
+                "ok": False, "code": "gateway_timeout",
+                "human_message": f"{fname} timed out after {timeout}s.",
+            })
+        except OSError as exc:
+            jsonrpc.log(f"could not spawn {fname}: {exc!r}")
+            return json.dumps({
+                "ok": False, "code": "gateway_spawn_failed",
+                "human_message": f"could not run {fname}: {exc}",
+            })
         if proc.stdout.strip():
             return proc.stdout  # verbatim — success OR handoff
         # No stdout → real failure; surface stderr for debugging.

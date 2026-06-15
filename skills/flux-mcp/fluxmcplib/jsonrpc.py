@@ -11,15 +11,24 @@ import sys
 
 
 def iter_requests(stream):
-    """Yield parsed JSON objects, one per non-blank line. Bad lines skipped."""
+    """Yield parsed JSON request objects (dicts), one per non-blank line.
+
+    Blank lines, non-JSON lines, and non-object JSON (arrays, scalars) are
+    skipped — a malformed line must never crash the dispatch loop.
+    """
     for line in stream:
         line = line.strip()
         if not line:
             continue
         try:
-            yield json.loads(line)
+            obj = json.loads(line)
         except json.JSONDecodeError:
             log(f"non-JSON line ignored: {line[:120]!r}")
+            continue
+        if not isinstance(obj, dict):
+            log(f"non-object JSON ignored: {line[:120]!r}")
+            continue
+        yield obj
 
 
 def send(stream, obj) -> None:

@@ -53,6 +53,20 @@ def test_tfork_command_is_shlex_split_after_dashdash(fake_binaries):
     assert argv[i + 1:] == ["claude", "--model", "opus", "-p", "hi there"]
 
 
+def test_timeout_returns_synthesized_error(tmp_path):
+    root = tmp_path / "skills" / "p2p"
+    root.mkdir(parents=True)
+    (root / "agent_msg.py").write_text("import time\ntime.sleep(5)\n")
+    out = gateway.run_tool(
+        registry.TOOLS["p2p"], {"message": "x", "peer": "y"},
+        binaries_root=tmp_path / "skills",
+        resolve_surface=lambda: "surface:1", timeout=0.5,
+    )
+    rec = json.loads(out)
+    assert rec["ok"] is False
+    assert rec["code"] == "gateway_timeout"
+
+
 def test_afork_positionals_then_flags(fake_binaries):
     rec = json.loads(_run("afork",
                           {"runtime": "codex", "agent": "reviewer",

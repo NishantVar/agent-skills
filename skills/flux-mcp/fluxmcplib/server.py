@@ -39,12 +39,14 @@ def handle(req, *, scope, binaries_root, resolve_surface):
     if method == "tools/call":
         params = req.get("params") or {}
         name = params.get("name")
-        allowed = {t["name"] for t in registry.tools_for_scope(scope)}
-        if name not in allowed:
+        if not name:
+            return _error(req_id, -32602, "missing required parameter 'name'")
+        tools_by_name = {t["name"]: t for t in registry.tools_for_scope(scope)}
+        if name not in tools_by_name:
             return _error(req_id, -32602,
                           f"tool {name!r} not available in scope {scope!r}")
         raw = gateway.run_tool(
-            registry.TOOLS[name], params.get("arguments") or {},
+            tools_by_name[name], params.get("arguments") or {},
             binaries_root=binaries_root, resolve_surface=resolve_surface,
         )
         return _result(req_id, {"content": [{"type": "text", "text": raw}],
