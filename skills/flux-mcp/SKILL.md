@@ -51,11 +51,13 @@ Add an `mcpServers` entry to `.claude/settings.json` (project) or `~/.claude/set
     "flux": {
       "type": "stdio",
       "command": "python3",
-      "args": ["~/.claude/skills/flux-mcp/flux_mcp.py", "--scope", "orchestrator"]
+      "args": ["/Users/<you>/.claude/skills/flux-mcp/flux_mcp.py", "--scope", "orchestrator"]
     }
   }
 }
 ```
+
+Use an **absolute** path — `args` are passed to `python3` literally and are not tilde-expanded.
 
 **Per-agent restriction** via agent frontmatter `tools: mcp__flux__p2p` and/or `permissions.deny`. Claude Code has true per-agent MCP gating; `deny` beats `allow`. This is the payoff: agents can run with `Bash` and `Write` denied or omitted, and only `mcp__flux__*` allowed — constraining what a forked agent can do to messaging and forking only.
 
