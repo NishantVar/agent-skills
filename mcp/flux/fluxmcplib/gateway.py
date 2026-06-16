@@ -18,8 +18,9 @@ from pathlib import Path
 from . import jsonrpc
 
 # Resolve the real skills dir through any install symlink. This file is
-# skills/flux-mcp/fluxmcplib/gateway.py → parents[2] is skills/.
-DEFAULT_BINARIES_ROOT = Path(__file__).resolve().parents[2]
+# mcp/flux/fluxmcplib/gateway.py → parents[3] is the repo root; the wrapped
+# p2p/afork/tfork binaries live under its skills/ tree.
+DEFAULT_BINARIES_ROOT = Path(__file__).resolve().parents[3] / "skills"
 
 
 def default_resolve_surface():

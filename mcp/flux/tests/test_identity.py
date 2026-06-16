@@ -6,7 +6,7 @@ from pathlib import Path
 from fluxmcplib import gateway, registry
 
 # Make p2plib importable the same way the gateway does at runtime.
-P2P_DIR = Path(__file__).resolve().parents[2] / "p2p"
+P2P_DIR = Path(__file__).resolve().parents[3] / "skills" / "p2p"
 sys.path.insert(0, str(P2P_DIR))
 from p2plib import surface  # noqa: E402
 
