@@ -45,7 +45,7 @@ For per-tool argument semantics, read each wrapped skill's own `SKILL.md`
 (`skills/p2p`, `skills/afork`, `skills/tfork`) — they are not duplicated here.
 Quick reference for required args:
 
-- **p2p** — `message` (string); usually also `peer` (string surface or agent name).
+- **p2p** — `message` (string); usually also `peer` (destination cmux tab title). Route directly by surface with `peer_surface` (a `surface:N` ref) instead of/alongside `peer`.
 - **afork** — `runtime` (string, e.g. `claude`, `codex`).
 - **tfork** — `command` (string).
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """flux-mcp — stdio MCP gateway over the p2p / afork / tfork skill binaries.
 
-Thin entry: parse --scope, put the skill dir on the import path, and hand off
-to fluxmcplib.server. Vendored JSON-RPC (no `mcp` SDK). See SKILL.md for host
-wiring (Claude mcpServers / codex config.toml).
+Thin entry: parse --scope, put the server dir on the import path, and hand off
+to fluxmcplib.server. Vendored JSON-RPC (no `mcp` SDK). See README.md for host
+wiring (`./install.sh mcp …` — Claude `mcp add` / codex config.toml).
 """
 
 import argparse
