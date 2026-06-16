@@ -1,9 +1,19 @@
 # flux-mcp — todo
 
-_Last refreshed: 2026-06-15_
+_Last refreshed: 2026-06-16_
 
+Home: `mcp/flux/` (NOT a skill — outside `skills/`, no `SKILL.md`). Docs: `mcp/flux/README.md`.
+Register: `./install.sh mcp [claude|codex|all]`.
 Design: `$OBSIDIAN/plans/flux-mcp-design-2026-06-15.md`
 Plan: `$OBSIDIAN/plans/flux-mcp-impl-plan-2026-06-15.md`
+Packaging plan: `$OBSIDIAN/plans/flux-mcp-packaging-plan-2026-06-16.md`
+
+## Done
+- 2026-06-16 — Packaging: relocated `skills/flux-mcp/` → `mcp/flux/` so it is no
+  longer discovered as a Skill-tool skill; fixed the gateway/identity binaries-root
+  depth (`parents[3]/skills`); added one-step MCP registration via `install.sh mcp`
+  (claude mcp add + idempotent codex config.toml block); removed stale skill
+  symlinks; SKILL.md → README.md. Spec §3/§6/§10 updated. Tests: 29 passed.
 
 ## Parked / follow-ups
 - afork `-c` server-config injection for codex per-agent binding (spec §6/§11).
