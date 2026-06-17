@@ -1,6 +1,7 @@
 """Launch-command builder — adapter-driven, one path for every runtime.
 
-argv = [bin] + permission_flags(posture) + model_flags + effort_flags.
+argv = context_window_prefix + [bin] + permission_flags(posture) +
+model_flags + effort_flags.
 
 Two shapes:
 
@@ -40,10 +41,14 @@ def _persona_tail(style, flag):
     raise ValueError(f"unknown persona_inject style {style!r}")
 
 
-def build_launch(adapter, agent, posture, model, effort, persona, root=None):
+def build_launch(adapter, agent, posture, model, effort, persona, root=None,
+                 context_window=None):
     """Return (command_str, workdir). ``persona`` is the persona body (or empty
     for plain agents). ``root`` is injectable for tests."""
     argv = [adapter.bin]
+    if context_window:
+        argv = adapter.context_window_prefix(context_window) + argv
+        model = adapter.context_window_model(model, context_window)
     argv += adapter.permission_flags(posture)
     if model:
         argv += adapter.model_flag(model)

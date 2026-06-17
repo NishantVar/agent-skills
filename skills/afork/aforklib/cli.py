@@ -2,8 +2,9 @@
 object, and exit with a code that reflects the outcome.
 
     afork.py <runtime> [agent] [--permission {none,read-only,workspace-write}]
-             [--model M] [--effort E] [--title T] [--cwd DIR]
-             [--placement {right,left,top,bottom}] [--allow-unenforced]
+             [--model M] [--effort E] [--context-window N] [--title T]
+             [--cwd DIR] [--placement {right,left,top,bottom}]
+             [--allow-unenforced]
 """
 
 import argparse
@@ -35,6 +36,9 @@ def build_parser():
                    help="Agnostic model; falls back to the runtime default.")
     p.add_argument("--effort", default=None,
                    help="Agnostic reasoning effort; falls back to the default.")
+    p.add_argument("--context-window", default=None,
+                   help="Agnostic model context window. For claude, accepts "
+                        "1m or 1000000.")
     p.add_argument("--title", default=None,
                    help="cmux tab title for the forked pane (defaults to the "
                         "agent name, else the runtime). Forwarded to tfork.")
@@ -66,6 +70,7 @@ def main(argv=None):
             permission=args.permission,
             model=args.model,
             effort=args.effort,
+            context_window=args.context_window,
             title=args.title,
             cwd=args.cwd,
             placement=args.placement,

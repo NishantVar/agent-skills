@@ -32,6 +32,7 @@ class CodexAdapter:
     has_agent_dir = True
     default_model = None
     default_effort = "xhigh"
+    supports_context_window = False
     # codex injects the persona at developer level: -c key="$(cat payload)".
     persona_inject = {"style": "config_cat", "flag": "developer_instructions"}
 
@@ -97,6 +98,7 @@ class ClaudeAdapter:
     has_agent_dir = True
     default_model = "opus"
     default_effort = "high"
+    supports_context_window = True
     # claude injects the persona as a system-prompt append: --flag "$(cat payload)".
     persona_inject = {"style": "flag_cat", "flag": "--append-system-prompt"}
 
@@ -135,6 +137,15 @@ class ClaudeAdapter:
     def effort_flag(self, e):
         return ["--effort", e]
 
+    def context_window_prefix(self, context_window):
+        return ["env", "CLAUDE_CODE_DISABLE_1M_CONTEXT=0"]
+
+    def context_window_model(self, model, context_window):
+        model = model or self.default_model
+        if model.endswith("[1m]"):
+            return model
+        return f"{model}[1m]"
+
 
 class PiAdapter:
     runtime = "pi"
@@ -142,6 +153,7 @@ class PiAdapter:
     has_agent_dir = False
     default_model = None
     default_effort = None
+    supports_context_window = False
     # pi takes a file path directly: --flag <payload-path> (no $(cat)).
     persona_inject = {"style": "flag_path", "flag": "--append-system-prompt"}
 

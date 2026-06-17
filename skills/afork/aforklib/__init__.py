@@ -13,6 +13,7 @@ import os
 
 from .adapters import _PLACEHOLDER_RUNTIMES, get_adapter
 from .errors import (
+    err_bad_arguments,
     err_custom_unsupported,
     err_runtime_unsupported,
     err_unenforceable,
@@ -25,6 +26,17 @@ from .resolve import resolve_agent_definition
 # "fable max" or "gpt-5.3-codex xhigh" into model + effort. This set only
 # decides what splits off; the runtime validates the actual values.
 _EFFORT_TOKENS = {"minimal", "low", "medium", "high", "xhigh", "max"}
+
+
+def _normalize_context_window(context_window):
+    """Normalize supported --context-window spellings."""
+    if context_window is None:
+        return None
+    value = str(context_window).strip().lower()
+    if value in ("1m", "1000000"):
+        return "1m"
+    raise err_bad_arguments(
+        f"--context-window {context_window!r} must be '1m' or '1000000'")
 
 
 def _split_model_spec(model, effort):
@@ -40,7 +52,8 @@ def _split_model_spec(model, effort):
 
 
 def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
-              title=None, cwd=None, placement=None, allow_unenforced=False):
+              title=None, cwd=None, placement=None, allow_unenforced=False,
+              context_window=None):
     """Resolve, enforce, and return one handoff dict. Raises AforkError on any
     fail-closed or resolution failure."""
     cwd = os.path.abspath(os.path.expanduser(cwd)) if cwd else os.getcwd()
@@ -50,6 +63,11 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
         reason = ("named in the design brief but has no adapter yet"
                   if runtime in _PLACEHOLDER_RUNTIMES else "unknown runtime")
         raise err_runtime_unsupported(runtime, reason)
+
+    context_window = _normalize_context_window(context_window)
+    if context_window and not adapter.supports_context_window:
+        raise err_bad_arguments(
+            f"--context-window is not supported for runtime {runtime!r}")
 
     # --- Mode: plain (no agent) vs custom (definition-backed). ---
     parsed = {}
@@ -86,7 +104,8 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     persona = adapter.persona_body(parsed) if agent is not None else ""
 
     command, workdir = build_launch(
-        adapter, agent_name, posture, model, effort, persona)
+        adapter, agent_name, posture, model, effort, persona,
+        context_window=context_window)
     return ready_to_fork(
         runtime=runtime,
         agent=agent_name,
