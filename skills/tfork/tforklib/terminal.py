@@ -19,10 +19,13 @@ from abc import ABC, abstractmethod
 from .errors import (
     err_anchor_ambiguous,
     err_anchor_not_found,
+    err_bad_arguments,
     err_no_terminal,
     err_spawn_failed,
     err_split_failed,
     err_surface_resolution_failed,
+    err_window_create_failed,
+    err_window_unknown,
     err_workspace_ambiguous,
     err_workspace_unknown,
 )
@@ -82,6 +85,24 @@ class Terminal(ABC):
         exactly one match is reused (created=False); zero matches creates
         via ``cmux new-workspace --name <title> --cwd <cwd>``; two or
         more → ``workspace_ambiguous`` with each candidate.
+        """
+
+    @abstractmethod
+    def resolve_window(self, value, workspace, cwd) -> tuple:
+        """Resolve ``--window`` into ``(window_info, workspace_info)``.
+
+        ``value`` is ``"new"`` (open a fresh top-level window, without
+        stealing focus from the caller's window) or a window ref/index/UUID
+        (target an existing window). ``workspace`` is the optional
+        ``--workspace`` title.
+
+        Returns ``({"ref", "created"}, {"ref", "title", "created"})``.
+        For a new window the seeded workspace is reused (renamed when a
+        ``workspace`` title is given) so the window does not accumulate an
+        orphan default workspace. For an existing window the workspace is
+        resolved within that window — a matching title is reused, otherwise
+        a fresh workspace is created in it. A window-ref miss raises
+        ``window_unknown``.
         """
 
     @abstractmethod
@@ -152,8 +173,13 @@ def _ancestor_ttys():
 
 
 def _cmux_tree():
-    """Full ``cmux tree --all`` document or ``{}`` on failure."""
-    result = _run(["cmux", "--json", "tree", "--all"])
+    """Full ``cmux tree --all`` document or ``{}`` on failure.
+
+    ``--id-format both`` keeps every node's short ``ref`` and additionally
+    populates its UUID ``id`` — needed to match a freshly-created window
+    (``cmux new-window`` hands back a UUID) back to its tree node, since the
+    default tree leaves ``id`` null."""
+    result = _run(["cmux", "--json", "--id-format", "both", "tree", "--all"])
     if result.returncode != 0:
         return {}
     try:
@@ -460,6 +486,143 @@ class CmuxTerminal(Terminal):
             raise err_workspace_unknown(value, detail=detail)
         return {"ref": ws_ref, "title": value, "created": True}
 
+    # -- window resolution --------------------------------------------------
+
+    def resolve_window(self, value, workspace, cwd):
+        """Resolve ``--window`` into ``(window_info, workspace_info)``.
+
+        ``new`` opens a fresh window and reuses its seeded workspace (renamed
+        when ``workspace`` is given); a ref/index/UUID targets an existing
+        window and resolves the workspace within it. See the
+        ``Terminal.resolve_window`` contract for the full behavior."""
+        if value == "new":
+            return self._resolve_new_window(workspace)
+        return self._resolve_existing_window(value, workspace, cwd)
+
+    def _resolve_new_window(self, workspace):
+        """Open a fresh window, reuse its seeded workspace.
+
+        ``cmux new-window`` does not move the caller's focus, so the fork
+        lands in its own window without the view jumping — the whole reason
+        for ``--window new``. The window comes up with exactly one workspace;
+        reusing it (renamed when a title is given) avoids leaving an orphan
+        default workspace beside the one tfork runs in.
+
+        A fresh window's seeded workspace can only be *named*, never bound to
+        an existing workspace ref — that workspace already lives elsewhere.
+        So a ref-shaped ``--workspace`` value is rejected here rather than
+        silently turned into a literal title like ``'workspace:1'``."""
+        if workspace and is_workspace_ref(workspace):
+            raise err_bad_arguments(
+                f"--window new seeds its own workspace, so --workspace must "
+                f"be a title to name it, not a ref ({workspace!r})")
+        win_uuid = self._new_window()
+        window = self._window_node(win_uuid)
+        if window is None:
+            raise err_window_create_failed(
+                "the new window did not appear in the cmux tree")
+        win_ref = window.get("ref") or win_uuid
+        workspaces = window.get("workspaces", []) or []
+        if len(workspaces) != 1:
+            raise err_window_create_failed(
+                "the new window did not come up with a single workspace")
+        seeded = workspaces[0]
+        ws_ref = seeded.get("ref")
+        if workspace:
+            self._rename_workspace(ws_ref, workspace, win_ref)
+            title = workspace
+        else:
+            title = seeded.get("title") or ""
+        return ({"ref": win_ref, "created": True},
+                {"ref": ws_ref, "title": title, "created": True})
+
+    def _resolve_existing_window(self, value, workspace, cwd):
+        """Target an existing window. The window is resolved up front — a miss
+        is ``window_unknown`` — and its canonical ``window:N`` ref is used for
+        the returned info and every follow-up call, so an index/UUID input
+        does not leak through into the result JSON."""
+        window = self._window_node(value)
+        if window is None:
+            raise err_window_unknown(value)
+        win_ref = window.get("ref") or value
+        if workspace:
+            ws_info = self._resolve_workspace_in_window(workspace, win_ref, cwd)
+        else:
+            ws_ref, detail = self._create_workspace(None, cwd, window=win_ref)
+            if not ws_ref:
+                raise err_window_unknown(win_ref, detail=detail)
+            ws_info = {"ref": ws_ref, "title": "", "created": True}
+        return {"ref": win_ref, "created": False}, ws_info
+
+    def _resolve_workspace_in_window(self, value, win_ref, cwd):
+        """Resolve a ``--workspace`` value scoped to ``win_ref``.
+
+        Mirrors ``resolve_workspace``'s ref/title split: a ref (workspace:N
+        or UUID) is reused only when it already lives in this window and is
+        never created on a miss (refs are not names); a title reuses a single
+        in-window match, errors on ``workspace_ambiguous`` for two or more,
+        and is created in the window when absent."""
+        in_window = self._workspaces_in_window(win_ref)
+        if is_workspace_ref(value):
+            # A ref may be the short workspace:N or the UUID; match either and
+            # always return the canonical short ref.
+            for r, t, uid in in_window:
+                if value in (r, uid):
+                    return {"ref": r, "title": t, "created": False}
+            raise err_workspace_unknown(value)
+        matches = [(r, t) for r, t, _uid in in_window if t == value]
+        if len(matches) == 1:
+            return {"ref": matches[0][0], "title": matches[0][1],
+                    "created": False}
+        if len(matches) > 1:
+            raise err_workspace_ambiguous(
+                value, [{"ref": r, "title": t} for r, t in matches])
+        ws_ref, detail = self._create_workspace(value, cwd, window=win_ref)
+        if not ws_ref:
+            raise err_window_unknown(win_ref, detail=detail)
+        return {"ref": ws_ref, "title": value, "created": True}
+
+    def _new_window(self):
+        """Create a fresh top-level window and return its UUID.
+
+        ``cmux new-window`` prints ``OK <window-uuid>``; the UUID is a valid
+        handle for the follow-up tree lookup and is translated to a short ref
+        by the caller."""
+        result = _run(["cmux", "new-window"])
+        if result.returncode != 0:
+            raise err_window_create_failed(
+                result.stderr.strip() or "cmux new-window failed")
+        for token in result.stdout.split():
+            if token != "OK":
+                return token
+        raise err_window_create_failed("could not capture the new window ref")
+
+    def _window_node(self, win_ref):
+        """The tree window dict matching ``win_ref`` by ref, UUID, or index;
+        None when nothing matches."""
+        for window in _cmux_tree().get("windows", []):
+            if win_ref in (window.get("ref"), window.get("id"),
+                           str(window.get("index"))):
+                return window
+        return None
+
+    def _workspaces_in_window(self, win_ref):
+        """``(ref, title, uuid)`` for every workspace in ``win_ref`` — empty
+        when the window is not found. The UUID is carried so a ref-shaped
+        ``--workspace`` value can match either the short ref or the UUID."""
+        window = self._window_node(win_ref)
+        if window is None:
+            return []
+        return [(ws.get("ref"), ws.get("title") or "", ws.get("id"))
+                for ws in window.get("workspaces", []) if ws.get("ref")]
+
+    def _rename_workspace(self, ws_ref, title, win_ref):
+        """Best-effort rename of ``ws_ref`` to ``title``. A rename miss is not
+        fatal — the fork still lands in the right workspace, just under cmux's
+        default name."""
+        _run(["cmux", "rename-workspace", "--workspace", ws_ref,
+              "--window", win_ref, title])
+
     def _list_workspaces(self):
         """Yield ``(ref, title)`` for every live cmux workspace.
 
@@ -477,16 +640,21 @@ class CmuxTerminal(Terminal):
                     out.append((ref, ws.get("title") or ""))
         return out
 
-    def _create_workspace(self, title, cwd):
-        """Create a workspace by title; return ``(ref-or-None, detail)``.
+    def _create_workspace(self, title, cwd, window=None):
+        """Create a workspace; return ``(ref-or-None, detail)``.
 
+        ``title`` names it (omitted → cmux's default name); ``window``
+        targets a specific window (omitted → the caller's window).
         ``--focus false`` keeps cmux's window from jumping to the new
         workspace — the multi-agent use case is "spawn N agents without
         my view bouncing around." A future ``--focus`` toggle can be
         added if needed.
         """
-        cmd = ["cmux", "new-workspace", "--name", title,
-               "--cwd", cwd, "--focus", "false"]
+        cmd = ["cmux", "new-workspace", "--cwd", cwd, "--focus", "false"]
+        if title:
+            cmd += ["--name", title]
+        if window:
+            cmd += ["--window", window]
         result = _run(cmd)
         if result.returncode != 0:
             return None, result.stderr.strip() or "cmux new-workspace failed"

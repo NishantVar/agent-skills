@@ -17,14 +17,14 @@ def test_skill_md_exists():
 def test_front_door_declares_the_parameters():
     text = SKILL_MD.read_text()
     for parameter in ("command", "placement", "anchor", "workspace",
-                      "type_override"):
+                      "type_override", "window"):
         assert parameter in text, f"SKILL.md does not declare {parameter!r}"
 
 
 def test_front_door_maps_onto_the_binary_invocation():
     text = SKILL_MD.read_text()
     for token in ("fork_terminal.py", "--placement", "--anchor",
-                  "--workspace", "--type", "--"):
+                  "--workspace", "--window", "--type", "--"):
         assert token in text, f"SKILL.md does not reference {token!r}"
 
 

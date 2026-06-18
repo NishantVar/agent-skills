@@ -40,6 +40,11 @@ def test_parse_args_accepts_anchor():
     assert args.anchor == "reviewer"
 
 
+def test_parse_args_accepts_window():
+    args = ft.parse_args(["--window", "new", "--", "claude"])
+    assert args.window == "new"
+
+
 def test_parse_args_keeps_the_commands_own_flags():
     args = ft.parse_args(["--", "claude", "--dangerously-skip-permissions"])
     assert args.command == ["claude", "--dangerously-skip-permissions"]

@@ -24,16 +24,19 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 - **title**:
   Optional cmux tab title for the new pane — renamed right after fork so it's immediately p2p-addressable. Pass a snake_case title (e.g. `worker_42`) for any agent you'll message. cmux allows duplicates in a workspace; collisions surface in `note`, not failures.
   Default: none.
+- **window**:
+  Optional cmux window to open the fork in: `new` creates a fresh top-level window — which does not steal focus from the caller's window, so spawning an agent does not switch the user's view — or a window ref/index/UUID targets an existing one. Combine with --workspace to name the workspace inside the window. Mutually exclusive with --anchor.
+  Default: none.
 
 ## Context
 
 - **binary-contract**
 
-  fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named, or the workspace --workspace targeted), opens the new pane or workspace, runs the command in --cwd (or the caller's current directory when --cwd is omitted) through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), workspace (`{ref, title, created}` when --workspace was passed, else null — created=true means the workspace was just created, false means it already existed and was reused), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel; with --workspace, the note also reports the workspace title and whether it was created or reused). A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf.
+  fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named, or the workspace --workspace targeted), opens the new pane or workspace, runs the command in --cwd (or the caller's current directory when --cwd is omitted) through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), workspace (`{ref, title, created}` when --workspace or --window was passed, else null — created=true means the workspace was just created, false means it already existed and was reused), window (`{ref, created}` when --window was passed, else null — created=true means a fresh window was opened, false means an existing window was targeted), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel; with --workspace or --window, the note also reports the workspace title / window and whether each was created or reused). A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf.
 
 ## Constraints
 
-- **Must:** Infer only the front-door parameters from the user's request — command, placement, anchor, workspace, cwd, and type_override — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns. Do not pass --workspace and --anchor together; the binary rejects that combination.
+- **Must:** Infer only the front-door parameters from the user's request — command, placement, anchor, workspace, cwd, type_override, and window — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns. Do not pass --anchor together with --workspace or --window; the binary rejects those combinations.
 - **Require:** tfork only forks. Never message or brief the forked agent from this skill. When the user asks to communicate with, brief, or message the forked agent, load the p2p skill and use it with the session ref (or --title) returned from the fork — p2p owns all agent-to-agent messaging.
 
 ### Red Flags
@@ -51,7 +54,7 @@ Skip these — SKILL.md is the complete interface.
 
 ## Steps
 
-1. Extract the parameters from the user's request — {command}, {placement}, {anchor}, {workspace}, {cwd}, and {type_override} — and forward them as-is. Do not invent values; if the user did not name a placement, an anchor, a workspace, or a cwd, use the defaults.
+1. Extract the parameters from the user's request — {command}, {placement}, {anchor}, {workspace}, {cwd}, {type_override}, and {window} — and forward them as-is. Do not invent values; if the user did not name a placement, an anchor, a workspace, a cwd, or a window, use the defaults.
 2. Begin the invocation as: python3 <skill-dir>/fork_terminal.py -- {command}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — fork_terminal.py sits in that same directory, and the working directory is the user's project, not the skill directory, so a bare fork_terminal.py will not resolve. Everything after the -- separator is the command.
 3. Decide whether the user named a placement applies and, if so:
    a. Insert --placement {placement} into the invocation, before the -- separator.
@@ -59,14 +62,16 @@ Skip these — SKILL.md is the complete interface.
    a. Insert --workspace {workspace} into the invocation, before the -- separator. Do not also pass --anchor — the two are mutually exclusive.
 5. Decide whether the user named an anchor (a surface ref like surface:42 or a cmux tab title) applies and, if so:
    a. Insert --anchor {anchor} into the invocation, before the -- separator.
-6. Decide whether the user named a working directory (e.g. a path to a different repo) applies and, if so:
+6. Decide whether the user asked to open the fork in a new or separate window (e.g. so the spawn does not steal focus) applies and, if so:
+   a. Insert --window {window} into the invocation, before the -- separator — `new` for a fresh window, or a window ref/index/UUID for an existing one. Do not also pass --anchor — the two are mutually exclusive.
+7. Decide whether the user named a working directory (e.g. a path to a different repo) applies and, if so:
    a. Insert --cwd {cwd} into the invocation, before the -- separator. The binary expands the path and rejects it with bad_arguments if the directory does not exist.
-7. Decide whether the user explicitly specified agent or command as the type applies and, if so:
+8. Decide whether the user explicitly specified agent or command as the type applies and, if so:
    a. Insert --type {type_override} into the invocation, before the -- separator.
-8. Decide whether the fork is an agent you'll p2p applies and, if so:
+9. Decide whether the fork is an agent you'll p2p applies and, if so:
    a. Pick a snake_case title and insert --title {title} before the -- separator. p2p can route to it on the first send.
-9. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
-10. Decide which of the following applies and follow only that path:
+10. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
+11. Decide which of the following applies and follow only that path:
    If the JSON result has ok set to true:
    a. Follow the report-success procedure.
    Otherwise:

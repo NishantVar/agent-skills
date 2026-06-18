@@ -19,13 +19,14 @@ class FakeTerminal(Terminal):
 
     def __init__(self, *, process=None, text="", fork_error=None,
                  session="surface:fake", rename_result=(None, []),
-                 workspace_resolver=None):
+                 workspace_resolver=None, window_resolver=None):
         self.process = process
         self.text = text
         self.fork_error = fork_error
         self.session = session
         self.rename_result = rename_result
         self.workspace_resolver = workspace_resolver
+        self.window_resolver = window_resolver
         self.calls = []
         self.killed = []
 
@@ -47,6 +48,14 @@ class FakeTerminal(Terminal):
             return {"ref": "workspace:fake", "title": value or "",
                     "created": True}
         return self.workspace_resolver(value, cwd)
+
+    def resolve_window(self, value, workspace, cwd):
+        self.calls.append(("resolve_window", value, workspace, cwd))
+        if self.window_resolver is None:
+            return ({"ref": "window:fake", "created": value == "new"},
+                    {"ref": "workspace:fake", "title": workspace or "",
+                     "created": True})
+        return self.window_resolver(value, workspace, cwd)
 
     def pane_process(self, session):
         self.calls.append(("pane_process", session))

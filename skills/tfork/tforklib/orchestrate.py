@@ -16,15 +16,19 @@ import secrets
 import shlex
 
 from .classify import classify_observed
-from .errors import err_bad_arguments, err_workspace_anchor_conflict
+from .errors import (
+    err_bad_arguments,
+    err_window_anchor_conflict,
+    err_workspace_anchor_conflict,
+)
 from .registry import REGISTRY_PATH, read_registry, write_registry_entry
 from .terminal import resolve_terminal
 from .verify import DEFAULT_DELAY, verify_fork
 
 
 def run_fork(command_words, placement=None, anchor=None, type_override=None,
-             title=None, delay=None, workspace=None, cwd=None, terminal=None,
-             nonce=None, registry_path=REGISTRY_PATH):
+             title=None, delay=None, workspace=None, cwd=None, window=None,
+             terminal=None, nonce=None, registry_path=REGISTRY_PATH):
     """Fork, verify, label, persist, and return the result dict.
 
     Raises ``ForkError`` only for argument, terminal, surface-resolution,
@@ -40,6 +44,8 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
         raise err_bad_arguments("no command given after '--'")
     if workspace is not None and anchor is not None:
         raise err_workspace_anchor_conflict()
+    if window is not None and anchor is not None:
+        raise err_window_anchor_conflict()
     if cwd is None:
         cwd = os.getcwd()
     else:
@@ -61,8 +67,15 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
     if nonce is None:
         nonce = secrets.token_hex(4)
 
+    # --window governs workspace placement: it resolves the (possibly new)
+    # window and the workspace inside it together, so the seeded workspace of
+    # a fresh window is reused rather than left orphaned next to a second one.
+    window_info = None
     workspace_info = None
-    if workspace is not None:
+    if window is not None:
+        window_info, workspace_info = terminal.resolve_window(
+            window, workspace, cwd)
+    elif workspace is not None:
         workspace_info = terminal.resolve_workspace(workspace, cwd)
 
     session = terminal.fork(command_str, placement, cwd, nonce, anchor,
@@ -140,6 +153,17 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
     else:
         ws_result = None
 
+    if window_info is not None:
+        win_created = bool(window_info.get("created"))
+        win_state = "new window" if win_created else "existing window"
+        note = f"{note}; in {win_state} {window_info.get('ref')}"
+        win_result = {
+            "ref": window_info.get("ref"),
+            "created": win_created,
+        }
+    else:
+        win_result = None
+
     return {
         "ok": True,
         "session": session,
@@ -149,5 +173,6 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
         "foreground": foreground,
         "exit_status": exit_status,
         "workspace": ws_result,
+        "window": win_result,
         "note": note,
     }

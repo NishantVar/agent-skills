@@ -5,6 +5,7 @@ Invocation contract::
     fork_terminal.py
         [--placement {right,left,top,bottom}]
         [--workspace <title-or-ref>]
+        [--window {new|<ref>}]
         [--anchor <surface-ref-or-tab-name>]
         [--type {agent,command}]
         [--delay N]
@@ -15,7 +16,11 @@ to contain its own flags and spaces); its first word is the registry key.
 ``--anchor`` accepts either a ``surface:N`` ref or a cmux tab title; without
 it, the new pane is placed next to the caller's own surface. ``--workspace``
 accepts a cmux workspace title or ref (created when a title doesn't match);
-mutually exclusive with ``--anchor``.
+mutually exclusive with ``--anchor``. ``--window`` opens the fork in a
+separate top-level window — ``new`` creates a fresh one (without stealing
+focus from the caller's window), or a window ref/index/UUID targets an
+existing one; it composes with ``--workspace`` and is mutually exclusive
+with ``--anchor``.
 
 On success ``main`` prints, on stdout, and exits 0 with::
 
@@ -79,6 +84,13 @@ def parse_args(argv):
                         help="cmux workspace title or ref; created when "
                              "a title doesn't match. Mutually exclusive "
                              "with --anchor.")
+    parser.add_argument("--window", default=None,
+                        help="open the fork in a window instead of the "
+                             "caller's: 'new' creates a fresh window (does "
+                             "not steal focus); a window ref/index/UUID "
+                             "targets an existing one. Combine with "
+                             "--workspace to name the workspace. Mutually "
+                             "exclusive with --anchor.")
     parser.add_argument("--anchor", default=None,
                         help="surface ref or tab title to place next to; "
                              "default: the caller's own surface. Mutually "
@@ -105,7 +117,8 @@ def main(argv=None):
         result = run_fork(args.command, placement=args.placement,
                           anchor=args.anchor, type_override=args.type,
                           title=args.title, delay=args.delay,
-                          workspace=args.workspace, cwd=args.cwd)
+                          workspace=args.workspace, cwd=args.cwd,
+                          window=args.window)
     except ForkError as exc:
         print(json.dumps(exc.handoff()))
         return EXIT_CODES.get(exc.code, 1)

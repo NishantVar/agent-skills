@@ -19,6 +19,9 @@ EXIT_CODES = {
     "workspace_unknown": 8,
     "workspace_ambiguous": 8,
     "workspace_anchor_conflict": 2,
+    "window_unknown": 9,
+    "window_create_failed": 4,
+    "window_anchor_conflict": 2,
 }
 
 
@@ -67,7 +70,8 @@ def err_bad_arguments(detail):
         "Do not retry verbatim. Fix the invocation, then call again.",
         False,
         "fork_terminal.py [--placement {right,left,top,bottom}] "
-        "[--workspace <title-or-ref>] [--anchor <surface-ref-or-tab-name>] "
+        "[--workspace <title-or-ref>] [--window {new|<ref>}] "
+        "[--anchor <surface-ref-or-tab-name>] "
         "[--type {agent,command}] -- <command>",
     )
 
@@ -179,6 +183,54 @@ def err_workspace_anchor_conflict():
         False,
         "fork_terminal.py --workspace <title-or-ref> -- <command>  "
         "OR  fork_terminal.py --anchor <ref-or-tab> -- <command>",
+    )
+
+
+def err_window_anchor_conflict():
+    return ForkError(
+        "window_anchor_conflict",
+        "Cannot pass both --window and --anchor: an anchor splits next to "
+        "an existing surface in the current layout, while --window opens a "
+        "separate top-level window. The two cannot both decide placement.",
+        "Do not retry verbatim. Pick one — drop --anchor and use --window, "
+        "or drop --window and let the anchor decide.",
+        False,
+        "fork_terminal.py --window {new|<ref>} -- <command>  "
+        "OR  fork_terminal.py --anchor <ref-or-tab> -- <command>",
+    )
+
+
+def err_window_unknown(value, detail=None):
+    """``--window <ref>`` did not resolve to a live window. ``detail`` is
+    the cmux error when one was returned (e.g. a workspace could not be
+    created in the named window)."""
+    if detail:
+        human = (f"Could not target cmux window {value!r}: {detail}.")
+    else:
+        human = (
+            f"No cmux window matched {value!r}. Pass 'new' to open a fresh "
+            f"window, or a live window ref/index/UUID (see 'cmux "
+            f"list-windows')."
+        )
+    return ForkError(
+        "window_unknown",
+        human,
+        "Do not retry verbatim. List windows with 'cmux list-windows' and "
+        "rerun with 'new' or a valid window ref.",
+        False,
+        "fork_terminal.py --window {new|<ref>} -- <command>",
+        extras={"requested": value},
+    )
+
+
+def err_window_create_failed(detail):
+    return ForkError(
+        "window_create_failed",
+        f"cmux could not create the new window: {detail}.",
+        "Retry the same invocation once; if it fails again, report the cmux "
+        "error to the user.",
+        True,
+        "<same fork_terminal.py invocation>",
     )
 
 
