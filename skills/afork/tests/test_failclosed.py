@@ -6,6 +6,7 @@ import pytest
 
 from aforklib import run_afork
 from aforklib.errors import AforkError
+from aforklib.persona import render_preamble
 
 
 def _codex_port(tmp_path, name, body):
@@ -47,7 +48,11 @@ def test_explicit_codex_definition_path_runs_in_separate_cwd(tmp_path):
     payload = Path(out["workdir"]) / "persona.txt"
     assert "--sandbox workspace-write" in launcher.read_text()
     assert 'developer_instructions="$(cat "$DIR/persona.txt")"' in launcher.read_text()
-    assert payload.read_text() == persona
+    # Definition-backed fork: the payload leads with the auto-prepended identity
+    # preamble (role-templated) and carries the charter body unchanged after it.
+    body = payload.read_text()
+    assert body.startswith(render_preamble("org-designer"))
+    assert body.endswith(persona)
 
 
 # --- Plain mode (no agent) for every launchable runtime ---

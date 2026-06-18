@@ -19,6 +19,7 @@ from .errors import (
     ready_to_fork,
 )
 from .launch import build_launch
+from .persona import compose_persona
 from .resolve import resolve_agent_definition
 
 # Effort tokens recognized when splitting a combined --model spec like
@@ -82,8 +83,13 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     model = model or adapter.declared_model(parsed) or adapter.default_model
     effort = effort or adapter.declared_effort(parsed) or adapter.default_effort
 
-    # --- Persona: only custom mode carries one. ---
-    persona = adapter.persona_body(parsed) if agent is not None else ""
+    # --- Persona: only custom mode carries one. A definition-backed fork leads
+    # its charter with the shared identity+precedence+posture preamble (templated
+    # with the resolved role name); plain forks keep the empty-persona path. ---
+    if agent is not None:
+        persona = compose_persona(agent_name, adapter.persona_body(parsed))
+    else:
+        persona = ""
 
     command, workdir = build_launch(
         adapter, agent_name, posture, model, effort, persona)
