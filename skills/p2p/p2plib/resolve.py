@@ -1,8 +1,11 @@
 """Resolve `addressed -> surface` for `send`.
 
-Single routing key: the cmux tab title, scoped to the caller's current
-workspace by default. There is no separate manifest `name` to compete
-with the title.
+Single routing key: the cmux tab title. With no explicit scope the
+caller resolves by LOCALITY (see `resolve_peer_local`): the caller's own
+workspace, then the caller's window, then other windows. `resolve_peer`
+itself matches within one supplied scope (a forced --workspace/--window,
+or one tier of the cascade). There is no separate manifest `name` to
+compete with the title.
 
 Resolution:
   1. Match `addressed` (case-insensitive) against tab titles in the
@@ -215,14 +218,22 @@ def resolve_peer_local(addressed: str, manifests: list[dict],
       3. all windows / global             (source=title_global)
 
     Each tier runs `resolve_peer` with `bounce_out_of_scope=False`. A
-    tier that yields a definitive result — `live`/`live_first_contact`
-    (route it), `ambiguous` (>=2 live matches in that tier, do not pick),
-    or `renamed` (a former-holder in that tier) — stops the cascade and
-    is returned as-is. Returning a `renamed` tier-1 result before
-    descending is deliberate: a former-holder in the caller's OWN
-    workspace is more locally relevant than a live current-title match
-    in a farther tier, so the caller gets peer_renamed rather than a
-    silent route to the wrong agent.
+    tier that yields a live match — `live`/`live_first_contact` (route
+    it) or `ambiguous` (>=2 live matches in that tier, do not pick) —
+    stops the cascade immediately.
+
+    Rename results are tiered:
+      * A `renamed` result in the caller's OWN workspace (tier 1) is
+        DEFINITIVE — a former-holder in the caller's own workspace is
+        more locally relevant than a live current-title match in a
+        farther tier, so the caller gets peer_renamed rather than a
+        silent route to the wrong agent.
+      * A `renamed` result in any WIDER tier (the caller's window, or
+        global) is only a FALLBACK: the cascade keeps descending to look
+        for a live current-title match, and the saved rename is returned
+        only when no live/ambiguous match exists anywhere. Live wins
+        across tiers; a far-away former-holder must not outrank a live
+        peer that still holds the title.
 
     `not_in_workspace`/`unknown` are non-definitive: the cascade keeps
     descending and, if no tier matches, returns the FIRST (most-local)
@@ -237,15 +248,26 @@ def resolve_peer_local(addressed: str, manifests: list[dict],
                       "scope_window_ref": caller_window_ref})
     tiers.append({"scope_workspace_ref": None, "scope_window_ref": None})
 
+    renamed_fallback: ResolveResult | None = None
     first_miss: ResolveResult | None = None
-    for tier in tiers:
+    for i, tier in enumerate(tiers):
         r = resolve_peer(addressed, manifests, surfaces,
                          self_surface_ref=self_surface_ref,
                          bounce_out_of_scope=False, **tier)
-        if r.kind in ("live", "live_first_contact", "ambiguous",
-                      "renamed"):
+        if r.kind in ("live", "live_first_contact", "ambiguous"):
             return r
+        if r.kind == "renamed":
+            # Tier 1 (the caller's own workspace, only when that ref is
+            # known) is definitive; wider-tier renames are fallbacks.
+            if i == 0 and caller_workspace_ref is not None:
+                return r
+            if renamed_fallback is None:
+                renamed_fallback = r
+            continue
+        # not_in_workspace / unknown
         if first_miss is None:
             first_miss = r
+    if renamed_fallback is not None:
+        return renamed_fallback
     assert first_miss is not None
     return first_miss

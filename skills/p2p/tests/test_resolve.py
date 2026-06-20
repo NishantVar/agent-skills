@@ -447,6 +447,67 @@ def test_local_cascade_own_workspace_rename_wins_over_window_live():
     assert r.candidates[0]["ref"] == "surface:1"
 
 
+def test_local_cascade_far_window_rename_does_not_beat_global_live():
+    """A renamed former-holder in a NON-own-workspace tier (the caller's
+    window) must NOT stop the cascade ahead of a live current-title match
+    in a farther tier. Only an own-workspace (tier 1) rename outranks
+    farther live matches; for wider tiers, live wins and the rename is
+    only a fallback when nothing is live anywhere."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "me"},
+        {"window_ref": "window:1", "workspace_ref": "ws:2",
+         "workspace_title": "Nearby", "surface_ref": "surface:2",
+         "title": "r1"},
+        {"window_ref": "window:2", "workspace_ref": "ws:3",
+         "workspace_title": "Far", "surface_ref": "surface:3",
+         "title": "reviewer"},
+    ])
+    manifests = [
+        {"title": "me", "surface_ref": "surface:1",
+         "workspace_ref": "ws:1", "started_at": 1, "last_seen": 1},
+        {"title": "r1", "former_titles": ["reviewer"],
+         "surface_ref": "surface:2", "workspace_ref": "ws:2",
+         "started_at": 1, "last_seen": 1},
+        {"title": "reviewer", "surface_ref": "surface:3",
+         "workspace_ref": "ws:3", "started_at": 1, "last_seen": 1},
+    ]
+    r = resolve.resolve_peer_local("reviewer", manifests, surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1",
+                                   self_surface_ref="surface:1")
+    assert r.kind == "live"
+    assert r.surface_ref == "surface:3"
+    assert r.source == "title_global"
+
+
+def test_local_cascade_far_window_rename_is_fallback_when_no_live():
+    """When a non-own-workspace rename is the only signal (no live
+    current-title match anywhere), it is still returned as peer_renamed."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "me"},
+        {"window_ref": "window:1", "workspace_ref": "ws:2",
+         "workspace_title": "Nearby", "surface_ref": "surface:2",
+         "title": "r1"},
+    ])
+    manifests = [
+        {"title": "me", "surface_ref": "surface:1",
+         "workspace_ref": "ws:1", "started_at": 1, "last_seen": 1},
+        {"title": "r1", "former_titles": ["reviewer"],
+         "surface_ref": "surface:2", "workspace_ref": "ws:2",
+         "started_at": 1, "last_seen": 1},
+    ]
+    r = resolve.resolve_peer_local("reviewer", manifests, surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1",
+                                   self_surface_ref="surface:1")
+    assert r.kind == "renamed"
+    assert r.candidates[0]["ref"] == "surface:2"
+
+
 def test_local_cascade_miss_returns_own_workspace_siblings():
     """Title found nowhere live: the miss surfaces the caller's OWN
     workspace siblings as candidates (most-local retarget help)."""

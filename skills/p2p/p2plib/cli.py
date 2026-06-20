@@ -325,11 +325,13 @@ def build_parser() -> argparse.ArgumentParser:
     # --peer is not argparse-required because --bootstrap-file can
     # supply it. cmd_send validates manually.
     s.add_argument("--peer", default=None,
-                   help="Tab title of the destination peer in your "
-                        "workspace; the routing key for title "
-                        "resolution. Optional when --peer-surface is "
-                        "given — the surface routes directly and the "
-                        "title is read from it.")
+                   help="Tab title of the destination peer; the routing "
+                        "key for title resolution. With no "
+                        "--workspace/--window it resolves by locality "
+                        "(caller's own workspace, then window, then other "
+                        "windows). Optional when --peer-surface is given — "
+                        "the surface routes directly and the title is "
+                        "read from it.")
     s.add_argument("--peer-surface", default=None,
                    help="Skip title resolution and route directly to a "
                         "surface. Used when an inline bootstrap already "
@@ -351,9 +353,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Read --peer / --peer-surface / "
                         "--bootstrap-suggested-title from this file.")
     s.add_argument("--workspace", default=None,
-                   help="Scope title resolution. Default: caller's own "
-                        "workspace. Pass `all` for global scope, or a "
-                        "specific workspace_ref.")
+                   help="Force title resolution into one workspace. "
+                        "Accepts a workspace title (resolved by locality: "
+                        "caller's own workspace, then window, then other "
+                        "windows), a workspace_ref/UUID, or `all` for "
+                        "global scope. Omit to let peer resolution cascade "
+                        "by locality across the caller's workspace and "
+                        "window.")
     s.add_argument("--window", default=None,
                    help="Scope title resolution to a cmux window. Pass "
                         "`all` for global window scope, or a live window "
