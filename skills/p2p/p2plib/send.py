@@ -233,10 +233,11 @@ def send(peer: str | None, body: str,
     (e.g. from an inline [p2p-bootstrap] block).
     `bootstrap_suggested_title` takes registration precedence over the
     scrollback-derived `fallback_self_title`.
-    `scope_workspace_ref` scopes title resolution to one workspace;
-    when None, defaults to the caller's own workspace unless a window
-    scope is supplied. `scope_window_ref` scopes title resolution to a
-    window. Pass explicit sentinels to widen scope — see cli.py."""
+    `scope_workspace_ref` forces title resolution into one workspace;
+    `scope_window_ref` forces it into one window. When BOTH are None
+    (no explicit scope), resolution uses the locality cascade
+    (`resolve.resolve_peer_local`: caller's own workspace -> window ->
+    other windows). Pass explicit sentinels to widen scope — see cli.py."""
     if not body.strip():
         return errors.empty_message(rerun_argv=rerun_argv)
     if not peer and not peer_surface:
