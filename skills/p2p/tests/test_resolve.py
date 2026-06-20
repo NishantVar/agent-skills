@@ -317,3 +317,173 @@ def test_window_scope_candidates_include_window_ref():
         "window_ref": "window:2",
         "title": "reviewer",
     }]
+
+
+# ---------------- bounce_out_of_scope flag ----------------
+
+def test_bounce_off_descends_instead_of_out_of_scope_ambiguous():
+    """With bounce_out_of_scope=False, a title that exists only outside
+    the scope no longer bounces to `ambiguous` — it falls through to the
+    sibling/unknown path so a caller can keep cascading to a wider
+    tier. The default (True) preserves the opt-in-via-scope bounce."""
+    surfaces = _setup([
+        {"workspace_ref": "ws:1", "workspace_title": "Mine",
+         "surface_ref": "surface:1", "title": "other"},
+        {"workspace_ref": "ws:2", "workspace_title": "Theirs",
+         "surface_ref": "surface:2", "title": "reviewer"},
+    ])
+    r = resolve.resolve_peer("reviewer", [], surfaces,
+                             scope_workspace_ref="ws:1",
+                             bounce_out_of_scope=False)
+    assert r.kind == "unknown"
+
+
+# ---------------- locality cascade (resolve_peer_local) ----------------
+
+def test_local_cascade_prefers_own_workspace():
+    """Tier 1: a live match in the caller's own workspace wins even when
+    the same title is also live in another workspace of the same window."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "reviewer"},
+        {"window_ref": "window:1", "workspace_ref": "ws:2",
+         "workspace_title": "Theirs", "surface_ref": "surface:2",
+         "title": "reviewer"},
+    ])
+    r = resolve.resolve_peer_local("reviewer", [], surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1")
+    assert r.kind == "live_first_contact"
+    assert r.surface_ref == "surface:1"
+    assert r.source == "title_in_workspace"
+
+
+def test_local_cascade_falls_back_to_caller_window():
+    """Tier 2: title absent from own workspace but present in another
+    workspace of the caller's window resolves there (title_in_window)."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "local_only"},
+        {"window_ref": "window:1", "workspace_ref": "ws:2",
+         "workspace_title": "Theirs", "surface_ref": "surface:2",
+         "title": "reviewer"},
+    ])
+    r = resolve.resolve_peer_local("reviewer", [], surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1")
+    assert r.kind == "live_first_contact"
+    assert r.surface_ref == "surface:2"
+    assert r.source == "title_in_window"
+
+
+def test_local_cascade_falls_back_to_other_windows():
+    """Tier 3: title absent from own workspace and own window resolves in
+    another window (title_global)."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "local"},
+        {"window_ref": "window:2", "workspace_ref": "ws:2",
+         "workspace_title": "Far", "surface_ref": "surface:2",
+         "title": "reviewer"},
+    ])
+    r = resolve.resolve_peer_local("reviewer", [], surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1")
+    assert r.kind == "live_first_contact"
+    assert r.surface_ref == "surface:2"
+    assert r.source == "title_global"
+
+
+def test_local_cascade_window_tier_ambiguous_when_multiple():
+    """Two same-titled live tabs in the caller's window (different
+    workspaces) → ambiguous; the cascade does not silently pick."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "me"},
+        {"window_ref": "window:1", "workspace_ref": "ws:2",
+         "workspace_title": "A", "surface_ref": "surface:2",
+         "title": "reviewer"},
+        {"window_ref": "window:1", "workspace_ref": "ws:3",
+         "workspace_title": "B", "surface_ref": "surface:3",
+         "title": "reviewer"},
+    ])
+    r = resolve.resolve_peer_local("reviewer", [], surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1")
+    assert r.kind == "ambiguous"
+    refs = {c["ref"] for c in r.candidates}
+    assert refs == {"surface:2", "surface:3"}
+
+
+def test_local_cascade_own_workspace_rename_wins_over_window_live():
+    """A renamed former-holder in the caller's OWN workspace (tier 1) is
+    more local than a live current-title match in another workspace of
+    the same window (tier 2). The cascade returns peer_renamed rather
+    than silently routing to the farther live tab."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "r1"},
+        {"window_ref": "window:1", "workspace_ref": "ws:2",
+         "workspace_title": "Theirs", "surface_ref": "surface:2",
+         "title": "reviewer"},
+    ])
+    manifests = [
+        {"title": "r1", "former_titles": ["reviewer"],
+         "surface_ref": "surface:1", "workspace_ref": "ws:1",
+         "started_at": 1, "last_seen": 1},
+        {"title": "reviewer", "surface_ref": "surface:2",
+         "workspace_ref": "ws:2", "started_at": 1, "last_seen": 1},
+    ]
+    r = resolve.resolve_peer_local("reviewer", manifests, surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1")
+    assert r.kind == "renamed"
+    assert len(r.candidates) == 1
+    assert r.candidates[0]["ref"] == "surface:1"
+
+
+def test_local_cascade_miss_returns_own_workspace_siblings():
+    """Title found nowhere live: the miss surfaces the caller's OWN
+    workspace siblings as candidates (most-local retarget help)."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "helper"},
+        {"window_ref": "window:2", "workspace_ref": "ws:2",
+         "workspace_title": "Far", "surface_ref": "surface:2",
+         "title": "stranger"},
+    ])
+    manifests = [
+        {"title": "helper", "surface_ref": "surface:1",
+         "workspace_ref": "ws:1", "started_at": 1, "last_seen": 1},
+        {"title": "stranger", "surface_ref": "surface:2",
+         "workspace_ref": "ws:2", "started_at": 1, "last_seen": 1},
+    ]
+    r = resolve.resolve_peer_local("ghost", manifests, surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1")
+    assert r.kind == "not_in_workspace"
+    refs = {c["ref"] for c in r.candidates}
+    assert refs == {"surface:1"}
+
+
+def test_local_cascade_unknown_when_title_and_siblings_absent():
+    """No matching title and no registered siblings anywhere → unknown."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "Mine", "surface_ref": "surface:1",
+         "title": "me"},
+    ])
+    manifests = [{"title": "me", "surface_ref": "surface:1",
+                  "workspace_ref": "ws:1", "started_at": 1,
+                  "last_seen": 1}]
+    r = resolve.resolve_peer_local("ghost", manifests, surfaces,
+                                   caller_workspace_ref="ws:1",
+                                   caller_window_ref="window:1",
+                                   self_surface_ref="surface:1")
+    assert r.kind == "unknown"

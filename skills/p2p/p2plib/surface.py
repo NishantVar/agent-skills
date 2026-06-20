@@ -93,6 +93,57 @@ def workspace_records(tree: dict | None = None,
     return out
 
 
+def resolve_workspace_title(title: str, tree: dict | None,
+                            caller_workspace_ref: str | None,
+                            caller_window_ref: str | None
+                            ) -> tuple[str, str | list[dict] | None]:
+    """Locality-ordered workspace-title resolution, used for
+    ``--workspace <title>`` when no explicit ``--window`` is given.
+    Search widens one tier at a time:
+
+      1. the caller's own workspace, if its title matches
+      2. workspaces titled ``title`` in the caller's current window
+      3. workspaces titled ``title`` in other windows
+
+    Returns ``(kind, value)``:
+      * ``("ok", ref)``        — exactly one match at the closest tier
+      * ``("ambiguous", [w])`` — two-plus matches at the closest tier
+                                  (the workspace records, for candidates)
+      * ``("unknown", None)``  — no workspace anywhere bears the title
+
+    Title comparison is exact (cmux workspace titles are taken
+    verbatim), matching the prior ``--workspace`` behavior."""
+    all_ws = workspace_records(tree)
+    titled = [w for w in all_ws if w["title"] == title]
+    if not titled:
+        return ("unknown", None)
+
+    # Tier 1: the caller's own workspace.
+    own = [w for w in titled if w["ref"] == caller_workspace_ref]
+    if own:
+        return ("ok", own[0]["ref"])
+
+    # Tier 2: the caller's current window.
+    if caller_window_ref is not None:
+        in_window = [w for w in titled
+                     if w.get("window_ref") == caller_window_ref]
+        if len(in_window) == 1:
+            return ("ok", in_window[0]["ref"])
+        if len(in_window) > 1:
+            return ("ambiguous", in_window)
+
+    # Tier 3: other windows (everything not already in the caller's
+    # window; when the caller's window is unknown this is all matches).
+    others = [w for w in titled
+              if caller_window_ref is None
+              or w.get("window_ref") != caller_window_ref]
+    if len(others) == 1:
+        return ("ok", others[0]["ref"])
+    if len(others) > 1:
+        return ("ambiguous", others)
+    return ("unknown", None)
+
+
 def _run(cmd: list[str], timeout: int = 10) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(cmd, capture_output=True, text=True,

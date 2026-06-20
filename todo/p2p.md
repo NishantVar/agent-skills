@@ -4,6 +4,27 @@ _Last refreshed: 2026-06-20_
 
 ## Done
 
+- **Locality-aware scope resolution (peer titles AND `--workspace` titles).**
+  Default-scope resolution (no explicit `--workspace`/`--window`) now cascades
+  by locality instead of hard-scoping to the caller's workspace:
+  caller's own workspace → other workspaces in the caller's window → other
+  windows. A single live match at the closest tier wins; two-plus at a tier
+  returns candidates (`peer_ambiguous`) rather than silently picking; a miss
+  surfaces the caller's own-workspace siblings as `peer_not_found` candidates.
+  A renamed former-holder in the caller's OWN workspace (tier 1) still wins
+  over a live current-title match in a farther tier (returns `peer_renamed`) —
+  conservative, and preserves the `in_scope_rename_wins` regression. The same
+  locality applies to `--workspace <title>` (e.g. `$p2p renderer in HTML` →
+  `--peer renderer --workspace HTML` finds the nearest workspace titled HTML
+  with no manual cmux inspection). Implemented as `resolve.resolve_peer_local`
+  (new `bounce_out_of_scope=False` flag on `resolve_peer` lets a tier descend
+  instead of bouncing) and `surface.resolve_workspace_title`; wired through
+  `send.py`/`cli.py`. Existing exact-surface behavior is unchanged: live
+  `--peer-surface` sends directly ignoring stale scope hints, wrong-title
+  `--peer-surface` returns `peer_surface_mismatch`, and missing `--peer-surface`
+  with `--peer` recovers via the same scoped/locality resolution. An explicit
+  `--workspace`/`--window` still forces a single scope (no cascade). PR #25.
+
 - **Surface refs now recover when the exact pointer disappears; first contact
   can be scoped by window/workspace/title.**
   Added `--window` support alongside `--workspace` for first-contact title

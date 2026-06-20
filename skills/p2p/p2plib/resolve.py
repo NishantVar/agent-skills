@@ -57,12 +57,21 @@ def resolve_peer(addressed: str, manifests: list[dict],
                  surfaces: dict[str, dict],
                  scope_workspace_ref: str | None = None,
                  scope_window_ref: str | None = None,
-                 self_surface_ref: str | None = None
+                 self_surface_ref: str | None = None,
+                 bounce_out_of_scope: bool = True
                  ) -> ResolveResult:
     """`manifests` is the post-sweep registry list; `surfaces` is the
     surface_index keyed by surface_ref. Scope refs restrict title
     matching to a workspace, a window, or their intersection; passing
-    None for a dimension makes that dimension global."""
+    None for a dimension makes that dimension global.
+
+    `bounce_out_of_scope` (default True) controls what happens when the
+    title has no in-scope match but DOES match a live tab outside the
+    scope: True returns `ambiguous` with the out-of-scope candidates so
+    the caller can opt in via --workspace/--window; False skips that
+    bounce and falls through to the sibling/unknown path. The locality
+    cascade (`resolve_peer_local`) passes False so a tier with no local
+    hit descends to the next tier instead of bouncing."""
     addressed_cf = addressed.casefold()
 
     def is_in_scope(s: dict) -> bool:
@@ -134,7 +143,7 @@ def resolve_peer(addressed: str, manifests: list[dict],
         if rename_candidates:
             return ResolveResult(kind="renamed",
                                  candidates=rename_candidates)
-        if out_of_scope:
+        if out_of_scope and bounce_out_of_scope:
             # No in-scope match (current or former). Caller scoped to
             # current workspace but the title exists elsewhere — let
             # them opt out via --workspace.
@@ -190,3 +199,53 @@ def resolve_peer(addressed: str, manifests: list[dict],
                 else "title_in_window" if scope_window_ref
                 else "title_global"),
     )
+
+
+def resolve_peer_local(addressed: str, manifests: list[dict],
+                       surfaces: dict[str, dict],
+                       caller_workspace_ref: str | None,
+                       caller_window_ref: str | None,
+                       self_surface_ref: str | None = None
+                       ) -> ResolveResult:
+    """Default-scope locality cascade used when the caller supplies no
+    explicit --workspace/--window. Search widens one tier at a time:
+
+      1. the caller's own workspace      (source=title_in_workspace)
+      2. the caller's current window      (source=title_in_window)
+      3. all windows / global             (source=title_global)
+
+    Each tier runs `resolve_peer` with `bounce_out_of_scope=False`. A
+    tier that yields a definitive result — `live`/`live_first_contact`
+    (route it), `ambiguous` (>=2 live matches in that tier, do not pick),
+    or `renamed` (a former-holder in that tier) — stops the cascade and
+    is returned as-is. Returning a `renamed` tier-1 result before
+    descending is deliberate: a former-holder in the caller's OWN
+    workspace is more locally relevant than a live current-title match
+    in a farther tier, so the caller gets peer_renamed rather than a
+    silent route to the wrong agent.
+
+    `not_in_workspace`/`unknown` are non-definitive: the cascade keeps
+    descending and, if no tier matches, returns the FIRST (most-local)
+    miss so the peer_not_found handoff carries the caller's own-workspace
+    siblings as retarget candidates."""
+    tiers: list[dict] = [
+        {"scope_workspace_ref": caller_workspace_ref,
+         "scope_window_ref": None},
+    ]
+    if caller_window_ref is not None:
+        tiers.append({"scope_workspace_ref": None,
+                      "scope_window_ref": caller_window_ref})
+    tiers.append({"scope_workspace_ref": None, "scope_window_ref": None})
+
+    first_miss: ResolveResult | None = None
+    for tier in tiers:
+        r = resolve_peer(addressed, manifests, surfaces,
+                         self_surface_ref=self_surface_ref,
+                         bounce_out_of_scope=False, **tier)
+        if r.kind in ("live", "live_first_contact", "ambiguous",
+                      "renamed"):
+            return r
+        if first_miss is None:
+            first_miss = r
+    assert first_miss is not None
+    return first_miss

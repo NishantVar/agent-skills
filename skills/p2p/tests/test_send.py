@@ -96,32 +96,60 @@ def test_idle_peer_sends_plain_message_no_rebootstrap(tmp_registry, fc):
     assert "[p2p-bootstrap]" not in text
 
 
-def test_cross_workspace_returns_ambiguous_under_default_scope(
+def test_cross_workspace_same_window_resolves_via_window_tier(
         tmp_registry, fc):
-    """Default scope is caller's workspace. A live tab in another
-    workspace with the addressed title returns ambiguous so the caller
-    can opt out via --workspace."""
+    """Locality cascade: the addressed title is absent from the caller's
+    own workspace but live in another workspace of the SAME window. It
+    resolves there (tier 2, title_in_window) rather than bouncing — a
+    same-window peer no longer requires an explicit --workspace opt-in."""
     _seed_self(tmp_registry)
     fc.add(workspace_ref="workspace:2", workspace_title="Other",
            surface_ref="surface:200", title="reviewer")
-    rerun = ["agent_msg.py", "send", "--peer", "reviewer",
-             "--message-file", "/tmp/x"]
     out = send.send("reviewer", "x", my_title=None,
-                    fallback_self_title=None, rerun_argv=rerun)
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"] is True
+    assert out["resolved_by"] == "title_in_window"
+    assert out["surface"] == "surface:200"
+    # No manifest for surface:200 yet → first-contact bootstrap.
+    assert out["kind"] == "bootstrap"
+    assert fc.sent[0][0] == "surface:200"
+
+
+def test_default_scope_resolves_cross_window_single_match(
+        tmp_registry, fc):
+    """Tier 3: no match in the caller's workspace or window, but a single
+    live match in another window resolves via the global tier
+    (title_global)."""
+    _seed_self(tmp_registry)
+    fc.add(window_ref="window:2", window_index=2,
+           workspace_ref="workspace:9", workspace_title="Far",
+           surface_ref="surface:900", title="reviewer")
+    out = send.send("reviewer", "x", my_title=None,
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"] is True
+    assert out["resolved_by"] == "title_global"
+    assert out["surface"] == "surface:900"
+
+
+def test_default_scope_ambiguous_when_two_window_matches(
+        tmp_registry, fc):
+    """Ambiguity safety under the cascade: two live tabs share the
+    addressed title across two workspaces of the caller's window. The
+    cascade refuses to pick → peer_ambiguous with both candidates."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:2", workspace_title="A",
+           surface_ref="surface:200", title="reviewer")
+    fc.add(workspace_ref="workspace:3", workspace_title="B",
+           surface_ref="surface:300", title="reviewer")
+    out = send.send("reviewer", "x", my_title=None,
+                    fallback_self_title=None, rerun_argv=[])
     assert out["ok"] is False
     assert out["code"] == "peer_ambiguous"
     refs = {c["ref"] for c in out["candidates"]}
-    assert refs == {"surface:200"}
-    assert fc.sent == []
-    # Bug A: single-candidate-elsewhere gets the "not in your workspace"
-    # wording rather than "matches more than one".
-    assert "not in your workspace" in out["human_message"]
-    assert MY_WS in out["human_message"]
-    assert "matches more than one" not in out["human_message"]
-    # Bug B: envelope must reflect that this is a mechanical retry.
+    assert refs == {"surface:200", "surface:300"}
     assert out["action_required"] == "pick_candidate"
     assert out["retryable"] is True
-    assert out["rerun_argv"] == rerun
+    assert fc.sent == []
 
 
 def test_ambiguous_multi_candidate_keeps_generic_wording(

@@ -163,9 +163,12 @@ def cmd_send(args) -> int:
             pass
 
     tree = surface.cmux_tree()
+    si = surface.surface_index(tree)
+    caller = si.get(surface.my_surface() or "") or {}
+    caller_workspace_ref = caller.get("workspace_ref")
+    caller_window_ref = caller.get("window_ref")
     exact_surface_live = (
-        bool(args.peer_surface)
-        and args.peer_surface in surface.surface_index(tree)
+        bool(args.peer_surface) and args.peer_surface in si
     )
 
     # --window handling: omitted means send() applies its default. `all`
@@ -213,7 +216,8 @@ def cmd_send(args) -> int:
                                                          rerun))
                     return EXIT_HANDOFF
                 scope_workspace_ref = match["ref"]
-            else:
+            elif workspace_window is not None:
+                # Explicit --window: exact title match within that window.
                 ws_list = surface.workspace_records(tree, workspace_window)
                 matches = [w for w in ws_list
                            if w["title"] == args.workspace]
@@ -229,8 +233,30 @@ def cmd_send(args) -> int:
                         args.workspace, cands, rerun))
                     return EXIT_HANDOFF
                 scope_workspace_ref = matches[0]["ref"]
+            else:
+                # No --window: locality cascade — caller's own workspace,
+                # then its window, then other windows.
+                kind, value = surface.resolve_workspace_title(
+                    args.workspace, tree, caller_workspace_ref,
+                    caller_window_ref)
+                if kind == "unknown":
+                    _print_json(errors.workspace_unknown(args.workspace,
+                                                         rerun))
+                    return EXIT_HANDOFF
+                if kind == "ambiguous":
+                    assert isinstance(value, list)
+                    cands = [{"ref": w["ref"], "title": w["title"],
+                              "window_ref": w.get("window_ref")}
+                             for w in value]
+                    _print_json(errors.workspace_ambiguous(
+                        args.workspace, cands, rerun))
+                    return EXIT_HANDOFF
+                assert isinstance(value, str)
+                scope_workspace_ref = value
         else:
-            scope_workspace_ref = None  # default: caller's own workspace
+            # No --workspace: send() applies the locality cascade
+            # (caller's own workspace -> window -> other windows).
+            scope_workspace_ref = None
 
     try:
         result = send.send(

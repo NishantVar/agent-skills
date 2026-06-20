@@ -281,18 +281,27 @@ def send(peer: str | None, body: str,
     # stale-explicit-surface recovery path below. Sentinels:
     #   scope_workspace_ref == "" -> all workspaces
     #   scope_window_ref == "" -> all windows
-    # If neither modifier was supplied, default to the caller's own
-    # workspace. If only --window was supplied, search that whole
-    # window rather than forcing the caller's workspace.
+    # When NEITHER modifier was supplied, resolution uses the locality
+    # cascade (own workspace -> caller's window -> global) rather than a
+    # single forced scope. When only --window was supplied, search that
+    # whole window; an explicit --workspace forces that one workspace.
+    use_cascade = (scope_workspace_ref is None
+                   and scope_window_ref is None)
+    caller = surfaces.get(my_surf or "") or {}
+    caller_workspace_ref = caller.get("workspace_ref")
+    caller_window_ref = caller.get("window_ref")
+
     scope = scope_workspace_ref
     if scope == "":
         scope = None
-    elif scope is None and scope_window_ref is None:
-        scope = (surfaces.get(my_surf or "") or {}).get("workspace_ref")
 
     window_scope = scope_window_ref
     if window_scope == "":
         window_scope = None
+
+    # Reported scope for handoff wording: the caller's own workspace in
+    # the cascade case, the forced workspace otherwise.
+    report_scope = caller_workspace_ref if use_cascade else scope
 
     stale_peer_surface: str | None = None
     if peer_surface:
@@ -316,19 +325,26 @@ def send(peer: str | None, body: str,
     # the resolution path below.
     assert peer is not None
 
-    r = resolve.resolve_peer(peer, manifests, surfaces,
-                             scope_workspace_ref=scope,
-                             scope_window_ref=window_scope,
-                             self_surface_ref=my_surf)
+    if use_cascade:
+        r = resolve.resolve_peer_local(
+            peer, manifests, surfaces,
+            caller_workspace_ref=caller_workspace_ref,
+            caller_window_ref=caller_window_ref,
+            self_surface_ref=my_surf)
+    else:
+        r = resolve.resolve_peer(peer, manifests, surfaces,
+                                 scope_workspace_ref=scope,
+                                 scope_window_ref=window_scope,
+                                 self_surface_ref=my_surf)
 
     if r.kind == "ambiguous":
         return errors.peer_ambiguous(peer, r.candidates,
-                                     caller_workspace_ref=scope,
+                                     caller_workspace_ref=report_scope,
                                      rerun_argv=rerun_argv)
 
     if r.kind == "renamed":
         return errors.peer_renamed(peer, r.candidates,
-                                   caller_workspace_ref=scope,
+                                   caller_workspace_ref=report_scope,
                                    rerun_argv=rerun_argv)
 
     if r.kind in ("not_in_workspace", "unknown"):
@@ -337,7 +353,7 @@ def send(peer: str | None, body: str,
         # when present) and let the caller retarget or spawn via
         # tfork / afork itself.
         return errors.peer_not_found(peer, r.candidates,
-                                     caller_workspace_ref=scope,
+                                     caller_workspace_ref=report_scope,
                                      rerun_argv=rerun_argv)
 
     assert r.surface_ref is not None
