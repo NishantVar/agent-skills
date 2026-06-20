@@ -4,6 +4,19 @@ _Last refreshed: 2026-06-20_
 
 ## Done
 
+- **Surface refs now recover when the exact pointer disappears; first contact
+  can be scoped by window/workspace/title.**
+  Added `--window` support alongside `--workspace` for first-contact title
+  resolution and stale-surface recovery. A successful send still returns the
+  exact `surface` ref to store for follow-up. If a later send supplies
+  `--peer-surface` and that surface no longer exists, p2p now re-resolves the
+  asserted `--peer` within the available workspace/window scope and returns the
+  replacement `surface` plus `previous_surface`. Live-but-wrong surfaces still
+  bounce as `peer_surface_mismatch` to avoid silently delivering to the wrong
+  agent. First-contact bootstraps now carry `peer_workspace` and `peer_window`
+  hints so replies can recover across scope boundaries if the original surface
+  ref disappears.
+
 - **Stale `--peer-surface` no longer silently misroutes (`peer_surface_mismatch`).**
   The explicit-surface path treated the surface ref as both address *and*
   identity: it routed to whatever tab occupied the ref and read the title off

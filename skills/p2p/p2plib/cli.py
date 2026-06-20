@@ -30,6 +30,7 @@ def _decorate_me(m: dict, surfaces: dict[str, dict]) -> dict:
         "surface_ref": ref,
         "workspace_ref": s.get("workspace_ref"),
         "workspace_title": s.get("workspace_title", ""),
+        "window_ref": s.get("window_ref"),
     }
 
 
@@ -107,6 +108,8 @@ def _build_rerun_argv(args) -> list[str]:
                   args.bootstrap_suggested_title]
     if args.workspace:
         rerun += ["--workspace", args.workspace]
+    if args.window:
+        rerun += ["--window", args.window]
     if args.one_way:
         rerun += ["--one-way"]
     if args.message_file:
@@ -127,6 +130,8 @@ def cmd_send(args) -> int:
         parsed = bootstrap.parse_bootstrap_text(text) or {}
         args.peer = args.peer or parsed.get("peer_title")
         args.peer_surface = args.peer_surface or parsed.get("peer_surface")
+        args.workspace = args.workspace or parsed.get("peer_workspace")
+        args.window = args.window or parsed.get("peer_window")
         args.bootstrap_suggested_title = (
             args.bootstrap_suggested_title
             or parsed.get("suggested_title"))
@@ -157,38 +162,75 @@ def cmd_send(args) -> int:
         except transport.TransportError:
             pass
 
+    tree = surface.cmux_tree()
+    exact_surface_live = (
+        bool(args.peer_surface)
+        and args.peer_surface in surface.surface_index(tree)
+    )
+
+    # --window handling: omitted means send() applies its default. `all`
+    # is a sentinel for global window scope. Otherwise accept live
+    # window ref / UUID / index.
+    scope_window_ref: str | None
+    if exact_surface_live:
+        scope_window_ref = None
+    else:
+        if args.window == "all":
+            scope_window_ref = ""  # sentinel: global window scope
+        elif args.window:
+            match = surface.resolve_window(args.window, tree)
+            if match is None:
+                _print_json(errors.window_unknown(args.window, rerun))
+                return EXIT_HANDOFF
+            scope_window_ref = match["ref"]
+        else:
+            scope_window_ref = None
+
     # --workspace handling: bare flag means scope to current workspace
     # (the default). --workspace all means global. --workspace <value>
     # accepts either a workspace_ref (workspace:N or UUID) or a title.
     # Titles are resolved against live workspaces; zero matches returns
     # workspace_unknown, multi-match returns workspace_ambiguous.
     scope_workspace_ref: str | None
-    if args.workspace == "all":
-        scope_workspace_ref = ""  # sentinel: global scope
-    elif args.workspace:
-        if surface.is_workspace_ref(args.workspace):
-            # Validate the ref points at a live workspace.
-            ws_list = surface.list_workspaces()
-            match = next((t for (r, t) in ws_list if r == args.workspace),
-                         None)
-            if match is None:
-                _print_json(errors.workspace_unknown(args.workspace, rerun))
-                return EXIT_HANDOFF
-            scope_workspace_ref = args.workspace
-        else:
-            ws_list = surface.list_workspaces()
-            matches = [(r, t) for (r, t) in ws_list if t == args.workspace]
-            if not matches:
-                _print_json(errors.workspace_unknown(args.workspace, rerun))
-                return EXIT_HANDOFF
-            if len(matches) > 1:
-                cands = [{"ref": r, "title": t} for (r, t) in matches]
-                _print_json(errors.workspace_ambiguous(
-                    args.workspace, cands, rerun))
-                return EXIT_HANDOFF
-            scope_workspace_ref = matches[0][0]
+    if exact_surface_live:
+        scope_workspace_ref = None
     else:
-        scope_workspace_ref = None  # default: caller's own workspace
+        workspace_window = (
+            scope_window_ref
+            if args.window and scope_window_ref not in (None, "")
+            else None
+        )
+        if args.workspace == "all":
+            scope_workspace_ref = ""  # sentinel: global scope
+        elif args.workspace:
+            if surface.is_workspace_ref(args.workspace):
+                # Validate the ref points at a live workspace.
+                ws_list = surface.workspace_records(tree, workspace_window)
+                match = next((w for w in ws_list if args.workspace in (
+                    w.get("ref"), w.get("id"))), None)
+                if match is None:
+                    _print_json(errors.workspace_unknown(args.workspace,
+                                                         rerun))
+                    return EXIT_HANDOFF
+                scope_workspace_ref = match["ref"]
+            else:
+                ws_list = surface.workspace_records(tree, workspace_window)
+                matches = [w for w in ws_list
+                           if w["title"] == args.workspace]
+                if not matches:
+                    _print_json(errors.workspace_unknown(args.workspace,
+                                                         rerun))
+                    return EXIT_HANDOFF
+                if len(matches) > 1:
+                    cands = [{"ref": w["ref"], "title": w["title"],
+                              "window_ref": w.get("window_ref")}
+                             for w in matches]
+                    _print_json(errors.workspace_ambiguous(
+                        args.workspace, cands, rerun))
+                    return EXIT_HANDOFF
+                scope_workspace_ref = matches[0]["ref"]
+        else:
+            scope_workspace_ref = None  # default: caller's own workspace
 
     try:
         result = send.send(
@@ -200,6 +242,7 @@ def cmd_send(args) -> int:
             peer_surface=args.peer_surface,
             bootstrap_suggested_title=args.bootstrap_suggested_title,
             scope_workspace_ref=scope_workspace_ref,
+            scope_window_ref=scope_window_ref,
             one_way=args.one_way,
         )
     except transport.TransportError as exc:
@@ -285,6 +328,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Scope title resolution. Default: caller's own "
                         "workspace. Pass `all` for global scope, or a "
                         "specific workspace_ref.")
+    s.add_argument("--window", default=None,
+                   help="Scope title resolution to a cmux window. Pass "
+                        "`all` for global window scope, or a live window "
+                        "ref, UUID, or index.")
     s.add_argument("--one-way", action="store_true",
                    help="Fire-and-forget. Frames the message as "
                         "`[from: X | one-way]` and (on first contact) "

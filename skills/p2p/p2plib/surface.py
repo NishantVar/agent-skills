@@ -25,21 +25,71 @@ import sys
 # A cmux workspace ref looks like ``workspace:N`` or a long
 # UUID-shaped string. The title path runs only when neither form matches.
 _WORKSPACE_REF_RE = re.compile(r"^(?:workspace:\d+|[0-9a-fA-F-]{16,})$")
+_WINDOW_REF_RE = re.compile(r"^(?:window:\d+|[0-9a-fA-F-]{16,}|\d+)$")
 
 
 def is_workspace_ref(value: str) -> bool:
     return bool(_WORKSPACE_REF_RE.match(value or ""))
 
 
+def is_window_ref(value: str) -> bool:
+    return bool(_WINDOW_REF_RE.match(value or ""))
+
+
+def list_windows(tree: dict | None = None) -> list[dict]:
+    """Every live cmux window as {ref, id, index}."""
+    tree = cmux_tree() if tree is None else tree
+    out: list[dict] = []
+    for window in tree.get("windows", []):
+        ref = window.get("ref")
+        if not ref:
+            continue
+        out.append({
+            "ref": ref,
+            "id": window.get("id"),
+            "index": window.get("index"),
+        })
+    return out
+
+
+def resolve_window(value: str, tree: dict | None = None) -> dict | None:
+    """Resolve a window ref / UUID / index to the live window record."""
+    for window in list_windows(tree):
+        if value in (
+            window.get("ref"),
+            window.get("id"),
+            str(window.get("index")),
+        ):
+            return window
+    return None
+
+
 def list_workspaces(tree: dict | None = None) -> list[tuple[str, str]]:
     """``(ref, title)`` for every live cmux workspace."""
+    return [(w["ref"], w["title"]) for w in workspace_records(tree)]
+
+
+def workspace_records(tree: dict | None = None,
+                      window_ref: str | None = None) -> list[dict]:
+    """Every live workspace as {ref, title, id, window_ref}.
+
+    ``window_ref`` scopes the listing to one window when supplied.
+    """
     tree = cmux_tree() if tree is None else tree
-    out: list[tuple[str, str]] = []
+    out: list[dict] = []
     for window in tree.get("windows", []):
+        win_ref = window.get("ref")
+        if window_ref is not None and win_ref != window_ref:
+            continue
         for ws in window.get("workspaces", []):
             ref = ws.get("ref")
             if ref:
-                out.append((ref, ws.get("title") or ""))
+                out.append({
+                    "ref": ref,
+                    "title": ws.get("title") or "",
+                    "id": ws.get("id"),
+                    "window_ref": win_ref,
+                })
     return out
 
 
@@ -52,7 +102,7 @@ def _run(cmd: list[str], timeout: int = 10) -> subprocess.CompletedProcess:
 
 
 def cmux_tree() -> dict:
-    r = _run(["cmux", "--json", "tree", "--all"])
+    r = _run(["cmux", "--json", "--id-format", "both", "tree", "--all"])
     if r.returncode != 0:
         return {}
     try:
@@ -66,19 +116,20 @@ def _iter_surfaces(tree: dict):
         for ws in window.get("workspaces", []):
             for pane in ws.get("panes", []):
                 for surface in pane.get("surfaces", []):
-                    yield ws, surface
+                    yield window, ws, surface
 
 
 def live_surfaces(tree: dict | None = None) -> set[str]:
     tree = cmux_tree() if tree is None else tree
-    return {s.get("ref") for _, s in _iter_surfaces(tree) if s.get("ref")}
+    return {s.get("ref") for _, _, s in _iter_surfaces(tree)
+            if s.get("ref")}
 
 
 def surface_index(tree: dict | None = None) -> dict[str, dict]:
-    """Map surface_ref -> {ref, tty, title, workspace_ref, workspace_title}."""
+    """Map surface_ref -> cmux metadata for routing."""
     tree = cmux_tree() if tree is None else tree
     out: dict[str, dict] = {}
-    for ws, s in _iter_surfaces(tree):
+    for window, ws, s in _iter_surfaces(tree):
         ref = s.get("ref")
         if not ref:
             continue
@@ -88,12 +139,19 @@ def surface_index(tree: dict | None = None) -> dict[str, dict]:
             "title": s.get("title") or "",
             "workspace_ref": ws.get("ref"),
             "workspace_title": ws.get("title") or "",
+            "window_ref": window.get("ref"),
+            "window_id": window.get("id"),
+            "window_index": window.get("index"),
         }
     return out
 
 
 def workspace_of(surface_ref: str, tree: dict | None = None) -> str | None:
     return (surface_index(tree).get(surface_ref) or {}).get("workspace_ref")
+
+
+def window_of(surface_ref: str, tree: dict | None = None) -> str | None:
+    return (surface_index(tree).get(surface_ref) or {}).get("window_ref")
 
 
 def _ancestor_ttys():

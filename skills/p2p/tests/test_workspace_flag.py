@@ -70,6 +70,89 @@ def test_workspace_by_title_resolves_to_single_match(
     assert out["title"] == "reviewer"
 
 
+def test_window_by_ref_scopes_title_resolution(
+        tmp_registry, fc, monkeypatch, capsys):
+    """--window <ref> with no --workspace searches that window's
+    workspaces for the addressed tab title."""
+    _seed_self()
+    fc.add(window_ref="window:2", window_index=2,
+           workspace_ref="workspace:20", workspace_title="Remote",
+           surface_ref="surface:200", title="reviewer")
+    registry.register("reviewer", "surface:200", "workspace:20",
+                      live_set={MY_SURFACE, "surface:200"})
+
+    rc, out = _run_send(monkeypatch, capsys, [
+        "--peer", "reviewer", "--window", "window:2",
+    ])
+    assert rc == cli.EXIT_OK
+    assert out["ok"] is True
+    assert out["surface"] == "surface:200"
+
+
+def test_window_unknown_returns_handoff(
+        tmp_registry, fc, monkeypatch, capsys):
+    """--window <ref> must name a live cmux window; p2p does not
+    silently fall back to the caller's window."""
+    _seed_self()
+    rc, out = _run_send(monkeypatch, capsys, [
+        "--peer", "reviewer", "--window", "window:404",
+    ])
+    assert rc == cli.EXIT_HANDOFF
+    assert out["ok"] is False
+    assert out["code"] == "window_unknown"
+    assert out["requested"] == "window:404"
+    assert out["action_required"] == "pick_window"
+    assert out["retryable"] is True
+    assert fc.sent == []
+
+
+def test_window_disambiguates_workspace_title(
+        tmp_registry, fc, monkeypatch, capsys):
+    """Two windows can hold same-titled workspaces. --window scopes the
+    --workspace title lookup before peer title resolution."""
+    _seed_self()
+    fc.add(window_ref="window:1", window_index=1,
+           workspace_ref="workspace:2", workspace_title="Review",
+           surface_ref="surface:200", title="wrong_reviewer")
+    fc.add(window_ref="window:2", window_index=2,
+           workspace_ref="workspace:3", workspace_title="Review",
+           surface_ref="surface:300", title="reviewer")
+    registry.register("reviewer", "surface:300", "workspace:3",
+                      live_set={MY_SURFACE, "surface:200", "surface:300"})
+
+    rc, out = _run_send(monkeypatch, capsys, [
+        "--peer", "reviewer", "--window", "window:2",
+        "--workspace", "Review",
+    ])
+    assert rc == cli.EXIT_OK
+    assert out["ok"] is True
+    assert out["surface"] == "surface:300"
+
+
+def test_live_peer_surface_ignores_stale_scope_hints(
+        tmp_registry, fc, monkeypatch, capsys):
+    """Bootstrap replies may include peer_workspace / peer_window hints
+    that have gone stale. A live --peer-surface is the exact pointer, so
+    stale scope hints must not block the direct send path."""
+    _seed_self()
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="caller")
+    registry.register("caller", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+
+    rc, out = _run_send(monkeypatch, capsys, [
+        "--peer", "caller",
+        "--peer-surface", "surface:200",
+        "--workspace", "missing_workspace",
+        "--window", "window:404",
+    ])
+    assert rc == cli.EXIT_OK
+    assert out["ok"] is True
+    assert out["resolved_by"] == "explicit_surface"
+    assert out["surface"] == "surface:200"
+    assert fc.sent[0][0] == "surface:200"
+
+
 def test_workspace_by_ref_still_resolves(
         tmp_registry, fc, monkeypatch, capsys):
     """--workspace workspace:N (ref form) keeps working — no title

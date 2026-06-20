@@ -5,9 +5,9 @@ workspace by default. There is no separate manifest `name` to compete
 with the title.
 
 Resolution:
-  1. Match `addressed` (case-insensitive) against tab titles in
-     `scope_workspace_ref` when supplied; otherwise match across all
-     workspaces.
+  1. Match `addressed` (case-insensitive) against tab titles in the
+     supplied workspace/window scope. With no scope, match across all
+     workspaces and windows.
   2. 1 hit -> live (or live_first_contact if no manifest exists yet
      for that surface). >1 hits -> ambiguous with candidates carrying
      workspace info so the caller can disambiguate via --peer-surface
@@ -42,10 +42,11 @@ class ResolveResult:
     surface_ref: str | None = None
     workspace_ref: str | None = None
     workspace_title: str = ""
+    window_ref: str | None = None
     # title is the destination tab title (used as the routing key).
     title: str | None = None
-    # source describes which path matched. "title_in_workspace" |
-    # "title_global" | None.
+    # source describes which path matched: title_in_workspace,
+    # title_in_window, title_global, or None.
     source: str | None = None
     # candidates is populated for kind in {"ambiguous", "renamed",
     # "not_in_workspace"}.
@@ -55,27 +56,44 @@ class ResolveResult:
 def resolve_peer(addressed: str, manifests: list[dict],
                  surfaces: dict[str, dict],
                  scope_workspace_ref: str | None = None,
+                 scope_window_ref: str | None = None,
                  self_surface_ref: str | None = None
                  ) -> ResolveResult:
     """`manifests` is the post-sweep registry list; `surfaces` is the
-    surface_index keyed by surface_ref. When `scope_workspace_ref` is
-    given, only tabs in that workspace are considered; cross-workspace
-    matches collapse to `unknown` unless explicitly opted out by
-    passing None for global scope."""
+    surface_index keyed by surface_ref. Scope refs restrict title
+    matching to a workspace, a window, or their intersection; passing
+    None for a dimension makes that dimension global."""
     addressed_cf = addressed.casefold()
 
-    in_scope: list[dict] = []
+    def is_in_scope(s: dict) -> bool:
+        if (scope_workspace_ref is not None
+                and s.get("workspace_ref") != scope_workspace_ref):
+            return False
+        if (scope_window_ref is not None
+                and s.get("window_ref") != scope_window_ref):
+            return False
+        return True
+
+    def candidate(s: dict) -> dict:
+        return {
+            "ref": s["ref"],
+            "workspace_ref": s.get("workspace_ref"),
+            "workspace_title": s.get("workspace_title", ""),
+            "window_ref": s.get("window_ref"),
+            "title": s.get("title", ""),
+        }
+
+    scoped_matches: list[dict] = []
     out_of_scope: list[dict] = []
     for s in surfaces.values():
         if (s.get("title") or "").casefold() != addressed_cf:
             continue
-        if (scope_workspace_ref is None
-                or s.get("workspace_ref") == scope_workspace_ref):
-            in_scope.append(s)
+        if is_in_scope(s):
+            scoped_matches.append(s)
         else:
             out_of_scope.append(s)
 
-    matches = in_scope if scope_workspace_ref is not None else in_scope
+    matches = scoped_matches
 
     if not matches:
         # No live current-title match in scope. Check for an in-scope
@@ -103,10 +121,13 @@ def resolve_peer(addressed: str, manifests: list[dict],
                 # Manifest references a surface not in the snapshot —
                 # shouldn't happen post-sweep but skip defensively.
                 continue
+            if not is_in_scope(s):
+                continue
             rename_candidates.append({
                 "ref": s["ref"],
                 "workspace_ref": s.get("workspace_ref"),
                 "workspace_title": s.get("workspace_title", ""),
+                "window_ref": s.get("window_ref"),
                 "current_title": s.get("title", ""),
                 "former_title": matched_former,
             })
@@ -119,13 +140,7 @@ def resolve_peer(addressed: str, manifests: list[dict],
             # them opt out via --workspace.
             return ResolveResult(
                 kind="ambiguous",
-                candidates=[
-                    {"ref": s["ref"],
-                     "workspace_ref": s.get("workspace_ref"),
-                     "workspace_title": s.get("workspace_title", ""),
-                     "title": s.get("title", "")}
-                    for s in out_of_scope
-                ],
+                candidates=[candidate(s) for s in out_of_scope],
             )
         # No match under any title in scope. Before declaring the peer
         # absent, list the OTHER registered agents that are live in
@@ -146,15 +161,9 @@ def resolve_peer(addressed: str, manifests: list[dict],
                 # Manifest references a surface not in the snapshot —
                 # not live post-sweep; skip.
                 continue
-            if (scope_workspace_ref is not None
-                    and s.get("workspace_ref") != scope_workspace_ref):
+            if not is_in_scope(s):
                 continue
-            peer_candidates.append({
-                "ref": s["ref"],
-                "workspace_ref": s.get("workspace_ref"),
-                "workspace_title": s.get("workspace_title", ""),
-                "title": s.get("title", ""),
-            })
+            peer_candidates.append(candidate(s))
         if peer_candidates:
             return ResolveResult(kind="not_in_workspace",
                                  candidates=peer_candidates)
@@ -163,13 +172,7 @@ def resolve_peer(addressed: str, manifests: list[dict],
     if len(matches) > 1:
         return ResolveResult(
             kind="ambiguous",
-            candidates=[
-                {"ref": s["ref"],
-                 "workspace_ref": s.get("workspace_ref"),
-                 "workspace_title": s.get("workspace_title", ""),
-                 "title": s.get("title", "")}
-                for s in matches
-            ],
+            candidates=[candidate(s) for s in matches],
         )
 
     s = matches[0]
@@ -181,7 +184,9 @@ def resolve_peer(addressed: str, manifests: list[dict],
         surface_ref=s["ref"],
         workspace_ref=s.get("workspace_ref"),
         workspace_title=s.get("workspace_title", ""),
+        window_ref=s.get("window_ref"),
         title=s.get("title", ""),
         source=("title_in_workspace" if scope_workspace_ref
+                else "title_in_window" if scope_window_ref
                 else "title_global"),
     )

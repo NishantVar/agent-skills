@@ -216,8 +216,8 @@ def peer_surface_mismatch(peer: str, peer_surface: str,
     so p2p bounces instead.
 
     The rerun_argv strips --peer-surface so the mechanical replay
-    re-resolves by (workspace, title) rather than re-trusting the same
-    stale ref."""
+    re-resolves by title and any explicit workspace/window scope rather
+    than re-trusting the same stale ref."""
     rerun_argv = rerun_argv or []
     return _base(
         "peer_surface_mismatch",
@@ -226,10 +226,10 @@ def peer_surface_mismatch(peer: str, peer_surface: str,
         "ref is likely stale (a bootstrap peer_surface from an older "
         "message, or the tab's occupant changed).",
         "Do not trust the stale surface. Rerun WITHOUT --peer-surface, "
-        "with --peer <title> alone, to re-resolve by (workspace, "
-        "title); add --workspace <ref> if the peer is in another "
-        "workspace. If you actually meant the agent now at that "
-        "surface, address it by its real current title instead.",
+        "with --peer <title> alone, to re-resolve by title; add "
+        "--workspace <ref> and/or --window <ref> if the peer is outside "
+        "your default scope. If you actually meant the agent now at "
+        "that surface, address it by its real current title instead.",
         action="reresolve_by_title",
         retryable=True,
         rerun_argv=_drop_flag(rerun_argv, "--peer-surface"),
@@ -272,6 +272,23 @@ def workspace_ambiguous(requested: str, candidates: list[dict],
         retryable=True,
         rerun_argv=rerun_argv or [],
         candidates=candidates,
+    )
+
+
+def window_unknown(requested: str,
+                   rerun_argv: list[str] | None = None) -> dict:
+    """``--window <value>`` did not resolve to a live cmux window."""
+    return _base(
+        "window_unknown",
+        f"No cmux window matched {requested!r}.",
+        "Do not retry verbatim. Pick a valid window ref, UUID, or "
+        "index (see `cmux list-windows`) and rerun with --window "
+        "<value>, drop --window to use the default scope, or pass "
+        "--window all for global window scope.",
+        action="pick_window",
+        retryable=True,
+        rerun_argv=rerun_argv or [],
+        requested=requested,
     )
 
 
@@ -318,8 +335,8 @@ def peer_ambiguous(peer: str, candidates: list[dict],
         "peer_ambiguous",
         human,
         "Rerun with --peer <title> --peer-surface <candidates[i].ref> "
-        "to route by surface directly, or with --workspace <ref> to "
-        "scope the title match to a specific workspace. Bare "
+        "to route by surface directly, or with --window <ref> and/or "
+        "--workspace <ref> to scope the title match. Bare "
         "`surface:N` strings are NOT accepted as --peer.",
         action="pick_candidate",
         retryable=True,

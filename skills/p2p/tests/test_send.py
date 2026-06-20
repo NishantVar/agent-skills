@@ -66,6 +66,8 @@ def test_live_first_contact_sends_bootstrap(tmp_registry, fc):
     text = fc.sent[0][2]
     assert "[p2p-bootstrap]" in text
     assert "suggested_title=claude_new" in text
+    assert f"peer_workspace={MY_WS}" in text
+    assert "peer_window=window:1" in text
     assert "First message from me: hi" in text
 
 
@@ -453,6 +455,8 @@ def test_explicit_peer_surface_title_mismatch_bounces(tmp_registry, fc):
     assert out["code"] == "peer_surface_mismatch"
     assert out["current_title"] == "other_producer"
     assert out["peer_surface"] == "surface:44"
+    assert "--workspace" in out["agent_instruction"]
+    assert "--window" in out["agent_instruction"]
     assert fc.sent == []
 
 
@@ -480,6 +484,45 @@ def test_explicit_peer_surface_unknown_returns_peer_not_found(
     assert "payload_file" not in out
     assert out["handoff_skill"] is None
     assert fc.sent == []
+
+
+def test_missing_peer_surface_recovers_by_peer_title(tmp_registry, fc):
+    """When the saved surface ref is gone but the asserted peer title
+    exists in scope, p2p re-resolves and sends to the replacement
+    surface. The success JSON carries the updated surface ref."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:300", title="producer")
+    registry.register("producer", "surface:300", MY_WS,
+                      live_set={MY_SURFACE, "surface:300"})
+    out = send.send("producer", "new requirements", my_title=None,
+                    fallback_self_title=None, rerun_argv=[],
+                    peer_surface="surface:200")
+    assert out["ok"]
+    assert out["kind"] == "message"
+    assert out["surface"] == "surface:300"
+    assert out["previous_surface"] == "surface:200"
+    assert out["resolved_by"] == "stale_surface_recovered_by_title_in_workspace"
+    assert fc.sent[0][0] == "surface:300"
+
+
+def test_missing_peer_surface_recovers_with_workspace_scope(
+        tmp_registry, fc):
+    """The stale-ref recovery path honors the same workspace modifier as
+    ordinary first-contact title resolution."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:9", workspace_title="Remote",
+           surface_ref="surface:900", title="producer")
+    registry.register("producer", "surface:900", "workspace:9",
+                      live_set={MY_SURFACE, "surface:900"})
+    out = send.send("producer", "new requirements", my_title=None,
+                    fallback_self_title=None, rerun_argv=[],
+                    peer_surface="surface:200",
+                    scope_workspace_ref="workspace:9")
+    assert out["ok"]
+    assert out["surface"] == "surface:900"
+    assert out["previous_surface"] == "surface:200"
+    assert fc.sent[0][1] == "workspace:9"
 
 
 def test_explicit_peer_surface_with_idle_manifest_sends_plain(

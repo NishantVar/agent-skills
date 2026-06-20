@@ -47,8 +47,9 @@ GENERIC_TITLES = frozenset({
 
 def _success(addressed: str, title: str | None, surf: str,
              resolved_by: str, kind: str,
-             one_way: bool = False) -> dict:
-    return {
+             one_way: bool = False,
+             previous_surface: str | None = None) -> dict:
+    out = {
         "ok": True,
         "peer": addressed,
         "title": title,
@@ -57,6 +58,9 @@ def _success(addressed: str, title: str | None, surf: str,
         "kind": kind,
         "one_way": one_way,
     }
+    if previous_surface is not None:
+        out["previous_surface"] = previous_surface
+    return out
 
 
 def _resolved_by(source: str | None) -> str:
@@ -222,6 +226,7 @@ def send(peer: str | None, body: str,
          peer_surface: str | None = None,
          bootstrap_suggested_title: str | None = None,
          scope_workspace_ref: str | None = None,
+         scope_window_ref: str | None = None,
          one_way: bool = False) -> dict:
     """Orchestrator. `peer_surface` skips title resolution and routes
     directly — used when the caller already knows the peer's surface
@@ -229,8 +234,9 @@ def send(peer: str | None, body: str,
     `bootstrap_suggested_title` takes registration precedence over the
     scrollback-derived `fallback_self_title`.
     `scope_workspace_ref` scopes title resolution to one workspace;
-    when None, defaults to the caller's own workspace. Pass an
-    explicit sentinel to widen scope — see cli.py."""
+    when None, defaults to the caller's own workspace unless a window
+    scope is supplied. `scope_window_ref` scopes title resolution to a
+    window. Pass explicit sentinels to widen scope — see cli.py."""
     if not body.strip():
         return errors.empty_message(rerun_argv=rerun_argv)
     if not peer and not peer_surface:
@@ -271,31 +277,48 @@ def send(peer: str | None, body: str,
                 me = m
                 break
 
-    if peer_surface:
-        return _send_to_explicit_surface(
-            peer=peer, body=body, me=me,
-            peer_surface=peer_surface, surfaces=surfaces,
-            manifests=manifests, rerun_argv=rerun_argv,
-            one_way=one_way)
-
-    # Past the surface short-circuit, the top-of-function guard
-    # guarantees peer is set (peer or peer_surface, and peer_surface is
-    # falsy here) — narrow it for the resolution path below.
-    assert peer is not None
-
-    # Default scope: caller's own workspace. The caller can widen by
-    # passing scope_workspace_ref explicitly (via --workspace at the
-    # CLI). cli.py threads "" as the sentinel for --workspace=all so
-    # this layer can distinguish "caller didn't say" (None → use mine)
-    # from "caller explicitly chose global" ("" → None at resolver).
+    # Scope calculation is shared by normal title resolution and the
+    # stale-explicit-surface recovery path below. Sentinels:
+    #   scope_workspace_ref == "" -> all workspaces
+    #   scope_window_ref == "" -> all windows
+    # If neither modifier was supplied, default to the caller's own
+    # workspace. If only --window was supplied, search that whole
+    # window rather than forcing the caller's workspace.
     scope = scope_workspace_ref
-    if scope is None:
-        scope = (surfaces.get(my_surf or "") or {}).get("workspace_ref")
-    elif scope == "":
+    if scope == "":
         scope = None
+    elif scope is None and scope_window_ref is None:
+        scope = (surfaces.get(my_surf or "") or {}).get("workspace_ref")
+
+    window_scope = scope_window_ref
+    if window_scope == "":
+        window_scope = None
+
+    stale_peer_surface: str | None = None
+    if peer_surface:
+        if peer_surface in surfaces:
+            return _send_to_explicit_surface(
+                peer=peer, body=body, me=me,
+                peer_surface=peer_surface, surfaces=surfaces,
+                manifests=manifests, rerun_argv=rerun_argv,
+                one_way=one_way)
+        if peer is None:
+            return errors.peer_not_found(peer_surface,
+                                         rerun_argv=rerun_argv)
+        # The saved exact pointer is gone, but the caller also supplied
+        # the peer identity. Fall through to the title resolver using
+        # whatever window/workspace modifiers are available, and return
+        # the replacement surface in the success JSON.
+        stale_peer_surface = peer_surface
+
+    # Past the explicit-surface path, the top-of-function guard plus the
+    # stale-surface recovery branch guarantee peer is set — narrow it for
+    # the resolution path below.
+    assert peer is not None
 
     r = resolve.resolve_peer(peer, manifests, surfaces,
                              scope_workspace_ref=scope,
+                             scope_window_ref=window_scope,
                              self_surface_ref=my_surf)
 
     if r.kind == "ambiguous":
@@ -329,6 +352,11 @@ def send(peer: str | None, body: str,
         text = _bootstrap.build_bootstrap(
             peer_title=me["title"],
             peer_surface=me["surface_ref"],
+            peer_workspace=(
+                surfaces.get(me["surface_ref"], {}).get("workspace_ref")
+                or me.get("workspace_ref")
+            ),
+            peer_window=surfaces.get(me["surface_ref"], {}).get("window_ref"),
             suggested_title=r.title or addressed_string,
             first_message=body,
             one_way=one_way,
@@ -347,7 +375,11 @@ def send(peer: str | None, body: str,
         addressed=addressed_string,
         title=r.title,
         surf=r.surface_ref,
-        resolved_by=_resolved_by(r.source),
+        resolved_by=(
+            "stale_surface_recovered_by_" + _resolved_by(r.source)
+            if stale_peer_surface else _resolved_by(r.source)
+        ),
         kind=kind_out,
         one_way=one_way,
+        previous_surface=stale_peer_surface,
     )

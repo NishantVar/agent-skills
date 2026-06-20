@@ -272,3 +272,48 @@ def test_source_is_title_global_when_scope_none():
                              scope_workspace_ref=None)
     assert r.kind == "live_first_contact"
     assert r.source == "title_global"
+
+
+def test_window_scope_disambiguates_duplicate_title():
+    """A window ref can scope title resolution when the same tab title
+    appears in more than one cmux window."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "A", "surface_ref": "surface:1",
+         "title": "worker"},
+        {"window_ref": "window:2", "workspace_ref": "ws:2",
+         "workspace_title": "B", "surface_ref": "surface:2",
+         "title": "worker"},
+    ])
+    r = resolve.resolve_peer("worker", [], surfaces,
+                             scope_workspace_ref=None,
+                             scope_window_ref="window:2")
+    assert r.kind == "live_first_contact"
+    assert r.source == "title_in_window"
+    assert r.surface_ref == "surface:2"
+    assert r.workspace_ref == "ws:2"
+
+
+def test_window_scope_candidates_include_window_ref():
+    """When a title is outside the scoped window, the ambiguity
+    candidates carry the destination window so callers can rerun with
+    --window."""
+    surfaces = _setup([
+        {"window_ref": "window:1", "workspace_ref": "ws:1",
+         "workspace_title": "A", "surface_ref": "surface:1",
+         "title": "local"},
+        {"window_ref": "window:2", "workspace_ref": "ws:2",
+         "workspace_title": "B", "surface_ref": "surface:2",
+         "title": "reviewer"},
+    ])
+    r = resolve.resolve_peer("reviewer", [], surfaces,
+                             scope_workspace_ref=None,
+                             scope_window_ref="window:1")
+    assert r.kind == "ambiguous"
+    assert r.candidates == [{
+        "ref": "surface:2",
+        "workspace_ref": "ws:2",
+        "workspace_title": "B",
+        "window_ref": "window:2",
+        "title": "reviewer",
+    }]

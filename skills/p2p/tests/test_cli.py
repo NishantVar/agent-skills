@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from p2plib import cli
+from p2plib import bootstrap
 
 
 def _parse(argv: list[str]):
@@ -42,9 +43,30 @@ def test_rerun_argv_preserves_both_when_both_supplied():
 
 def test_rerun_argv_carries_scope_and_one_way():
     args = _parse(["send", "--peer", "p", "--my-title", "me",
-                   "--workspace", "workspace:7", "--one-way",
-                   "--message", "hi"])
+                   "--workspace", "workspace:7", "--window", "window:2",
+                   "--one-way", "--message", "hi"])
     rerun = cli._build_rerun_argv(args)
     assert "--workspace" in rerun
     assert rerun[rerun.index("--workspace") + 1] == "workspace:7"
+    assert "--window" in rerun
+    assert rerun[rerun.index("--window") + 1] == "window:2"
     assert "--one-way" in rerun
+
+
+def test_bootstrap_parser_returns_workspace_and_window():
+    text = "\n".join([
+        "[p2p-bootstrap] You have an incoming peer-messaging connection.",
+        "peer_title=caller",
+        "peer_surface=surface:100",
+        "peer_workspace=workspace:1",
+        "peer_window=window:1",
+        "suggested_title=worker",
+    ])
+    parsed = bootstrap.parse_bootstrap_text(text)
+    assert parsed == {
+        "peer_title": "caller",
+        "peer_surface": "surface:100",
+        "peer_workspace": "workspace:1",
+        "peer_window": "window:1",
+        "suggested_title": "worker",
+    }
