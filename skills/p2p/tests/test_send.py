@@ -396,8 +396,11 @@ def test_destination_workspace_is_carried_to_transport(tmp_registry, fc):
 
 def test_explicit_peer_surface_skips_resolution(tmp_registry, fc):
     _seed_self(tmp_registry)
+    # Surface title matches --peer, so the identity cross-check passes
+    # and the point of this test stands: --peer-surface skips the
+    # title resolver and routes directly (resolved_by=explicit_surface).
     fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
-           surface_ref="surface:777", title="whatever")
+           surface_ref="surface:777", title="inbound_peer")
     out = send.send("inbound_peer", "thanks for the ping",
                     my_title=None, fallback_self_title=None,
                     rerun_argv=[], peer_surface="surface:777")
@@ -429,6 +432,28 @@ def test_explicit_peer_surface_without_peer_derives_title(tmp_registry, fc):
     assert out["title"] == "inbound_peer"
     assert out["peer"] == "inbound_peer"
     assert fc.sent[0][0] == "surface:777"
+
+
+def test_explicit_peer_surface_title_mismatch_bounces(tmp_registry, fc):
+    """Stale-surface guard: --peer-surface is an ADDRESS, --peer is an
+    IDENTITY assertion. When the surface ref is live but now holds a
+    different title than addressed (a bootstrap peer_surface from an
+    older message, or a repurposed/multi-producer tab), the send must
+    NOT silently deliver to the wrong agent — it bounces with
+    peer_surface_mismatch. This reproduces the real incident: replying
+    `--peer producer --peer-surface surface:44` when surface:44 no
+    longer holds the producer."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
+           surface_ref="surface:44", title="other_producer")
+    out = send.send("producer", "the planning handoff", my_title=None,
+                    fallback_self_title=None, rerun_argv=["rerun"],
+                    peer_surface="surface:44")
+    assert out["ok"] is False
+    assert out["code"] == "peer_surface_mismatch"
+    assert out["current_title"] == "other_producer"
+    assert out["peer_surface"] == "surface:44"
+    assert fc.sent == []
 
 
 def test_no_peer_and_no_surface_returns_info_needed(tmp_registry, fc):
@@ -535,7 +560,7 @@ def test_default_send_keeps_reply_trailer_and_plain_frame(
 def test_one_way_explicit_peer_surface_marks_frame(tmp_registry, fc):
     _seed_self(tmp_registry)
     fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
-           surface_ref="surface:777", title="whatever")
+           surface_ref="surface:777", title="inbound_peer")
     out = send.send("inbound_peer", "ack-free note", my_title=None,
                     fallback_self_title=None, rerun_argv=[],
                     peer_surface="surface:777", one_way=True)

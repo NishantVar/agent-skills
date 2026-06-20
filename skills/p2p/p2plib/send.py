@@ -181,6 +181,20 @@ def _send_to_explicit_surface(*, peer: str | None, body: str, me: dict,
         return errors.peer_not_found(peer or peer_surface,
                                      rerun_argv=rerun_argv)
 
+    # Identity cross-check. The surface ref is an ADDRESS (uniquely
+    # routable on its own); --peer is an IDENTITY assertion. A ref
+    # carried over from an older bootstrap can stay live yet now hold a
+    # different agent (multi-producer setups, repurposed tabs). When the
+    # caller asserts a title, verify the surface still bears it before
+    # delivering — otherwise a stale ref silently misroutes and is
+    # reported as success. --peer-surface ALONE (no title asserted)
+    # still routes directly: there's nothing to contradict.
+    if peer is not None:
+        current_title = s.get("title", "")
+        if current_title.casefold() != peer.casefold():
+            return errors.peer_surface_mismatch(
+                peer, peer_surface, current_title, rerun_argv=rerun_argv)
+
     by_surface = {m.get("surface_ref"): m for m in manifests}
     m = by_surface.get(peer_surface)
     title = m.get("title") if m else s.get("title", "")
