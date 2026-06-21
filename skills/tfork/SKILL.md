@@ -25,7 +25,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
   Optional cmux tab title for the new pane — renamed right after fork so it's immediately p2p-addressable. Pass a snake_case title (e.g. `worker_42`) for any agent you'll message. cmux allows duplicates in a workspace; collisions surface in `note`, not failures.
   Default: none.
 - **window**:
-  Optional cmux window to open the fork in: `new` creates a fresh top-level window — which does not steal focus from the caller's window, so spawning an agent does not switch the user's view — or a window ref/index/UUID targets an existing one. Combine with --workspace to name the workspace inside the window. Mutually exclusive with --anchor.
+  Optional cmux window to open the fork in: `new` creates a fresh top-level window, or a window ref/index/UUID targets an existing one. Combine with --workspace to name the workspace inside the window. Mutually exclusive with --anchor.
   Default: none.
 
 ## Context
@@ -62,7 +62,7 @@ Skip these — SKILL.md is the complete interface.
    a. Insert --workspace {workspace} into the invocation, before the -- separator. Do not also pass --anchor — the two are mutually exclusive.
 5. Decide whether the user named an anchor (a surface ref like surface:42 or a cmux tab title) applies and, if so:
    a. Insert --anchor {anchor} into the invocation, before the -- separator.
-6. Decide whether the user asked to open the fork in a new or separate window (e.g. so the spawn does not steal focus) applies and, if so:
+6. Decide whether the user asked to open the fork in a new or separate window applies and, if so:
    a. Insert --window {window} into the invocation, before the -- separator — `new` for a fresh window, or a window ref/index/UUID for an existing one. Do not also pass --anchor — the two are mutually exclusive.
 7. Decide whether the user named a working directory (e.g. a path to a different repo) applies and, if so:
    a. Insert --cwd {cwd} into the invocation, before the -- separator. The binary expands the path and rejects it with bad_arguments if the directory does not exist.

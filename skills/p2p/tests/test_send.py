@@ -66,6 +66,8 @@ def test_live_first_contact_sends_bootstrap(tmp_registry, fc):
     text = fc.sent[0][2]
     assert "[p2p-bootstrap]" in text
     assert "suggested_title=claude_new" in text
+    assert f"peer_workspace={MY_WS}" in text
+    assert "peer_window=window:1" in text
     assert "First message from me: hi" in text
 
 
@@ -94,32 +96,60 @@ def test_idle_peer_sends_plain_message_no_rebootstrap(tmp_registry, fc):
     assert "[p2p-bootstrap]" not in text
 
 
-def test_cross_workspace_returns_ambiguous_under_default_scope(
+def test_cross_workspace_same_window_resolves_via_window_tier(
         tmp_registry, fc):
-    """Default scope is caller's workspace. A live tab in another
-    workspace with the addressed title returns ambiguous so the caller
-    can opt out via --workspace."""
+    """Locality cascade: the addressed title is absent from the caller's
+    own workspace but live in another workspace of the SAME window. It
+    resolves there (tier 2, title_in_window) rather than bouncing — a
+    same-window peer no longer requires an explicit --workspace opt-in."""
     _seed_self(tmp_registry)
     fc.add(workspace_ref="workspace:2", workspace_title="Other",
            surface_ref="surface:200", title="reviewer")
-    rerun = ["agent_msg.py", "send", "--peer", "reviewer",
-             "--message-file", "/tmp/x"]
     out = send.send("reviewer", "x", my_title=None,
-                    fallback_self_title=None, rerun_argv=rerun)
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"] is True
+    assert out["resolved_by"] == "title_in_window"
+    assert out["surface"] == "surface:200"
+    # No manifest for surface:200 yet → first-contact bootstrap.
+    assert out["kind"] == "bootstrap"
+    assert fc.sent[0][0] == "surface:200"
+
+
+def test_default_scope_resolves_cross_window_single_match(
+        tmp_registry, fc):
+    """Tier 3: no match in the caller's workspace or window, but a single
+    live match in another window resolves via the global tier
+    (title_global)."""
+    _seed_self(tmp_registry)
+    fc.add(window_ref="window:2", window_index=2,
+           workspace_ref="workspace:9", workspace_title="Far",
+           surface_ref="surface:900", title="reviewer")
+    out = send.send("reviewer", "x", my_title=None,
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"] is True
+    assert out["resolved_by"] == "title_global"
+    assert out["surface"] == "surface:900"
+
+
+def test_default_scope_ambiguous_when_two_window_matches(
+        tmp_registry, fc):
+    """Ambiguity safety under the cascade: two live tabs share the
+    addressed title across two workspaces of the caller's window. The
+    cascade refuses to pick → peer_ambiguous with both candidates."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:2", workspace_title="A",
+           surface_ref="surface:200", title="reviewer")
+    fc.add(workspace_ref="workspace:3", workspace_title="B",
+           surface_ref="surface:300", title="reviewer")
+    out = send.send("reviewer", "x", my_title=None,
+                    fallback_self_title=None, rerun_argv=[])
     assert out["ok"] is False
     assert out["code"] == "peer_ambiguous"
     refs = {c["ref"] for c in out["candidates"]}
-    assert refs == {"surface:200"}
-    assert fc.sent == []
-    # Bug A: single-candidate-elsewhere gets the "not in your workspace"
-    # wording rather than "matches more than one".
-    assert "not in your workspace" in out["human_message"]
-    assert MY_WS in out["human_message"]
-    assert "matches more than one" not in out["human_message"]
-    # Bug B: envelope must reflect that this is a mechanical retry.
+    assert refs == {"surface:200", "surface:300"}
     assert out["action_required"] == "pick_candidate"
     assert out["retryable"] is True
-    assert out["rerun_argv"] == rerun
+    assert fc.sent == []
 
 
 def test_ambiguous_multi_candidate_keeps_generic_wording(
@@ -396,8 +426,11 @@ def test_destination_workspace_is_carried_to_transport(tmp_registry, fc):
 
 def test_explicit_peer_surface_skips_resolution(tmp_registry, fc):
     _seed_self(tmp_registry)
+    # Surface title matches --peer, so the identity cross-check passes
+    # and the point of this test stands: --peer-surface skips the
+    # title resolver and routes directly (resolved_by=explicit_surface).
     fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
-           surface_ref="surface:777", title="whatever")
+           surface_ref="surface:777", title="inbound_peer")
     out = send.send("inbound_peer", "thanks for the ping",
                     my_title=None, fallback_self_title=None,
                     rerun_argv=[], peer_surface="surface:777")
@@ -431,6 +464,30 @@ def test_explicit_peer_surface_without_peer_derives_title(tmp_registry, fc):
     assert fc.sent[0][0] == "surface:777"
 
 
+def test_explicit_peer_surface_title_mismatch_bounces(tmp_registry, fc):
+    """Stale-surface guard: --peer-surface is an ADDRESS, --peer is an
+    IDENTITY assertion. When the surface ref is live but now holds a
+    different title than addressed (a bootstrap peer_surface from an
+    older message, or a repurposed/multi-producer tab), the send must
+    NOT silently deliver to the wrong agent — it bounces with
+    peer_surface_mismatch. This reproduces the real incident: replying
+    `--peer producer --peer-surface surface:44` when surface:44 no
+    longer holds the producer."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
+           surface_ref="surface:44", title="other_producer")
+    out = send.send("producer", "the planning handoff", my_title=None,
+                    fallback_self_title=None, rerun_argv=["rerun"],
+                    peer_surface="surface:44")
+    assert out["ok"] is False
+    assert out["code"] == "peer_surface_mismatch"
+    assert out["current_title"] == "other_producer"
+    assert out["peer_surface"] == "surface:44"
+    assert "--workspace" in out["agent_instruction"]
+    assert "--window" in out["agent_instruction"]
+    assert fc.sent == []
+
+
 def test_no_peer_and_no_surface_returns_info_needed(tmp_registry, fc):
     """With neither --peer nor --peer-surface there's nothing to route
     to — info_needed for the missing peer."""
@@ -455,6 +512,45 @@ def test_explicit_peer_surface_unknown_returns_peer_not_found(
     assert "payload_file" not in out
     assert out["handoff_skill"] is None
     assert fc.sent == []
+
+
+def test_missing_peer_surface_recovers_by_peer_title(tmp_registry, fc):
+    """When the saved surface ref is gone but the asserted peer title
+    exists in scope, p2p re-resolves and sends to the replacement
+    surface. The success JSON carries the updated surface ref."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:300", title="producer")
+    registry.register("producer", "surface:300", MY_WS,
+                      live_set={MY_SURFACE, "surface:300"})
+    out = send.send("producer", "new requirements", my_title=None,
+                    fallback_self_title=None, rerun_argv=[],
+                    peer_surface="surface:200")
+    assert out["ok"]
+    assert out["kind"] == "message"
+    assert out["surface"] == "surface:300"
+    assert out["previous_surface"] == "surface:200"
+    assert out["resolved_by"] == "stale_surface_recovered_by_title_in_workspace"
+    assert fc.sent[0][0] == "surface:300"
+
+
+def test_missing_peer_surface_recovers_with_workspace_scope(
+        tmp_registry, fc):
+    """The stale-ref recovery path honors the same workspace modifier as
+    ordinary first-contact title resolution."""
+    _seed_self(tmp_registry)
+    fc.add(workspace_ref="workspace:9", workspace_title="Remote",
+           surface_ref="surface:900", title="producer")
+    registry.register("producer", "surface:900", "workspace:9",
+                      live_set={MY_SURFACE, "surface:900"})
+    out = send.send("producer", "new requirements", my_title=None,
+                    fallback_self_title=None, rerun_argv=[],
+                    peer_surface="surface:200",
+                    scope_workspace_ref="workspace:9")
+    assert out["ok"]
+    assert out["surface"] == "surface:900"
+    assert out["previous_surface"] == "surface:200"
+    assert fc.sent[0][1] == "workspace:9"
 
 
 def test_explicit_peer_surface_with_idle_manifest_sends_plain(
@@ -535,7 +631,7 @@ def test_default_send_keeps_reply_trailer_and_plain_frame(
 def test_one_way_explicit_peer_surface_marks_frame(tmp_registry, fc):
     _seed_self(tmp_registry)
     fc.add(workspace_ref="workspace:7", workspace_title="Inbound",
-           surface_ref="surface:777", title="whatever")
+           surface_ref="surface:777", title="inbound_peer")
     out = send.send("inbound_peer", "ack-free note", my_title=None,
                     fallback_self_title=None, rerun_argv=[],
                     peer_surface="surface:777", one_way=True)

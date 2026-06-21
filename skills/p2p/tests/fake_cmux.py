@@ -1,7 +1,8 @@
 """In-memory cmux model used by tests.
 
 `FakeCmux` builds a synthetic `cmux tree --all` document from a list
-of (workspace_ref, workspace_title, surface_ref, tty, title) tuples
+of (window_ref, workspace_ref, workspace_title, surface_ref, tty, title)
+tuples
 and exposes `apply()` to monkeypatch the points where p2plib calls out
 to surface/transport.
 """
@@ -16,6 +17,9 @@ class FakeSurface:
     workspace_ref: str
     workspace_title: str
     surface_ref: str
+    window_ref: str = "window:1"
+    window_id: str = ""
+    window_index: int = 1
     tty: str = ""
     title: str = ""
 
@@ -36,9 +40,16 @@ class FakeCmux:
         return s
 
     def tree(self) -> dict:
-        # Group surfaces by workspace.
-        workspaces: dict[str, dict] = {}
+        # Group surfaces by window, then workspace.
+        windows: dict[str, dict] = {}
         for s in self.surfaces:
+            win = windows.setdefault(s.window_ref, {
+                "ref": s.window_ref,
+                "id": s.window_id or s.window_ref,
+                "index": s.window_index,
+                "workspaces": {},
+            })
+            workspaces = win["workspaces"]
             ws = workspaces.setdefault(s.workspace_ref, {
                 "ref": s.workspace_ref,
                 "title": s.workspace_title,
@@ -49,7 +60,10 @@ class FakeCmux:
                 "tty": s.tty,
                 "title": s.title,
             })
-        return {"windows": [{"workspaces": list(workspaces.values())}]}
+        return {"windows": [
+            {**win, "workspaces": list(win["workspaces"].values())}
+            for win in windows.values()
+        ]}
 
     def apply(self, monkeypatch, *, my_surface_ref: str | None = None):
         """Patch surface/transport call seams. `my_surface_ref` is what

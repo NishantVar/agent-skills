@@ -86,11 +86,10 @@ def parse_args(argv):
                              "with --anchor.")
     parser.add_argument("--window", default=None,
                         help="open the fork in a window instead of the "
-                             "caller's: 'new' creates a fresh window (does "
-                             "not steal focus); a window ref/index/UUID "
-                             "targets an existing one. Combine with "
-                             "--workspace to name the workspace. Mutually "
-                             "exclusive with --anchor.")
+                             "caller's: 'new' creates a fresh window; a "
+                             "window ref/index/UUID targets an existing one. "
+                             "Combine with --workspace to name the workspace. "
+                             "Mutually exclusive with --anchor.")
     parser.add_argument("--anchor", default=None,
                         help="surface ref or tab title to place next to; "
                              "default: the caller's own surface. Mutually "
