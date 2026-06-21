@@ -502,11 +502,9 @@ class CmuxTerminal(Terminal):
     def _resolve_new_window(self, workspace):
         """Open a fresh window, reuse its seeded workspace.
 
-        ``cmux new-window`` does not move the caller's focus, so the fork
-        lands in its own window without the view jumping — the whole reason
-        for ``--window new``. The window comes up with exactly one workspace;
-        reusing it (renamed when a title is given) avoids leaving an orphan
-        default workspace beside the one tfork runs in.
+        The window comes up with exactly one workspace; reusing it (renamed
+        when a title is given) avoids leaving an orphan default workspace
+        beside the one tfork runs in.
 
         A fresh window's seeded workspace can only be *named*, never bound to
         an existing workspace ref — that workspace already lives elsewhere.
