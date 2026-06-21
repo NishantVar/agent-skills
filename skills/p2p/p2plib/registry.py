@@ -244,7 +244,8 @@ def _cmux_collision_holder(title: str, surface_ref: str,
 
 def register(title: str, surface_ref: str, workspace_ref: str | None,
              live_set: set[str],
-             surfaces: dict[str, dict] | None = None
+             surfaces: dict[str, dict] | None = None,
+             former_titles: list[str] | None = None
              ) -> tuple[dict | None, dict | None]:
     """Register `title` for `surface_ref`. Returns (manifest, error).
 
@@ -253,6 +254,11 @@ def register(title: str, surface_ref: str, workspace_ref: str | None,
 
     Collision is scoped to (workspace_ref, title): two tabs in
     different workspaces can share a title.
+
+    `former_titles`, when supplied, is carried onto a freshly written
+    manifest — used by the deliberate re-identification path so peers
+    addressing a prior title still bridge via peer_renamed. It is
+    ignored on the already-ours refresh branch (the existing list stays).
     """
     if surface_ref not in live_set:
         return None, {"kind": "not_in_cmux", "surface": surface_ref}
@@ -307,6 +313,8 @@ def register(title: str, surface_ref: str, workspace_ref: str | None,
             "started_at": now,
             "last_seen": now,
         }
+        if former_titles:
+            data["former_titles"] = former_titles
         _atomic_write(manifest_path(surface_ref), data)
         return data, None
 

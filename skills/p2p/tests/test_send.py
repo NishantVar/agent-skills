@@ -825,3 +825,78 @@ def test_legacy_name_manifest_routes_under_promoted_title(
     assert out["ok"]
     assert out["kind"] == "message"
     assert out["title"] == "legacy_peer"
+
+
+def test_bootstrap_suggested_conflicting_with_existing_returns_handoff(
+        tmp_registry, fc):
+    """Identity-drift incident regression. A pane already registered under
+    a prior role (`phase2_flux_issues`) replies to an inbound bootstrap
+    that suggests a DIFFERENT title (`flux_griller`). The conflict must be
+    surfaced — NOT silently kept (which framed every outgoing message as
+    the stale prior role) and NOT silently adopted (which would let a
+    misrouted bootstrap hijack a pane that legitimately holds another
+    role). Nothing is sent; identity is untouched."""
+    _seed_self(tmp_registry, title="phase2_flux_issues")
+    fc.surfaces[0].title = "phase2_flux_issues"
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="flux_lead")
+    registry.register("flux_lead", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+    rerun = ["agent_msg.py", "send", "--peer", "flux_lead",
+             "--bootstrap-suggested-title", "flux_griller",
+             "--message-file", "/tmp/x"]
+    out = send.send("flux_lead", "ack", my_title=None,
+                    fallback_self_title=None, rerun_argv=rerun,
+                    bootstrap_suggested_title="flux_griller")
+    assert out["ok"] is False
+    assert out["code"] == "self_title_conflict"
+    assert out["current_title"] == "phase2_flux_issues"
+    assert out["suggested_title"] == "flux_griller"
+    # Nothing delivered; the stale identity was not silently re-framed.
+    assert fc.sent == []
+    assert registry.get_self(MY_SURFACE)["title"] == "phase2_flux_issues"
+    # The prepared re-task replay swaps the soft suggested-title for the
+    # deliberate --my-title override.
+    assert "--bootstrap-suggested-title" not in out["rerun_argv"]
+    assert out["rerun_argv"][-2:] == ["--my-title", "flux_griller"]
+
+
+def test_my_title_reidentifies_over_existing_manifest(tmp_registry, fc):
+    """Deliberate re-identification: an explicit --my-title that differs
+    from the registered title re-registers under the new title, renames
+    the tab, preserves the prior title in former_titles for peer_renamed
+    bridging, and frames outgoing messages under the NEW identity. This is
+    the resolution path the self_title_conflict handoff points a genuinely
+    re-tasked agent toward."""
+    _seed_self(tmp_registry, title="phase2_flux_issues")
+    fc.surfaces[0].title = "phase2_flux_issues"
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="flux_lead")
+    registry.register("flux_lead", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("flux_lead", "ack", my_title="flux_griller",
+                    fallback_self_title=None, rerun_argv=[])
+    assert out["ok"]
+    me = registry.get_self(MY_SURFACE)
+    assert me["title"] == "flux_griller"
+    assert me["former_titles"] == ["phase2_flux_issues"]
+    my_tab = next(s for s in fc.surfaces if s.surface_ref == MY_SURFACE)
+    assert my_tab.title == "flux_griller"
+    assert fc.sent[0][2].startswith("[from: flux_griller]")
+
+
+def test_bootstrap_suggested_matching_existing_is_noop(tmp_registry, fc):
+    """No conflict when the suggested title equals the already-registered
+    one — a duplicate or late bootstrap reply just sends a plain framed
+    message under the existing identity."""
+    _seed_self(tmp_registry, title="flux_griller")
+    fc.surfaces[0].title = "flux_griller"
+    fc.add(workspace_ref=MY_WS, workspace_title="Self",
+           surface_ref="surface:200", title="flux_lead")
+    registry.register("flux_lead", "surface:200", MY_WS,
+                      live_set={MY_SURFACE, "surface:200"})
+    out = send.send("flux_lead", "ack", my_title=None,
+                    fallback_self_title=None, rerun_argv=[],
+                    bootstrap_suggested_title="flux_griller")
+    assert out["ok"]
+    assert fc.sent[0][2].startswith("[from: flux_griller]")

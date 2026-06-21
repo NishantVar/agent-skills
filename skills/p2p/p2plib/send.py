@@ -13,6 +13,12 @@ Self-naming precedence on first send (no existing manifest):
      info_needed targeted at the CALLING AGENT to pick a meaningful
      name from its role context.
 
+On an ALREADY-registered surface, a differing --my-title is a deliberate
+re-identification (re-register + rename, prior title -> former_titles),
+while a differing --bootstrap-suggested-title returns self_title_conflict
+rather than silently keeping the stale identity or adopting a possibly
+misrouted one — see _ensure_self.
+
 The non-trivial branches:
   * `kind="not_in_workspace"` / `kind="unknown"` both return a
     `peer_not_found` handoff. p2p NEVER spawns: it reports the title
@@ -82,6 +88,16 @@ def _frame(me_title: str, body: str, one_way: bool) -> str:
     return f"[from: {tag}] {body}{trailer}"
 
 
+def _extend_former(existing: dict, old_title: str) -> list[str]:
+    """former_titles for a re-identified manifest: the prior list plus
+    the title being retired (deduped). Powers peer_renamed bridging so
+    peers still addressing the old title reach the agent's new one."""
+    former = list(existing.get("former_titles") or [])
+    if old_title and old_title not in former:
+        former.append(old_title)
+    return former
+
+
 def _ensure_self(my_surface: str | None,
                  my_title: str | None,
                  bootstrap_suggested_title: str | None,
@@ -91,33 +107,55 @@ def _ensure_self(my_surface: str | None,
                  rerun_argv: list[str]) -> tuple[dict | None, dict | None]:
     """Returns (self_manifest, handoff). Exactly one is non-None.
 
-    Precedence: existing manifest > --my-title > bootstrap-suggested >
-    scrollback-fallback > current cmux title (if meaningful) >
-    info_needed targeted at the calling agent.
+    First send (no manifest) precedence: --my-title > bootstrap-suggested
+    > scrollback-fallback > current cmux title (if meaningful) >
+    info_needed targeted at the calling agent. The current cmux tab title
+    is adopted ONLY when it isn't a generic spawn default (`claude`,
+    etc.) — generic titles are opaque to peers reading `[from: ...]`.
 
-    The current cmux tab title is adopted ONLY when it isn't a generic
-    spawn default (`claude`, etc.). Generic titles never become the
-    wire identity — they're opaque to peers reading `[from: ...]`.
+    Already-registered surface:
+      * --my-title matching (or absent) -> no-op, keep the identity.
+      * --my-title DIFFERING -> deliberate re-identification: re-register
+        under it (rename tab, prior title -> former_titles).
+      * --bootstrap-suggested-title DIFFERING -> NOT auto-adopted. A
+        bootstrap is routed by tab title and can land on a pane that
+        already holds a real, different role, so adopting silently would
+        either keep framing under a stale prior role or hijack the pane.
+        Return self_title_conflict so the agent decides re-task
+        (--my-title) vs misroute-bounce.
     """
     if my_surface is None:
         return None, errors.not_in_cmux()
 
-    existing = registry.get_self(my_surface)
-    if existing is not None:
-        # Already registered: --my-title on a subsequent call is a
-        # no-op. Renaming mid-session breaks peers that route by the
-        # prior title.
-        return existing, None
-
     workspace_ref = (surfaces.get(my_surface) or {}).get("workspace_ref")
     current_title = (surfaces.get(my_surface) or {}).get("title", "")
 
-    chosen = my_title or bootstrap_suggested_title or fallback_self_title
-    if chosen is None:
-        if current_title and current_title not in GENERIC_TITLES:
-            chosen = current_title
+    existing = registry.get_self(my_surface)
+    carry_former: list[str] | None = None
+    if existing is not None:
+        existing_title = existing.get("title", "")
+        if my_title and my_title.casefold() != existing_title.casefold():
+            # Deliberate re-identification (the resolution path the
+            # self_title_conflict handoff points a re-tasked agent to).
+            chosen = my_title
+            carry_former = _extend_former(existing, existing_title)
+        elif (bootstrap_suggested_title
+              and bootstrap_suggested_title.casefold()
+              != existing_title.casefold()):
+            return None, errors.self_title_conflict(
+                existing_title, bootstrap_suggested_title, rerun_argv)
         else:
-            return None, errors.info_needed(["self_title"], rerun_argv)
+            # Already registered, no conflicting assertion: --my-title on
+            # a matching subsequent call is a no-op. Renaming mid-session
+            # would break peers that route by the prior title.
+            return existing, None
+    else:
+        chosen = my_title or bootstrap_suggested_title or fallback_self_title
+        if chosen is None:
+            if current_title and current_title not in GENERIC_TITLES:
+                chosen = current_title
+            else:
+                return None, errors.info_needed(["self_title"], rerun_argv)
 
     # Probe for collision BEFORE renaming so a title_collision handoff
     # doesn't leave the caller's cmux tab visibly renamed while the
@@ -143,7 +181,8 @@ def _ensure_self(my_surface: str | None,
             surfaces[my_surface] = {**pre_rename_surf, "title": chosen}
 
     m, err = registry.register(chosen, my_surface, workspace_ref,
-                               live_set, surfaces)
+                               live_set, surfaces,
+                               former_titles=carry_former)
     if err:
         kind = err["kind"]
         if kind == "title_collision":

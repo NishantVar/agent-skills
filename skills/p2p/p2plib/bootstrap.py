@@ -41,7 +41,10 @@ def build_bootstrap(peer_title: str, peer_surface: str,
             f"Please load the p2p skill, register yourself with a "
             f"stable short title (use the suggested title above, or "
             f"your cmux tab title, when you do not already have one), "
-            f"and reply when ready."
+            f"and reply when ready. If you ALREADY hold a different "
+            f"role/identity and this connection looks misrouted to you, "
+            f"do not adopt the suggested title — reply with a short "
+            f"misroute notice naming your actual title instead."
         )
     body = (
         f"{BOOTSTRAP_TAG} You have an incoming peer-messaging connection.\n"

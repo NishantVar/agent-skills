@@ -89,6 +89,49 @@ def title_collision(title: str, workspace_ref: str,
     )
 
 
+def self_title_conflict(current_title: str, suggested_title: str,
+                        rerun_argv: list[str] | None = None) -> dict:
+    """An inbound bootstrap suggested a title that conflicts with this
+    surface's already-registered identity. A bootstrap is routed by tab
+    title, so it can land on a pane that already holds a real, different
+    role — adopting the suggested title silently would either keep
+    framing under a stale prior role (the identity-drift incident) or let
+    a misrouted bootstrap hijack the pane. So `send` refuses to register
+    and bounces the decision to the agent, which has the role context to
+    pick.
+
+    The prepared `rerun_argv` is the RE-TASK replay only: it swaps the
+    soft `--bootstrap-suggested-title` for the deliberate `--my-title`
+    override. The instruction is explicit that this replay is for the
+    re-task case alone — a misrouted target must NOT rerun; it replies
+    with a misroute notice instead."""
+    rerun_argv = rerun_argv or []
+    retask_argv = _drop_flag(rerun_argv, "--bootstrap-suggested-title")
+    if suggested_title:
+        retask_argv = retask_argv + ["--my-title", suggested_title]
+    return _base(
+        "self_title_conflict",
+        f"This surface is already registered under the title "
+        f"{current_title!r}, but the inbound bootstrap addressed you as "
+        f"{suggested_title!r}.",
+        "Do not silently adopt the suggested title — a bootstrap is "
+        "routed by tab title, so it can land on the wrong pane. Decide "
+        "from your own role context: (a) if you have genuinely been "
+        f"RE-TASKED to {suggested_title!r}, rerun with --my-title "
+        f"{suggested_title} to re-register (your prior title is kept in "
+        "former_titles so peers addressing it still bridge to you); "
+        f"(b) if this bootstrap was MISROUTED to you and you are still "
+        f"{current_title!r}, do NOT register — reply to the sender with a "
+        "short misroute notice naming your actual title (the p2p "
+        "misroute rule).",
+        action="resolve_self_identity",
+        retryable=True,
+        rerun_argv=retask_argv,
+        current_title=current_title,
+        suggested_title=suggested_title,
+    )
+
+
 def info_needed(missing: list[str], rerun_argv: list[str]) -> dict:
     """Both branches describe a mechanical retry. Envelope reflects
     that — retryable=True, rerun_argv carried. action_required is
