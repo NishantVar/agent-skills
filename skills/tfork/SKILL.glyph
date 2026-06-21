@@ -59,7 +59,7 @@ const red_flags = """| Thought | Reality |
 | "Peek at the registry first" | The binary handles it; result reports the label. |
 | "Append a briefing after the alias (e.g. `tfork worker handover the task`)" | Aliases are one word. Fork the alias alone, then use p2p to send the briefing. |"""
 
-generated block report_success(result)
+block report_success(result)
     flow:
         "Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed."
         if "the result's type is agent"
