@@ -67,6 +67,12 @@ def test_missing_router_tells_role_to_report_gap(tmp_path):
     assert "Do not invent memory content" in out
 
 
+def test_block_instructs_following_router_to_sibling_files():
+    out = render_startup_reads("reviewer-agent")
+    assert "sibling role-memory files" in out
+    assert "router points to" in out
+
+
 def test_includes_conditional_deeper_instruction_rule_without_crawl():
     out = render_startup_reads("reviewer-agent")
     # Deeper agents-tree instruction files are a conditional, per-surface rule...

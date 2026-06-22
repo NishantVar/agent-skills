@@ -138,6 +138,21 @@ def test_claude_payload_carries_startup_reads_in_order(tmp_path):
             < payload.index("UNIQUE_CHARTER_MARKER"))
 
 
+# --- Missing seated router: launch still succeeds (no launch failure) -------
+
+def test_launch_without_seated_router_succeeds(tmp_path):
+    # A bootstrap/lifecycle adapter with no seated role memory must launch
+    # cleanly; the block reports the missing router rather than failing.
+    _claude_port(tmp_path, "bootstrap-adapter-agent", "# Adapter\nbody\n")
+    out = run_afork("claude", agent="bootstrap-adapter-agent", cwd=str(tmp_path))
+
+    # Launch produced a real launcher/payload — no exception, no fail-closed.
+    assert out["workdir"] is not None
+    payload = (Path(out["workdir"]) / "persona.txt").read_text()
+    assert "agents/memory/bootstrap-adapter-agent/AGENTS.md" in payload
+    assert "report the missing role router" in payload
+
+
 # --- Plain-fork negative: no agent -> no launcher, no preamble -------------
 
 def test_plain_fork_has_no_launcher_and_no_preamble(tmp_path):
