@@ -166,3 +166,92 @@ def test_plain_fork_has_no_launcher_and_no_preamble(tmp_path):
     # no role-memory instruction.
     assert "Required Startup Reads" not in out["command"]
     assert "role-memory router" not in out["command"]
+
+
+# --- End-to-end integration: one repo, three fork targets, both runtimes -----
+
+def _integration_repo(tmp_path):
+    """Build ONE repo holding all the startup-read fork shapes at once:
+    - a seated role whose ONLY router uses the seated ``-agent`` alias form
+      (Codex launches the short stem -> alias resolves; Claude launches the full
+      id -> same-name resolves; both must point at this one router);
+    - a bootstrap adapter with NO router under either form;
+    - a root and a DEEPER agents-tree instruction file, each carrying a unique
+      marker, to prove the launch never inlines/crawls instruction-file contents;
+    - ports for both runtimes carrying NO startup-read text (so a present block
+      proves inheritance, not per-port boilerplate)."""
+    router = (tmp_path / "agents" / "memory"
+              / "runtime-integration-engineer-agent" / "AGENTS.md")
+    router.parent.mkdir(parents=True)
+    router.write_text("# Runtime Integration Engineer\nSEATED_ROUTER_MARKER\n")
+
+    (tmp_path / "agents" / "AGENTS.md").write_text("ROOT_AGENTS_MARKER\n")
+    deeper = tmp_path / "agents" / "skills" / "AGENTS.md"
+    deeper.parent.mkdir(parents=True)
+    deeper.write_text("DEEPER_TREE_MARKER\n")
+
+    _codex_port(tmp_path, "runtime-integration-engineer",
+                'developer_instructions = "SEATED_CHARTER_MARKER"\n')
+    _claude_port(tmp_path, "runtime-integration-engineer-agent",
+                 "# RIE\nSEATED_CHARTER_MARKER\n")
+    _codex_port(tmp_path, "bootstrap-adapter",
+                'developer_instructions = "BOOTSTRAP_CHARTER_MARKER"\n')
+    _claude_port(tmp_path, "bootstrap-adapter-agent",
+                 "# Bootstrap\nBOOTSTRAP_CHARTER_MARKER\n")
+
+
+def _payload(out):
+    return (Path(out["workdir"]) / "persona.txt").read_text()
+
+
+def _assert_integration(tmp_path, runtime, seated_agent, boot_agent,
+                        seated_port_file):
+    seated = _payload(run_afork(runtime, agent=seated_agent, cwd=str(tmp_path)))
+    # Seated role -> its (alias or same-name) router, never reported missing.
+    assert "agents/memory/runtime-integration-engineer-agent/AGENTS.md" in seated
+    assert "report the missing role router" not in seated
+    # Ordering regression: preamble < startup-read block < charter body.
+    assert (seated.index("Identity & Precedence")
+            < seated.index("Required Startup Reads")
+            < seated.index("SEATED_CHARTER_MARKER"))
+
+    # Bootstrap adapter (no router): launches cleanly, reports the missing router.
+    boot_out = run_afork(runtime, agent=boot_agent, cwd=str(tmp_path))
+    assert boot_out["workdir"] is not None
+    assert "report the missing role router" in _payload(boot_out)
+
+    # Plain fork: no startup-read block, no launcher.
+    plain = run_afork(runtime, cwd=str(tmp_path))
+    assert plain["agent"] is None
+    assert plain["workdir"] is None
+    assert "Required Startup Reads" not in plain["command"]
+
+    # No per-port churn: the block is inherited, not pasted into the port body.
+    assert "Required Startup Reads" not in seated_port_file.read_text()
+
+    # No deeper-tree crawl: the block NAMES paths and states the rule, but no
+    # instruction-file contents (root, deeper, or router) are inlined at launch.
+    assert "do not crawl every" in seated
+    assert "ROOT_AGENTS_MARKER" not in seated
+    assert "DEEPER_TREE_MARKER" not in seated
+    assert "SEATED_ROUTER_MARKER" not in seated
+
+
+def test_integration_all_targets_codex(tmp_path):
+    _integration_repo(tmp_path)
+    _assert_integration(
+        tmp_path, "codex",
+        seated_agent="runtime-integration-engineer",
+        boot_agent="bootstrap-adapter",
+        seated_port_file=(tmp_path / ".codex" / "agents"
+                          / "runtime-integration-engineer.toml"))
+
+
+def test_integration_all_targets_claude(tmp_path):
+    _integration_repo(tmp_path)
+    _assert_integration(
+        tmp_path, "claude",
+        seated_agent="runtime-integration-engineer-agent",
+        boot_agent="bootstrap-adapter-agent",
+        seated_port_file=(tmp_path / ".claude" / "agents"
+                          / "runtime-integration-engineer-agent.md"))
