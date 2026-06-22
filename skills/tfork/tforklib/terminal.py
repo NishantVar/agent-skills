@@ -415,9 +415,12 @@ class CmuxTerminal(Terminal):
     def _new_split(self, direction, origin_surface):
         """Split a new pane off ``origin_surface`` and return its ref.
 
-        ``--focus true`` is load-bearing: cmux instantiates a split's terminal
-        lazily, and an unfocused split can sit indefinitely as a surface
-        record with no shell. Focusing it forces the shell to come up.
+        ``--focus false`` is deliberate: forking an agent must never steal
+        focus from the caller's pane — bouncing the human's view on every
+        fork is the whole annoyance we refuse to ship. cmux instantiates a
+        split's terminal lazily, so an unfocused split starts as a surface
+        record with no shell; ``_wait_ready`` wakes it with a keystroke (which
+        brings the shell up *without* moving focus) before we spawn into it.
 
         ``--workspace`` is passed explicitly whenever the surface lives in a
         workspace other than the caller's — cmux's ``new-split`` defaults to
@@ -425,7 +428,7 @@ class CmuxTerminal(Terminal):
         cross-workspace anchor otherwise."""
         cmux_dir = _CMUX_DIRECTION.get(direction, direction)
         cmd = ["cmux", "--json", "new-split", cmux_dir,
-               "--surface", origin_surface, "--focus", "true"]
+               "--surface", origin_surface, "--focus", "false"]
         cmd += self._workspace_args(origin_surface)
         result = _run(cmd)
         if result.returncode != 0:
@@ -741,9 +744,14 @@ class CmuxTerminal(Terminal):
         """Block until the new pane's shell can accept input, bounded.
 
         Until the lazily-instantiated terminal is up, ``read-screen`` fails;
-        once it succeeds the shell is live. A pane that never comes up is
-        left to surface downstream as a spawn or verification failure, not a
-        hang.
+        once it succeeds the shell is live. An *unfocused* split never wakes on
+        its own — cmux only spins up a split's shell on focus — so after a
+        failed poll we nudge it with ``send-key enter``: a keystroke brings the
+        shell up *without* moving focus, which is exactly how a fork lands
+        beside the caller without bouncing their view. Eagerly-seeded panes
+        (workspace/window placement) are live on the first poll and never get
+        the nudge. A pane that never comes up is left to surface downstream as
+        a spawn or verification failure, not a hang.
         """
         deadline = time.monotonic() + self.READY_TIMEOUT
         ws_args = self._workspace_args(session)
@@ -752,6 +760,9 @@ class CmuxTerminal(Terminal):
                           "--lines", "1", *ws_args])
             if ready.returncode == 0:
                 return
+            # Best-effort wake for an unfocused lazy split; harmless (an empty
+            # prompt line) on a pane that was already coming up.
+            _run(["cmux", "send-key", "--surface", session, "enter", *ws_args])
             time.sleep(0.5)
 
     # -- spawn --------------------------------------------------------------
