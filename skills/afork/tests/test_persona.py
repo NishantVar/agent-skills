@@ -40,6 +40,21 @@ def test_ordering_preamble_before_charter():
     assert out.index("Identity & Precedence") < out.index("UNIQUE_CHARTER_MARKER")
 
 
+def test_ordering_preamble_then_startup_reads_then_charter():
+    charter = "UNIQUE_CHARTER_MARKER body"
+    out = compose_persona("reviewer", charter)
+    i_preamble = out.index("Identity & Precedence")
+    i_startup = out.index("Required Startup Reads")
+    i_charter = out.index("UNIQUE_CHARTER_MARKER")
+    assert i_preamble < i_startup < i_charter
+
+
+def test_startup_reads_block_role_templated():
+    out = compose_persona("reviewer-agent", "charter")
+    assert "agents/memory/reviewer-agent/AGENTS.md" in out
+    assert "{role}" not in out
+
+
 # --- Definition-backed fork: emitted persona payload, per runtime ----------
 
 def _codex_port(tmp_path, name, body):
@@ -79,6 +94,50 @@ def test_claude_definition_fork_payload_begins_with_preamble(tmp_path):
     assert payload.endswith("# Reviewer\nRead-only charter body.\n")
 
 
+# --- Required Startup Reads block in the emitted persona payload, per runtime --
+
+def test_codex_payload_carries_startup_reads_in_order(tmp_path):
+    _codex_port(tmp_path, "reviewer",
+                'developer_instructions = "UNIQUE_CHARTER_MARKER"\n')
+    out = run_afork("codex", agent="reviewer", cwd=str(tmp_path))
+
+    payload = (Path(out["workdir"]) / "persona.txt").read_text()
+    assert "Required Startup Reads" in payload
+    assert "agents/memory/reviewer/AGENTS.md" in payload
+    # Identity preamble, then startup reads, then the charter body — in order.
+    assert (payload.index("Identity & Precedence")
+            < payload.index("Required Startup Reads")
+            < payload.index("UNIQUE_CHARTER_MARKER"))
+
+
+def test_codex_payload_uses_agent_suffix_role_memory_alias(tmp_path):
+    _codex_port(tmp_path, "runtime-integration-engineer",
+                'developer_instructions = "UNIQUE_CHARTER_MARKER"\n')
+    router = (tmp_path / "agents" / "memory"
+              / "runtime-integration-engineer-agent" / "AGENTS.md")
+    router.parent.mkdir(parents=True)
+    router.write_text("# Runtime Integration Engineer\n")
+
+    out = run_afork("codex", agent="runtime-integration-engineer",
+                    cwd=str(tmp_path))
+
+    payload = (Path(out["workdir"]) / "persona.txt").read_text()
+    assert "agents/memory/runtime-integration-engineer-agent/AGENTS.md" in payload
+
+
+def test_claude_payload_carries_startup_reads_in_order(tmp_path):
+    _claude_port(tmp_path, "reviewer-agent",
+                 "# Reviewer\nUNIQUE_CHARTER_MARKER\n")
+    out = run_afork("claude", agent="reviewer-agent", cwd=str(tmp_path))
+
+    payload = (Path(out["workdir"]) / "persona.txt").read_text()
+    assert "Required Startup Reads" in payload
+    assert "agents/memory/reviewer-agent/AGENTS.md" in payload
+    assert (payload.index("Identity & Precedence")
+            < payload.index("Required Startup Reads")
+            < payload.index("UNIQUE_CHARTER_MARKER"))
+
+
 # --- Plain-fork negative: no agent -> no launcher, no preamble -------------
 
 def test_plain_fork_has_no_launcher_and_no_preamble(tmp_path):
@@ -88,3 +147,7 @@ def test_plain_fork_has_no_launcher_and_no_preamble(tmp_path):
     assert out["workdir"] is None
     assert "Identity & Precedence" not in out["command"]
     assert "availability is not permission" not in out["command"]
+    # A plain fork is a general runtime session: no role startup-read block and
+    # no role-memory instruction.
+    assert "Required Startup Reads" not in out["command"]
+    assert "role-memory router" not in out["command"]

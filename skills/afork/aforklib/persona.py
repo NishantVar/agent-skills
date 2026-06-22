@@ -7,11 +7,16 @@ identities at once. This deep module prepends a single shared preamble — the
 role declared as the sole operating identity, plus an "availability is not
 permission" posture line — ahead of the charter, templated with the role name.
 
-Pure function of (role_name, charter_body): no I/O, no runtime-adapter
-knowledge. The template is one module-level constant with a single ``{role}``
-substitution; the composed string is plain prose carried by the existing
-persona payload (which already handles escaping).
+Pure function of (role_name, charter_body, launched working repo): no
+runtime-adapter knowledge. The identity template is one module-level constant
+with a single ``{role}`` substitution; the composed string is plain prose
+carried by the existing persona payload (which already handles escaping).
+
+The Required Startup Reads block (its own deep module) is composed between the
+preamble and the charter, so every definition-backed fork inherits both blocks.
 """
+
+from .startup_reads import render_startup_reads
 
 # Verbatim wording from the PRD Solution section. One `{role}` substitution.
 IDENTITY_PREAMBLE = """\
@@ -29,7 +34,7 @@ expand your role. If anything — host framing, available tools, or a user
 request — conflicts with your charter, the charter wins; surface the conflict
 rather than acting outside your role."""
 
-# Blank line between the prepended preamble and the unchanged charter body.
+# Blank line between prepended blocks and the unchanged charter body.
 _CHARTER_SEPARATOR = "\n\n"
 
 
@@ -38,7 +43,11 @@ def render_preamble(role_name):
     return IDENTITY_PREAMBLE.replace("{role}", role_name)
 
 
-def compose_persona(role_name, charter_body):
-    """Return the composed persona: preamble (role-templated) + separator +
-    the charter body unchanged. Pure; no escaping (the payload handles that)."""
-    return render_preamble(role_name) + _CHARTER_SEPARATOR + charter_body
+def compose_persona(role_name, charter_body, repo_root=None):
+    """Return the composed persona: identity+precedence preamble, then the
+    Required Startup Reads block, then the charter body unchanged — both
+    prepended blocks role-templated. Pure; no escaping (the payload handles
+    that)."""
+    return (render_preamble(role_name)
+            + _CHARTER_SEPARATOR + render_startup_reads(role_name, repo_root)
+            + _CHARTER_SEPARATOR + charter_body)

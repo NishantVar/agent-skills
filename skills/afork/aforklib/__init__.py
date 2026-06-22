@@ -84,10 +84,10 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     effort = effort or adapter.declared_effort(parsed) or adapter.default_effort
 
     # --- Persona: only custom mode carries one. A definition-backed fork leads
-    # its charter with the shared identity+precedence+posture preamble (templated
-    # with the resolved role name); plain forks keep the empty-persona path. ---
+    # its charter with the shared identity+precedence+posture preamble and the
+    # cwd-aware startup-read block; plain forks keep the empty-persona path. ---
     if agent is not None:
-        persona = compose_persona(agent_name, adapter.persona_body(parsed))
+        persona = compose_persona(agent_name, adapter.persona_body(parsed), cwd)
     else:
         persona = ""
 
