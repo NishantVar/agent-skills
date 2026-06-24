@@ -24,8 +24,120 @@ usage() {
   echo "Options:"
   echo "  --dir <path>  Use an external skills directory (parent of skill subdirs) instead of the built-in one"
   echo "  --force       Overwrite existing non-symlinked skills without prompting"
+  echo ""
+  echo "MCP server registration (not a skill):"
+  echo "  $0 mcp [claude|codex|all]   Register the flux-mcp server (default all)"
+  echo "  NOTE: 'mcp' is a reserved first positional for this subcommand, so it"
+  echo "  cannot also name a skill-install agent. It takes no skill-install flags"
+  echo "  (--dir/--force); any args after the host selector are ignored."
   exit 1
 }
+
+agent_label() {
+  echo "$1" | awk '{print toupper(substr($0,1,1)) substr($0,2)}'
+}
+
+dest_for_agent() {
+  echo "$HOME/.$1/skills"
+}
+
+# --- MCP server registration (additive; separate from skill install) ---
+#
+# flux-mcp is an MCP server, not a Skill-tool skill. It is NOT symlinked into
+# ~/.<agent>/skills; instead it is registered with each host's MCP config.
+# Defined (and dispatched) before skill-install flag parsing so the `mcp`
+# subcommand never touches --dir/--force validation.
+
+FLUX_MCP_PY="$SCRIPT_DIR/mcp/flux/flux_mcp.py"
+
+toml_escape() {
+  # Escape backslashes then double-quotes for a TOML basic string, so a repo
+  # path containing " or \ still produces valid TOML.
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+prune_flux_mcp_skill_symlink() {
+  # flux-mcp is no longer a skill; remove a stale symlink if a prior install left one.
+  local agent="$1" link
+  link="$(dest_for_agent "$agent")/flux-mcp"
+  if [[ -L "$link" ]]; then
+    rm "$link" && echo "  Removed stale flux-mcp skill symlink for $(agent_label "$agent")"
+  fi
+}
+
+register_mcp_claude() {
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "  Skipping claude: 'claude' CLI not found on PATH" >&2
+    return 0
+  fi
+  claude mcp remove flux -s user >/dev/null 2>&1 || true
+  claude mcp add flux -s user -- python3 "$FLUX_MCP_PY" --scope orchestrator
+  echo "  Registered flux MCP server for Claude (user scope, orchestrator)"
+}
+
+register_mcp_codex() {
+  local cfg="$HOME/.codex/config.toml"
+  mkdir -p "$HOME/.codex"
+  touch "$cfg"
+  local esc
+  esc="$(toml_escape "$FLUX_MCP_PY")"
+  # Strip any prior managed block, then append a fresh one (idempotent).
+  local tmp
+  tmp="$(mktemp)"
+  awk '
+    /^# >>> flux-mcp/ {skip=1}
+    skip!=1 {print}
+    /^# <<< flux-mcp/ {skip=0}
+  ' "$cfg" > "$tmp"
+  {
+    printf '\n# >>> flux-mcp (managed by agent-skills install.sh) >>>\n'
+    printf '[mcp_servers.flux_comms]\ncommand = "python3"\nargs = ["%s", "--scope", "comms"]\n\n' "$esc"
+    printf '[mcp_servers.flux_orchestrator]\ncommand = "python3"\nargs = ["%s", "--scope", "orchestrator"]\n' "$esc"
+    printf '# <<< flux-mcp <<<\n'
+  } >> "$tmp"
+  mv "$tmp" "$cfg"
+  echo "  Wrote codex [mcp_servers.flux_comms]/[mcp_servers.flux_orchestrator] to $cfg"
+}
+
+register_mcp() {
+  local agent="$1"
+  echo "Registering flux MCP server for $agent..."
+  case "$agent" in
+    claude) register_mcp_claude ;;
+    codex)  register_mcp_codex ;;
+    *) echo "  No MCP registration defined for '$agent' (only claude, codex)" >&2 ;;
+  esac
+}
+
+run_mcp_subcommand() {
+  # $1 is the host selector (claude|codex|all, default all).
+  local host="${1:-all}"
+  local mcp_agents
+  case "$host" in
+    ""|all) mcp_agents=(claude codex) ;;
+    claude) mcp_agents=(claude) ;;
+    codex)  mcp_agents=(codex) ;;
+    *) echo "Error: 'mcp' target accepts: claude | codex | all" >&2; exit 1 ;;
+  esac
+  # flux-mcp is no longer a skill on ANY host — prune stale symlinks for every
+  # known agent (not just the hosts being registered) so e.g. a leftover
+  # ~/.gemini/skills/flux-mcp is cleaned up too.
+  local a
+  for a in "${DEFAULT_AGENTS[@]}"; do prune_flux_mcp_skill_symlink "$a"; done
+  local agent
+  for agent in "${mcp_agents[@]}"; do register_mcp "$agent"; done
+  echo "Done."
+}
+
+# Dispatch the `mcp` subcommand before any skill-install flag parsing so it is
+# fully isolated from the skill grammar (--dir/--force, agent-name resolution).
+if [[ "${1:-}" == "mcp" ]]; then
+  run_mcp_subcommand "${2:-}"
+  exit 0
+fi
 
 # Parse flags from arguments
 force=false
@@ -54,14 +166,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 set -- "${args[@]}"
-
-agent_label() {
-  echo "$1" | awk '{print toupper(substr($0,1,1)) substr($0,2)}'
-}
-
-dest_for_agent() {
-  echo "$HOME/.$1/skills"
-}
 
 install_skill() {
   local agent="$1"
