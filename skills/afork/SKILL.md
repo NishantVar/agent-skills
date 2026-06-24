@@ -11,9 +11,6 @@ description: 'Front door for forking any coding agent (plain or definition-backe
 - **agent**:
   Optional agent definition to launch: either a bare name resolved under <cwd>/.<runtime>/agents/ then ~/.<runtime>/agents/ — repo-local wins, home is the fallback (e.g. `reviewer` -> .codex/agents/reviewer.toml or ~/.codex/agents/reviewer.toml; `systems-designer-agent` -> .claude/agents/systems-designer-agent.md; `afork claude reviewer` picks up ~/.claude/agents/reviewer.md when the repo has no local one) — or an explicit definition path (e.g. `/repo/.codex/agents/reviewer.toml`). Path form loads that file directly and uses its filename stem as the agent name; --cwd still controls only where the agent runs. Omit for a plain agent (default params). pi has no agents dir — a custom agent there errors.
   Default: none.
-- **permission**:
-  Agnostic permission posture: `none` (yolo, default) | `read-only` | `workspace-write`. Unset resolves to the definition's declaration, else none. Restricted postures fail closed on runtimes that can't enforce them (claude/pi this round).
-  Default: none.
 - **model**: Agnostic model; falls back to the definition's declaration, else the runtime default (claude `opus`; codex/pi none). Accepts a combined spec with a trailing effort token — `fable max` splits into model `fable` + effort `max` (an explicit --effort wins). A model name right after the runtime (e.g. `claude opus`, `claude fable max`) is this parameter, not an agent definition. Default: none.
 - **effort**:
   Agnostic reasoning effort; falls back to the definition's declaration, else the runtime default (codex `xhigh`; claude `high`).
@@ -33,7 +30,7 @@ description: 'Front door for forking any coding agent (plain or definition-backe
 
 - **binary-contract**
 
-  afork.py is deterministic and self-contained, and is agnostic to runtime flag names — a per-runtime adapter owns the mapping. It picks the runtime adapter, decides plain (no agent) vs custom (definition-backed) mode, resolves a bare agent name under --cwd then ~/.<runtime>/agents/ (repo-local first) or an explicit definition path directly, resolves the permission posture by precedence (--permission > definition's declared sandbox > default none), checks the adapter can runtime-enforce a restricted posture (else fails closed), resolves model/effort (arg > definition > runtime default; a combined --model spec like `fable max` splits into model + trailing effort token, an explicit --effort winning), and builds the launch command. In explicit-path mode, --cwd controls only where the agent runs; the handoff agent/title default uses the definition filename stem. Plain agents get a flat shell-quoted argv (no temp launcher). Custom agents with a persona get a 0600 payload + generated executable launcher path so multiline persona never crosses the agent->tfork shell boundary; the launcher enforces the posture via flags and injects the persona at system/developer level. It always prints exactly one JSON object. On success: a `ready_to_fork` handoff carrying command, handoff_skill ("tfork"), runtime, agent (null when plain), posture, enforced (bool; `none` is always enforced — nothing to enforce), title, cwd, type ("agent"), placement, workdir (null when plain), and an agent_instruction telling you exactly how to call tfork. On failure: ok false and a code: `port_not_found` (missing bare-name or explicit-path definition), `unenforceable` (fail-closed refusal — a declared restriction the adapter can't enforce), `custom_unsupported` (custom agent requested for a runtime with no agents dir, e.g. pi), `runtime_unsupported` (no adapter, e.g. antigravity), `bad_arguments`, or `port_unparsable`. Each failure carries human_message and agent_instruction.
+  afork.py is deterministic and self-contained, and is agnostic to runtime flag names — a per-runtime adapter owns the mapping. It picks the runtime adapter, decides plain (no agent) vs custom (definition-backed) mode, resolves a bare agent name under --cwd then ~/.<runtime>/agents/ (repo-local first) or an explicit definition path directly, resolves the permission posture from the definition's declared sandbox (else default none) — the skill never passes a posture; the port file is the only source — checks the adapter can runtime-enforce a restricted posture (else fails closed), resolves model/effort (arg > definition > runtime default; a combined --model spec like `fable max` splits into model + trailing effort token, an explicit --effort winning), and builds the launch command. In explicit-path mode, --cwd controls only where the agent runs; the handoff agent/title default uses the definition filename stem. Plain agents get a flat shell-quoted argv (no temp launcher). Custom agents with a persona get a 0600 payload + generated executable launcher path so multiline persona never crosses the agent->tfork shell boundary; the launcher enforces the posture via flags and injects the persona at system/developer level. It always prints exactly one JSON object. On success: a `ready_to_fork` handoff carrying command, handoff_skill ("tfork"), runtime, agent (null when plain), posture, enforced (bool; `none` is always enforced — nothing to enforce), title, cwd, type ("agent"), placement, workdir (null when plain), and an agent_instruction telling you exactly how to call tfork. On failure: ok false and a code: `port_not_found` (missing bare-name or explicit-path definition), `unenforceable` (fail-closed refusal — a declared restriction the adapter can't enforce), `custom_unsupported` (custom agent requested for a runtime with no agents dir, e.g. pi), `runtime_unsupported` (no adapter, e.g. antigravity), `bad_arguments`, or `port_unparsable`. Each failure carries human_message and agent_instruction.
 
 ## Constraints
 
@@ -44,26 +41,24 @@ description: 'Front door for forking any coding agent (plain or definition-backe
 
 ## Steps
 
-1. Extract the parameters from the user's request — {runtime}, {agent}, {permission}, {model}, {effort}, {title}, {cwd}, {placement} — and forward them as-is. Do not invent values; use the defaults when the user did not name one. {runtime} is required; omit {agent} for a plain agent.
+1. Extract the parameters from the user's request — {runtime}, {agent}, {model}, {effort}, {title}, {cwd}, {placement} — and forward them as-is. Do not invent values; use the defaults when the user did not name one. {runtime} is required; omit {agent} for a plain agent.
 2. Begin the invocation as: python3 <skill-dir>/afork.py {runtime}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — afork.py sits in that same directory. On macOS, `/usr/bin/python3` may be Python 3.9 and fail with `ModuleNotFoundError: No module named 'tomllib'`; if that happens, rerun the same command with `python3.11` (or another Python >=3.11) rather than treating afork as broken.
 3. Decide whether the user named a specific agent definition applies and, if so:
    a. Append {agent} as the second positional argument, right after {runtime}.
-4. Decide whether the user named a permission posture applies and, if so:
-   a. Insert --permission {permission} into the invocation.
-5. Decide whether the user named a model applies and, if so:
+4. Decide whether the user named a model applies and, if so:
    a. Insert --model {model} into the invocation.
-6. Decide whether the user named an effort level applies and, if so:
+5. Decide whether the user named an effort level applies and, if so:
    a. Insert --effort {effort} into the invocation.
-7. Decide whether the user named a title applies and, if so:
+6. Decide whether the user named a title applies and, if so:
    a. Insert --title {title} into the invocation.
-8. Decide whether the user named a target repo or working directory applies and, if so:
+7. Decide whether the user named a target repo or working directory applies and, if so:
    a. Insert --cwd {cwd} into the invocation. Bare-name ports resolve relative to this directory then fall back to ~/.<runtime>/agents/; explicit definition paths do not.
-9. Decide whether the user named a placement applies and, if so:
+8. Decide whether the user named a placement applies and, if so:
    a. Insert --placement {placement} into the invocation.
-10. Decide whether the user has explicitly accepted an unenforced launch for a runtime that cannot enforce the declared posture applies and, if so:
+9. Decide whether the user has explicitly accepted an unenforced launch for a runtime that cannot enforce the declared posture applies and, if so:
    a. Insert --allow-unenforced into the invocation. Never add this on your own initiative — only on explicit user instruction.
-11. Run the assembled afork.py invocation and capture its stdout as a single JSON object.
-12. Decide which of the following applies and follow only that path:
+10. Run the assembled afork.py invocation and capture its stdout as a single JSON object.
+11. Decide which of the following applies and follow only that path:
    If the JSON has ok set to true and action is ready_to_fork:
    a. Read the result's command, title, cwd, type, and placement fields and its agent_instruction. Load the tfork skill and fork the command verbatim: pass it after the -- separator with --title, --cwd, --type agent, and --placement from the handoff. Do not edit the command. After tfork returns the new pane's surface/title, that is the address for this agent. When the user asks to brief or message it, load the p2p skill and use that title.
    Otherwise:
