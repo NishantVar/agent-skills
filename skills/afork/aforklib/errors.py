@@ -127,12 +127,21 @@ def err_unenforceable(runtime, agent, declared, reason):
 
 
 def ready_to_fork(runtime, agent, posture, command, title, cwd,
-                  workdir, enforced=True, placement=None):
+                  workdir, enforced=True, placement=None, observed=None,
+                  obs_tags=None, obs_warning=None):
     """The success handoff: a fully-built launch command for the tfork skill.
 
     afork stops here by design — it does not invoke tfork. The calling agent
     takes ``command`` and forks it via the tfork skill with the carried
     --title / --cwd / --type agent (and --placement when present).
+
+    ``observed`` is None when --observe was not requested at all, and the whole
+    observability block is then omitted — a handoff without --observe is
+    byte-for-byte what it always was, so existing consumers see no new fields.
+    When requested, ``observed`` is True only if the command was really wrapped;
+    the fail-open path (no `lens` on PATH) reports False plus ``obs_warning``.
+    ``obs_tags`` echoes the attribution that was *requested*; ``observed`` is the
+    only authority on whether it was actually applied.
     """
     tfork_args = (f"--title {shlex.quote(str(title))} "
                   f"--cwd {shlex.quote(str(cwd))} --type agent")
@@ -151,7 +160,12 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
         note = (f"UNENFORCED launch: --allow-unenforced was passed, so the "
                 f"declared {posture!r} restriction is NOT runtime-enforced. "
                 f"The user accepted this risk.")
-    return {
+    if observed:
+        note += (" Launch wrapped with agentlens (`lens run`); capture itself "
+                 "is fail-open and never changes the agent's exit code.")
+    elif obs_warning:
+        note += f" {obs_warning}"
+    out = {
         "ok": True,
         "action": "ready_to_fork",
         "handoff_skill": "tfork",
@@ -173,3 +187,9 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
             f"-- separator, passing {tfork_args}. Do not edit the command."),
         "note": note,
     }
+    if observed is not None:
+        out["observed"] = observed
+        out["obs_tags"] = obs_tags or None
+        if obs_warning:
+            out["obs_warning"] = obs_warning
+    return out
