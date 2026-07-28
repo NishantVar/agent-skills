@@ -1,6 +1,32 @@
 # afork — todo
 
-_Last refreshed: 2026-06-11_
+_Last refreshed: 2026-07-15_
+
+## agentlens observability (BUILT, branch `agentlens-observe`, 2026-07-15)
+
+Opt-in `--observe` / `--obs-tag k=v` wrap the built launch command with agentlens
+(`lens run`), the observability tool at `~/genesis/observability`. Plain agents get
+`env AGENTLENS_TAGS=… lens run -- <runtime argv>` (still one flat shlex-joined line);
+custom agents get `export AGENTLENS_TAGS=…` + `exec lens run -- …` in the generated
+launcher. Attribution rides the *env var* rather than agentlens's own `--tag` flags
+because env wins on collision there — that is what keeps a whole nested spawn tree
+attributed to the outer orchestrator's run (see the agentlens flux-integration doc).
+
+**Fail-open, deliberately.** `--observe` with no `lens` on PATH does NOT fail: the
+command is built unwrapped and the handoff carries `observed: false` + `obs_warning`.
+Observability is not a security posture, so a missing observer must never block a
+launch — the opposite of afork's fail-*closed* rule for unenforceable permission
+postures. Those two rules coexist on purpose; don't "unify" them.
+
+Handoff gains `observed` / `obs_tags` / `obs_warning` **only** when `--observe` was
+passed, so existing consumers see a byte-identical object without it.
+
+Open follow-ups:
+- No `lens`-installed integration test — the suite pins `shutil.which` in both
+  directions so it passes with or without agentlens on the machine. A real
+  `lens run` smoke test would need agentlens installed in CI.
+- Tag values are rejected if they contain a comma (AGENTLENS_TAGS is comma-separated
+  and one would silently split a tag). If agentlens ever gains escaping, relax this.
 
 ## Home-dir agent resolution (BUILT, uncommitted, 2026-06-11)
 

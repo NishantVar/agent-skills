@@ -4,6 +4,7 @@ object, and exit with a code that reflects the outcome.
     afork.py <runtime> [agent] [--permission {none,read-only,workspace-write}]
              [--model M] [--effort E] [--title T] [--cwd DIR]
              [--placement {right,left,top,bottom}] [--allow-unenforced]
+             [--observe] [--obs-tag k=v ...]
 """
 
 import argparse
@@ -47,6 +48,15 @@ def build_parser():
     p.add_argument("--allow-unenforced", action="store_true",
                    help="Explicitly proceed when a declared restriction cannot "
                         "be runtime-enforced. Off by default (fail-closed).")
+    p.add_argument("--observe", action="store_true",
+                   help="Wrap the launch command with agentlens (`lens run`) to "
+                        "capture the session's prompts and tokens. Fail-open: if "
+                        "`lens` is not on PATH the command is built unwrapped.")
+    p.add_argument("--obs-tag", dest="obs_tags", action="append", default=None,
+                   metavar="k=v",
+                   help="Attribution tag for the observed session, repeatable "
+                        "(e.g. --obs-tag agent=reviewer --obs-tag run=42). "
+                        "Requires --observe.")
     return p
 
 
@@ -70,6 +80,8 @@ def main(argv=None):
             cwd=args.cwd,
             placement=args.placement,
             allow_unenforced=args.allow_unenforced,
+            observe=args.observe,
+            obs_tags=args.obs_tags,
         )
     except AforkError as exc:
         print(json.dumps(exc.handoff(), indent=2))
