@@ -61,8 +61,11 @@ def derive_launch_outcome(obs, sidecar=None, delivery=DELIVERY_COMPLETE):
     if not obs.readable:
         return unknown("observation_timeout", **facts)
 
-    marker = (sidecar or {}).get("exec_marker")
-    marker_seen = bool(marker) and marker in obs.pane_text
+    # load_sidecar already guarantees a str-or-None marker, but this function
+    # is public and takes a dict — a hand-built one never passed through it,
+    # and a wrong-typed marker must degrade to "no marker", never raise.
+    marker = sidecar.get("exec_marker") if isinstance(sidecar, dict) else None
+    marker_seen = isinstance(marker, str) and bool(marker) and marker in obs.pane_text
 
     # 3. No start sentinel: the wrapper never announced the command. A marker
     #    without a start sentinel contradicts itself (the marker is printed by

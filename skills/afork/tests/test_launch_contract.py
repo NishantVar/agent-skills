@@ -92,6 +92,19 @@ def test_sidecar_round_trips_through_load(tmp_path):
     assert load_sidecar(launch.launch_contract)["attempt_id"] == launch.attempt_id
 
 
+def test_every_adapter_writes_a_shape_the_reader_accepts(tmp_path):
+    """The reader rejects a malformed version-1 file outright. An adapter that
+    wrote one would produce a fork that silently never classifies — the sidecar
+    would be there, and ignored."""
+    for adapter in (CodexAdapter(), ClaudeAdapter(), PiAdapter()):
+        for agent in ("a", None):          # custom (has a marker) and plain
+            launch = build_launch(adapter, agent, "none", None, None, "P",
+                                  root=str(tmp_path / adapter.runtime
+                                           / str(agent)))
+            assert load_sidecar(launch.launch_contract) is not None, (
+                f"{adapter.runtime}/{agent} wrote a sidecar the reader rejects")
+
+
 # --- the handoff ------------------------------------------------------------
 
 def test_handoff_carries_the_contract_path_and_attempt_id(tmp_path):

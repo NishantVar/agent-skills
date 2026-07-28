@@ -358,6 +358,90 @@ def test_a_sidecar_with_no_signatures_still_classifies_the_marker():
     assert out["evidence_code"] == "runtime_exec_failed"
 
 
+# --- a malformed version-1 sidecar is unusable, not fatal -------------------
+
+MALFORMED = [
+    ("signatures is a list", {"signatures": ["not-a-map"]}),
+    ("signatures is a string", {"signatures": "model_rejected"}),
+    ("signatures is a number", {"signatures": 7}),
+    ("patterns are a bare string", {"signatures": {"model_rejected": "boom"}}),
+    ("patterns are a number", {"signatures": {"model_rejected": 5}}),
+    ("patterns are a nested map", {"signatures": {"model_rejected": {"a": 1}}}),
+    ("a pattern is not a string", {"signatures": {"model_rejected": [None]}}),
+    ("a pattern is a list", {"signatures": {"model_rejected": [["x"]]}}),
+    ("exec_marker is a list", {"exec_marker": ["marker"]}),
+    ("exec_marker is a number", {"exec_marker": 1}),
+    ("exec_marker is a map", {"exec_marker": {"m": MARKER}}),
+]
+
+
+@pytest.mark.parametrize("label,bad", MALFORMED, ids=[m[0] for m in MALFORMED])
+def test_a_malformed_version_1_sidecar_is_rejected_whole(tmp_path, label, bad):
+    """Announcing version 1 is a claim, not proof. Reading the well-formed half
+    of a corrupt file is how a corrupt file ends up licensing a retry."""
+    path = tmp_path / "lc.json"
+    path.write_text(json.dumps(dict(SIDECAR, **bad)))
+    assert load_sidecar(str(path)) is None, label
+
+
+@pytest.mark.parametrize("label,bad", MALFORMED, ids=[m[0] for m in MALFORMED])
+def test_a_malformed_sidecar_ends_as_unknown_not_as_a_crash(tmp_path, label,
+                                                            bad):
+    """End to end, the way a real fork runs it. The crash this guards against
+    would land AFTER the pane exists, leaving the dispatcher with no
+    launch_outcome at all for a launch that really was attempted — the one
+    thing the contract promises can never happen."""
+    path = tmp_path / "lc.json"
+    path.write_text(json.dumps(dict(SIDECAR, **bad)))
+    out = derive_launch_outcome(
+        obs(end=True, exit_status=127, foreground="zsh",
+            pane_text=f"launch.sh: codex: not found\n{MARKER}"),
+        load_sidecar(str(path)))
+    assert list(out) == list(OUTCOME_FIELDS)
+    assert out["state"] == "unknown", label
+    assert out["reason_code"] is None
+
+
+@pytest.mark.parametrize("label,bad", MALFORMED, ids=[m[0] for m in MALFORMED])
+def test_deriving_from_a_hand_built_malformed_dict_never_raises(label, bad):
+    """``derive_launch_outcome`` is public and takes a dict, so a caller can
+    reach it without going through ``load_sidecar``'s validation. It still may
+    not raise; whatever it decides must be a valid contract object."""
+    out = derive_launch_outcome(
+        obs(end=True, exit_status=127, foreground="zsh",
+            pane_text=f"launch.sh: codex: not found\n{MARKER}"),
+        dict(SIDECAR, **bad))
+    assert list(out) == list(OUTCOME_FIELDS)
+    assert out["state"] in STATES, label
+
+
+def test_a_bare_string_pattern_is_not_iterated_character_by_character():
+    """str is iterable, so an un-listed pattern would be walked one character
+    at a time — and single characters match almost anything. That is a false
+    TRUSTED classification, strictly worse than the crash."""
+    sidecar = dict(SIDECAR, signatures={"model_rejected": "xyz",
+                                        "runtime_launch_error": []})
+    out = derive_launch_outcome(
+        obs(end=True, exit_status=2, foreground="zsh",
+            pane_text="x marks the spot\n"), sidecar)
+    assert out["state"] == "unknown"
+    assert out["evidence_code"] == "unrecognized_exit"
+
+
+def test_a_well_formed_sidecar_missing_signatures_entirely_still_loads(tmp_path):
+    """Absent is not malformed: an adapter that declared nothing yields no
+    match, which is exactly what an empty signature table already means."""
+    body = {k: v for k, v in SIDECAR.items() if k != "signatures"}
+    path = tmp_path / "lc.json"
+    path.write_text(json.dumps(body))
+    loaded = load_sidecar(str(path))
+    assert loaded is not None
+    out = derive_launch_outcome(
+        obs(end=True, exit_status=127, foreground="zsh", pane_text=MARKER),
+        loaded)
+    assert out["evidence_code"] == "runtime_exec_failed"
+
+
 # --- the shared module must not drift ---------------------------------------
 
 def test_outcome_module_is_byte_identical_to_aforks():

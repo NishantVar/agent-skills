@@ -254,13 +254,45 @@ def write_sidecar(workdir, sidecar):
     return str(path)
 
 
+def _is_well_formed(data):
+    """True when a version-1 sidecar has the shapes its readers assume.
+
+    Announcing version 1 is a claim, not proof. The readers index
+    ``signatures`` as a mapping and test ``exec_marker`` with ``in`` against
+    pane text, so a wrong-typed value there would raise mid-fork — after the
+    pane already exists — and cost the caller the launch_outcome it is
+    entitled to for an attempted launch.
+    """
+    marker = data.get("exec_marker")
+    if marker is not None and not isinstance(marker, str):
+        return False
+    signatures = data.get("signatures")
+    if signatures is None:
+        return True
+    if not isinstance(signatures, dict):
+        return False
+    for patterns in signatures.values():
+        # str is iterable, so an un-listed pattern would iterate character by
+        # character and single characters match almost anything — a false
+        # TRUSTED classification, which is worse than the crash.
+        if not isinstance(patterns, (list, tuple)):
+            return False
+        if not all(isinstance(p, str) for p in patterns):
+            return False
+    return True
+
+
 def load_sidecar(path):
     """Read a sidecar, or return None when it is absent, unreadable, not JSON,
-    or not a version this contract understands.
+    not a version this contract understands, or malformed for that version.
 
     Never raises: a missing or unusable sidecar means tfork falls back to
     generic facts only. Failing the whole fork over it would turn a
     classification aid into a launch blocker.
+
+    A version-1 file with wrong-typed fields is rejected whole rather than
+    read in part. Trusting the half that happens to be well-formed is how a
+    corrupt file ends up licensing a retry.
     """
     if not path:
         return None
@@ -269,6 +301,8 @@ def load_sidecar(path):
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict) or data.get("version") != SIDECAR_VERSION:
+        return None
+    if not _is_well_formed(data):
         return None
     return data
 
@@ -280,10 +314,22 @@ def match_signature(sidecar, kind, text):
     does not compile is skipped rather than raising — a bad pattern must
     degrade to "not recognized" (and therefore ``unknown``), never to a crash
     or to a false trusted classification.
+
+    The type guards repeat ``_is_well_formed``'s on purpose: this is public and
+    takes a sidecar dict, not a path, so a caller that hand-built one never
+    passed through ``load_sidecar``. Nothing here may raise.
     """
-    if not sidecar or not text:
+    if not isinstance(sidecar, dict) or not text:
         return False
-    for pattern in (sidecar.get("signatures") or {}).get(kind) or ():
+    signatures = sidecar.get("signatures")
+    if not isinstance(signatures, dict):
+        return False
+    patterns = signatures.get(kind)
+    if not isinstance(patterns, (list, tuple)):
+        return False
+    for pattern in patterns:
+        if not isinstance(pattern, str):
+            continue
         try:
             if re.search(pattern, text):
                 return True
