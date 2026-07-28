@@ -7,3 +7,4 @@ tmp/
 research
 *ir.json
 .claude/worktrees
+.worktrees

@@ -1,8 +1,30 @@
 # p2p — backlog
 
-_Last refreshed: 2026-06-20_
+_Last refreshed: 2026-06-23_
 
 ## Done
+
+- **Self-identity drift on re-tasked panes no longer silently misframes
+  `[from: …]`.** A pane already registered under a prior role that replied
+  to an inline bootstrap suggesting a different title was silently keeping
+  the stale identity (`_ensure_self` short-circuited on the existing
+  manifest, dropping `--bootstrap-suggested-title`), so every outgoing
+  frame used the wrong prior role. Now a differing `--bootstrap-suggested-title`
+  on an already-registered surface returns a new **`self_title_conflict`**
+  handoff instead of silently keeping OR adopting it (adopting blindly would
+  let a misrouted bootstrap — which routes by tab title — hijack a pane that
+  legitimately holds another role). Resolution: an explicit, differing
+  `--my-title` is now treated as a deliberate **re-identification**
+  (re-register + tab rename, prior title preserved in `former_titles` for
+  `peer_renamed` bridging) — the path the handoff points a genuinely
+  re-tasked agent toward. The first-contact bootstrap trailer also tells a
+  mis-targeted agent to bounce with a misroute notice rather than adopt.
+  `registry.register` gained an optional `former_titles=`. Tests in
+  `test_send.py` (conflict→handoff, my-title re-identify, matching-suggested
+  no-op). The `peer_surface_mismatch` / stale-`--peer-surface` recovery was
+  already correct and left untouched. NOTE: `SKILL.ir.json` is stale and
+  predates this change (params/constraints already drifted) — a full
+  `glyph icompile` + `validate-output` pass is owed separately.
 
 - **Locality-aware scope resolution (peer titles AND `--workspace` titles).**
   Default-scope resolution (no explicit `--workspace`/`--window`) now cascades
@@ -65,6 +87,41 @@ _Last refreshed: 2026-06-20_
   `bootstrap.write_spawn_payload`, the `workspace_for_spawn` threading.
 
 ## Open
+
+- **Handle cmux paste-buffer races during parallel fan-out.** A Flux producer
+  close-sweep fanned out p2p messages to five gate owners in parallel; two
+  delivered, while three failed with `transport_failed` /
+  `cmux paste-buffer failed: Buffer not found`. Sequential retries to the failed
+  peers succeeded. This should be fixed in the p2p transport or helper flow, not
+  preserved as global memory: parallel fan-out should avoid buffer-name races or
+  automatically retry sequentially before surfacing a delivery failure.
+
+- **Misrouted role-specific communication should make the recipient stand down,
+  not act.** A Flux run produced a charter/brief mismatch: a pane's injected
+  charter did not match the role named in the p2p brief, and a `title_collision`
+  on the expected title suggested the real role-holder was already seated
+  elsewhere. This should be handled at the p2p communication layer, not as
+  Flux-local shared memory: when the incoming bootstrap, suggested title,
+  asserted peer identity, or first-message role target conflicts with the
+  recipient's current/injected identity, p2p should make the safe response
+  obvious and preferably mechanical — report a misroute/identity conflict and
+  stand down instead of answering the work request. Consider strengthening the
+  bootstrap guidance and/or adding a first-contact handoff that tells the caller
+  to retarget the already-seated role rather than letting the recipient infer
+  the policy from prose.
+
+- **Resolve the true surface id internally (kill the `cmux identify` workaround).**
+  p2p addresses peers by `AGENT_MSG_SURFACE_ID`, but inherited cmux env vars
+  (`CMUX_SURFACE_ID` / `WORKSPACE_ID`) can be **stale**, so reading one's own
+  surface via `cmux identify` misroutes messages. Flux currently works around
+  this at the brief level — its dispatch convention tells agents to source
+  `AGENT_MSG_SURFACE_ID` from **`tfork`'s result** (the true forked surface),
+  not `cmux identify`. The durable fix belongs here in the tooling: p2p should
+  resolve the caller's true surface itself (e.g. from the authoritative cmux
+  tree / pane-surface map rather than trusting inherited env), so the workaround
+  becomes unnecessary and every consumer (incl. Flux operated repos) gets
+  correct routing without a manual rule. Removing this need also lets Flux drop
+  the cmux bullet from the dispatch conventions it seeds into operated repos.
 
 - **Unregistered live agents are invisible to the candidate list.** Candidate
   detection is manifest-based: only agents that have registered with p2p are
