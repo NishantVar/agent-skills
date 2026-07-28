@@ -1,0 +1,407 @@
+{
+  "compiler": "glyph 0.1.0",
+  "ir_version": 2,
+  "skill": {
+    "constraints": [
+      {
+        "kind": "constraint",
+        "node_id": "n32",
+        "polarity": "require",
+        "strength": "hard",
+        "text": "Infer only the front-door parameters from the user's request — command, placement, anchor, workspace, cwd, type_override, and window — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns. Do not pass --anchor together with --workspace or --window; the binary rejects those combinations."
+      },
+      {
+        "kind": "constraint",
+        "node_id": "n33",
+        "polarity": "require",
+        "strength": "soft",
+        "text": "tfork only forks. Never message or brief the forked agent from this skill. When the user asks to communicate with, brief, or message the forked agent, load the p2p skill and use it with the session ref (or --title) returned from the fork — p2p owns all agent-to-agent messaging."
+      }
+    ],
+    "context": [
+      {
+        "kind": "context",
+        "name": "binary_contract",
+        "node_id": "n34",
+        "text": "fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named, or the workspace --workspace targeted), opens the new pane or workspace, runs the command in --cwd (or the caller's current directory when --cwd is omitted) through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), workspace (`{ref, title, created}` when --workspace or --window was passed, else null — created=true means the workspace was just created, false means it already existed and was reused), window (`{ref, created}` when --window was passed, else null — created=true means a fresh window was opened, false means an existing window was targeted), launch_outcome (the versioned machine-readable reading of the same observation — see the launch-outcome contract), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel; with --workspace or --window, the note also reports the workspace title / window and whether each was created or reused). A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf."
+      },
+      {
+        "kind": "context",
+        "name": "launch_outcome_contract",
+        "node_id": "n35",
+        "text": "Every success result carries a `launch_outcome` object, and so do the three failure handoffs where a launch was mechanically attempted (`split_failed`, `window_create_failed`, `spawn_failed`). It is the ONLY field a policy or dispatcher may branch on. Its fields are exactly: version, state, reason_code, evidence_code, start_sentinel_seen, end_sentinel_seen, exit_status, foreground.\n\n`state` is one of: `started` | `prework_failure` | `unknown`.\n`reason_code` is null unless state is prework_failure, where it is one of: `runtime_unavailable` | `model_unavailable` | `launch_failed`.\n`evidence_code` is one of: `agent_started`, `runtime_exec_failed`, `model_rejected`, `runtime_launch_error`, `pane_creation_failed`, `command_delivery_absent`, `unrecognized_exit`, `missing_start_sentinel`, `observation_timeout`, `shell_foreground`, `missing_foreground`, `delivery_ambiguous`, `contradictory_evidence`.\n\n`prework_failure` is the only state that means the intended agent definitely never started, and therefore the only one that licenses trying a different runtime or model. `unknown` means tfork could not account for the launch — it is NOT a failure and must never be treated as one; retrying or falling back on `unknown` is how you end up with two live agents doing the same work. `unknown` can never be elevated: no exit status, no pane text, and no reading of `note` may turn it into a prework_failure. tfork holds no runtime or model table of its own — the only runtime-specific evidence it can trust comes from the --launch-contract sidecar afork wrote, so a fork without one reports `unknown` wherever it would otherwise have classified."
+      }
+    ],
+    "description": "Fork a coding agent or command into a new cmux pane via the deterministic fork_terminal.py binary.",
+    "effects": [],
+    "flow": [
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n10",
+        "role": "step",
+        "text": "Extract the parameters from the user's request — {command}, {placement}, {anchor}, {workspace}, {cwd}, {type_override}, {window}, and {launch_contract} — and forward them as-is. Do not invent values; if the user did not name a placement, an anchor, a workspace, a cwd, or a window, use the defaults."
+      },
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n11",
+        "role": "step",
+        "text": "Begin the invocation as: python3 <skill-dir>/fork_terminal.py -- {command}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — fork_terminal.py sits in that same directory, and the working directory is the user's project, not the skill directory, so a bare fork_terminal.py will not resolve. Everything after the -- separator is the command."
+      },
+      {
+        "condition": "\"the user named a placement\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n12",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n13",
+            "role": "step",
+            "text": "Insert --placement {placement} into the invocation, before the -- separator."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user named a workspace\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n14",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n15",
+            "role": "step",
+            "text": "Insert --workspace {workspace} into the invocation, before the -- separator. Do not also pass --anchor — the two are mutually exclusive."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user named an anchor (a surface ref like surface:42 or a cmux tab title)\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n16",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n17",
+            "role": "step",
+            "text": "Insert --anchor {anchor} into the invocation, before the -- separator."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user asked to open the fork in a new or separate window\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n18",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n19",
+            "role": "step",
+            "text": "Insert --window {window} into the invocation, before the -- separator — 'new' for a fresh window, or a window ref/index/UUID for an existing one. Do not also pass --anchor — the two are mutually exclusive."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user named a working directory (e.g. a path to a different repo)\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n20",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n21",
+            "role": "step",
+            "text": "Insert --cwd {cwd} into the invocation, before the -- separator. The binary expands the path and rejects it with bad_arguments if the directory does not exist."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user explicitly specified agent or command as the type\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n22",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n23",
+            "role": "step",
+            "text": "Insert --type {type_override} into the invocation, before the -- separator."
+          }
+        ]
+      },
+      {
+        "condition": "\"the fork is an agent you'll p2p\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n24",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n25",
+            "role": "step",
+            "text": "Pick a snake_case title and insert --title {title} before the -- separator. p2p can route to it on the first send."
+          }
+        ]
+      },
+      {
+        "condition": "\"you are forking a command afork prepared and its handoff carried a launch_contract path\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n26",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n27",
+            "role": "step",
+            "text": "Insert --launch-contract {launch_contract} into the invocation, before the -- separator, using the path from the handoff verbatim. Dropping it silently costs you the ability to tell a missing runtime from an ordinary non-zero exit."
+          }
+        ]
+      },
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n28",
+        "role": "step",
+        "text": "Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object."
+      },
+      {
+        "condition": "\"the JSON result has ok set to true\"",
+        "elif_branches": [],
+        "else_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n31",
+            "role": "step",
+            "text": "Treat the JSON as a handoff object: carry out its agent_instruction exactly, relay its human_message to the user, and offer suggested_next_command when retryable is true."
+          }
+        ],
+        "kind": "branch",
+        "node_id": "n29",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "args": {
+              "result": {
+                "kind": "binding_ref",
+                "name": "result",
+                "node_id": "n30_0"
+              }
+            },
+            "bound_name": null,
+            "callee_constraints": [],
+            "callee_context": [],
+            "callee_flow": [
+              {
+                "kind": "inline_instruction",
+                "node_id": "n9_0",
+                "role": "step",
+                "text": "Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed."
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n9_1",
+                "role": "step",
+                "text": "if \"the result's type is agent\""
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n9_2",
+                "role": "step",
+                "text": "if \"the result's verified field is false\""
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n9_3",
+                "role": "step",
+                "text": "if \"you are deciding programmatically whether the agent launched (e.g. to pick a fallback runtime or model)\""
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n9_4",
+                "role": "step",
+                "text": "if \"the result's note mentions 'correct if intended'\""
+              }
+            ],
+            "callee_output_contract": null,
+            "effects": [],
+            "is_agent": false,
+            "kind": "call",
+            "local_refs": [],
+            "node_id": "n30",
+            "output": null,
+            "procedure_path": null,
+            "projection_mode": "same_file_procedure",
+            "resolved_body_text": "Report the fork succeeded. Always surface the result's note field to the user verbatim — it is the only place the distinction between 'exited cleanly' and 'still running, foreground = X' is recorded, and it carries any registry/observation conflict the binary noticed.",
+            "return_type": null,
+            "role": "step",
+            "scoped_constraints": [],
+            "site_modifier": null,
+            "target": "report_success"
+          }
+        ]
+      }
+    ],
+    "freeform_section_headings": [],
+    "freeform_sections": [],
+    "kind": "skill",
+    "name": "tfork",
+    "node_id": "n0",
+    "output_contract": null,
+    "params": [
+      {
+        "kind": "param",
+        "name": "command",
+        "node_id": "n0_0"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "placement",
+        "node_id": "n0_1"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "anchor",
+        "node_id": "n0_2"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "workspace",
+        "node_id": "n0_3"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "cwd",
+        "node_id": "n0_4"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "type_override",
+        "node_id": "n0_5"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "title",
+        "node_id": "n0_6"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "window",
+        "node_id": "n0_7"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "launch_contract",
+        "node_id": "n0_8"
+      }
+    ],
+    "return_local_ref": null,
+    "return_type": null
+  },
+  "source_file": "SKILL.glyph"
+}

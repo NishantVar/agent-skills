@@ -1,0 +1,424 @@
+{
+  "compiler": "glyph 0.1.0",
+  "ir_version": 2,
+  "skill": {
+    "constraints": [
+      {
+        "kind": "constraint",
+        "node_id": "n26",
+        "polarity": "require",
+        "strength": "hard",
+        "text": "A declared permission restriction (read-only / workspace-write) that the runtime adapter cannot prove it enforces is a refusal, not a best effort. afork refuses to launch a restricted posture it cannot enforce unless the user explicitly passes --allow-unenforced. The default posture `none` (yolo) has nothing to enforce and never fails closed. The binary owns this decision — never second-guess an `unenforceable` handoff into a launch."
+      },
+      {
+        "kind": "constraint",
+        "node_id": "n27",
+        "polarity": "avoid",
+        "strength": "hard",
+        "text": "treating a prompt-level or persona 'please be read-only' as if it enforced the restriction. Only runtime mechanisms (e.g. the codex --sandbox flag) count as enforcement; prose does not. Persona injection is a role, not a security boundary."
+      },
+      {
+        "kind": "constraint",
+        "node_id": "n28",
+        "polarity": "require",
+        "strength": "soft",
+        "text": "afork prepares the command but never forks. On a ready_to_fork handoff, load the tfork skill and fork the handoff's `command` verbatim after the -- separator, passing the carried --title, --cwd, --type agent, --placement, and --launch-contract. afork.py must not invoke tfork itself — the calling agent bridges the two skills."
+      },
+      {
+        "kind": "constraint",
+        "node_id": "n29",
+        "polarity": "require",
+        "strength": "soft",
+        "text": "Infer only the front-door parameters and pass them through. Never parse agent definitions, map postures to runtime flags, build launch commands, or decide enforceability in the skill — the binary's adapter owns all of it. Do not hand-build runtime invocations or edit the command afork returns."
+      }
+    ],
+    "context": [
+      {
+        "kind": "context",
+        "name": "binary_contract",
+        "node_id": "n30",
+        "text": "afork.py is deterministic and self-contained, and is agnostic to runtime flag names — a per-runtime adapter owns the mapping. It picks the runtime adapter, decides plain (no agent) vs custom (definition-backed) mode, resolves a bare agent name under --cwd then ~/.<runtime>/agents/ (repo-local first) or an explicit definition path directly, bridges legacy Claude names generically (exact-name lookup always runs first; only when it misses does a Claude name ending in `-agent` fall back to its suffixless stem, so an exact `*-agent` port still wins and codex gets no inverse alias — the bridge is a rule, not a per-role map, and it is removed after one release/upgrade cycle), resolves the permission posture from the definition's declared sandbox (else default none) — the skill never passes a posture; the port file is the only source — checks the adapter can runtime-enforce a restricted posture (else fails closed), resolves model/effort (arg > definition > runtime default; a combined --model spec like `fable max` splits into model + trailing effort token, an explicit --effort winning), and builds the launch command. In explicit-path mode, --cwd controls only where the agent runs; the handoff agent/title default uses the definition filename stem. Plain agents get a flat shell-quoted argv (no temp launcher). Custom agents with a persona get a 0600 payload + generated executable launcher path so multiline persona never crosses the agent->tfork shell boundary; the launcher enforces the posture via flags and injects the persona at system/developer level, and it attempts the intended runtime exactly ONCE — it never retries and never falls back to a second runtime, so the contract-bound failure marker it prints is reachable only when that one real exec failed. Every launch, plain or custom, also gets a 0600 launch-contract sidecar in afork's private workdir recording the attempt id, runtime, agent, model, effort, that marker, and the adapter-owned patterns for a rejected model or a runtime launch error. This is where all runtime knowledge stays: tfork holds none and only matches what afork wrote down. With --observe it also wraps the launch with agentlens — plain agents become `env AGENTLENS_TAGS=… lens run -- <runtime argv>` (the env prefix omitted when there are no tags), and custom launchers export AGENTLENS_TAGS and `exec lens run -- …`. That wrap is fail-open: if the `lens` binary is not on PATH the command is built UNWRAPPED and the handoff explains it, because a missing observer must never block a launch. It always prints exactly one JSON object. On success: a `ready_to_fork` handoff carrying command, handoff_skill (\"tfork\"), runtime, agent (null when plain), posture, enforced (bool; `none` is always enforced — nothing to enforce), title, cwd, type (\"agent\"), placement, workdir (afork's private directory for this attempt), launch_contract (the sidecar path to hand tfork as --launch-contract), attempt_id, and an agent_instruction telling you exactly how to call tfork. When the legacy Claude naming bridge fired it also carries deprecation_warning, and `agent` is the CANONICAL suffixless name — record and forward that one, not what was typed. Only when --observe was passed it also carries observed (bool — true only when the command was really wrapped), obs_tags (the requested attribution dict, or null when none were given), and, on the fail-open path, obs_warning (one line explaining the launch is unobserved). On failure: ok false and a code: `port_not_found` (missing bare-name or explicit-path definition), `unenforceable` (fail-closed refusal — a declared restriction the adapter can't enforce), `custom_unsupported` (custom agent requested for a runtime with no agents dir, e.g. pi), `runtime_unsupported` (no adapter, e.g. antigravity), `bad_arguments`, or `port_unparsable`. Each failure carries human_message and agent_instruction."
+      },
+      {
+        "kind": "context",
+        "name": "launch_outcome_contract",
+        "node_id": "n31",
+        "text": "Every launch afork prepares is ultimately reported by tfork as a versioned `launch_outcome` object, and afork's 0600 launch-contract sidecar is the only thing that makes its runtime-specific values reachable at all. Its fields are exactly: version, state, reason_code, evidence_code, start_sentinel_seen, end_sentinel_seen, exit_status, foreground.\n\n`state` is one of: `started` | `prework_failure` | `unknown`.\n`reason_code` is null unless state is prework_failure, where it is one of: `runtime_unavailable` | `model_unavailable` | `launch_failed`.\n`evidence_code` is one of: `agent_started`, `runtime_exec_failed`, `model_rejected`, `runtime_launch_error`, `pane_creation_failed`, `command_delivery_absent`, `unrecognized_exit`, `missing_start_sentinel`, `observation_timeout`, `shell_foreground`, `missing_foreground`, `delivery_ambiguous`, `contradictory_evidence`.\n\nafork owns the runtime-specific half of that vocabulary, and tfork holds none of it. `runtime_exec_failed` is reachable only when the generated launcher's one real exec failed and printed the marker afork recorded in the sidecar; `model_rejected` and `runtime_launch_error` are reachable only when adapter-owned patterns from that same sidecar match the pane. Drop --launch-contract and none of the three can ever be produced — every ambiguous launch reports `unknown` instead, which is NOT a failure and licenses no retry or fallback. That is why the handoff's launch_contract path must be forwarded to tfork verbatim on every fork, not only when something looks wrong."
+      }
+    ],
+    "description": "Front door for forking any coding agent (plain or definition-backed) across runtimes (codex, claude, pi) into a cmux pane: build a launch command and hand it to tfork. Agnostic to runtime flags; fails closed only when a declared restriction can't be runtime-enforced. Never forks.",
+    "effects": [],
+    "flow": [
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n4",
+        "role": "step",
+        "text": "Extract the parameters from the user's request — {runtime}, {agent}, {model}, {effort}, {title}, {cwd}, {placement} — and forward them as-is. Do not invent values; use the defaults when the user did not name one. {runtime} is required; omit {agent} for a plain agent."
+      },
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n5",
+        "role": "step",
+        "text": "Begin the invocation as: python3 <skill-dir>/afork.py {runtime}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — afork.py sits in that same directory."
+      },
+      {
+        "condition": "\"the user named a specific agent definition\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n6",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n7",
+            "role": "step",
+            "text": "Append {agent} as the second positional argument, right after {runtime}."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user named a model\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n8",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n9",
+            "role": "step",
+            "text": "Insert --model {model} into the invocation."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user named an effort level\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n10",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n11",
+            "role": "step",
+            "text": "Insert --effort {effort} into the invocation."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user named a title\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n12",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n13",
+            "role": "step",
+            "text": "Insert --title {title} into the invocation."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user named a target repo or working directory\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n14",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n15",
+            "role": "step",
+            "text": "Insert --cwd {cwd} into the invocation. Bare-name ports resolve relative to this directory then fall back to ~/.<runtime>/agents/; explicit definition paths do not."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user named a placement\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n16",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n17",
+            "role": "step",
+            "text": "Insert --placement {placement} into the invocation."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user has explicitly accepted an unenforced launch for a runtime that cannot enforce the declared posture\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n18",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n19",
+            "role": "step",
+            "text": "Insert --allow-unenforced into the invocation. Never add this on your own initiative — only on explicit user instruction."
+          }
+        ]
+      },
+      {
+        "condition": "\"the user asked for the forked agent to be observed / captured\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n20",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n21",
+            "role": "step",
+            "text": "Insert --observe into the invocation, and one --obs-tag {obs_tag} per attribution tag they named. Tags require --observe; --observe alone is a valid capture-without-attribution launch."
+          }
+        ]
+      },
+      {
+        "kind": "inline_instruction",
+        "local_refs": [],
+        "node_id": "n22",
+        "role": "step",
+        "text": "Run the assembled afork.py invocation and capture its stdout as a single JSON object."
+      },
+      {
+        "condition": "\"the JSON has ok set to true and action is ready_to_fork\"",
+        "elif_branches": [],
+        "else_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n25",
+            "role": "step",
+            "text": "Treat the JSON as a fail-closed or resolution handoff: carry out its agent_instruction exactly and relay its human_message to the user. For code `unenforceable`, do NOT fork — report the refusal; only re-run with --allow-unenforced if the user explicitly accepts the risk."
+          }
+        ],
+        "kind": "branch",
+        "node_id": "n23",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "args": {
+              "result": {
+                "kind": "binding_ref",
+                "name": "result",
+                "node_id": "n24_0"
+              }
+            },
+            "bound_name": null,
+            "callee_constraints": [],
+            "callee_context": [],
+            "callee_flow": [
+              {
+                "kind": "inline_instruction",
+                "node_id": "n3_0",
+                "role": "step",
+                "text": "Read the result's command, title, cwd, type, placement, and launch_contract fields and its agent_instruction."
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n3_1",
+                "role": "step",
+                "text": "Load the tfork skill and fork the command verbatim: pass it after the -- separator with --title, --cwd, --type agent, --placement, and --launch-contract from the handoff. Do not edit the command, and do not drop --launch-contract — it is what lets tfork tell a missing runtime from an ordinary non-zero exit."
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n3_2",
+                "role": "step",
+                "text": "if \"the result carries a deprecation_warning\""
+              },
+              {
+                "kind": "inline_instruction",
+                "node_id": "n3_3",
+                "role": "step",
+                "text": "After tfork returns the new pane's surface/title, that is the address for this agent. When the user asks to brief or message it, load the p2p skill and use that title."
+              }
+            ],
+            "callee_output_contract": null,
+            "effects": [],
+            "is_agent": false,
+            "kind": "call",
+            "local_refs": [],
+            "node_id": "n24",
+            "output": null,
+            "procedure_path": null,
+            "projection_mode": "same_file_procedure",
+            "resolved_body_text": "Read the result's command, title, cwd, type, placement, and launch_contract fields and its agent_instruction. Load the tfork skill and fork the command verbatim: pass it after the -- separator with --title, --cwd, --type agent, --placement, and --launch-contract from the handoff. Do not edit the command, and do not drop --launch-contract — it is what lets tfork tell a missing runtime from an ordinary non-zero exit. After tfork returns the new pane's surface/title, that is the address for this agent. When the user asks to brief or message it, load the p2p skill and use that title.",
+            "return_type": null,
+            "role": "step",
+            "scoped_constraints": [],
+            "site_modifier": null,
+            "target": "bridge_to_tfork"
+          }
+        ]
+      }
+    ],
+    "freeform_section_headings": [],
+    "freeform_sections": [],
+    "kind": "skill",
+    "name": "afork",
+    "node_id": "n0",
+    "output_contract": null,
+    "params": [
+      {
+        "kind": "param",
+        "name": "runtime",
+        "node_id": "n0_0"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "agent",
+        "node_id": "n0_1"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "model",
+        "node_id": "n0_2"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "effort",
+        "node_id": "n0_3"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "title",
+        "node_id": "n0_4"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "cwd",
+        "node_id": "n0_5"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "placement",
+        "node_id": "n0_6"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "allow_unenforced",
+        "node_id": "n0_7"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "observe",
+        "node_id": "n0_8"
+      },
+      {
+        "default": {
+          "kind": "string",
+          "value": "none"
+        },
+        "kind": "param",
+        "name": "obs_tag",
+        "node_id": "n0_9"
+      }
+    ],
+    "return_local_ref": null,
+    "return_type": null
+  },
+  "source_file": "SKILL.glyph"
+}

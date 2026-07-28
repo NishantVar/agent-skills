@@ -6,5 +6,9 @@ tmp/
 .obsidian
 research
 *ir.json
+# ...except the two skill IR artifacts, which are reviewable published contract
+# surfaces: the launch-outcome enums must be checkable against a landed commit.
+!skills/afork/SKILL.ir.json
+!skills/tfork/SKILL.ir.json
 .claude/worktrees
 .worktrees
