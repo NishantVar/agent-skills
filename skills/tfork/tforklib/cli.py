@@ -9,6 +9,7 @@ Invocation contract::
         [--anchor <surface-ref-or-tab-name>]
         [--type {agent,command}]
         [--delay N]
+        [--launch-contract <path>]
         -- <command...>
 
 Everything after ``--`` is the command (an alias or a literal command, free
@@ -20,14 +21,26 @@ mutually exclusive with ``--anchor``. ``--window`` opens the fork in a
 separate top-level window — ``new`` creates a fresh one (without stealing
 focus from the caller's window), or a window ref/index/UUID targets an
 existing one; it composes with ``--workspace`` and is mutually exclusive
-with ``--anchor``.
+with ``--anchor``. ``--launch-contract`` points at the 0600 sidecar afork
+wrote for this attempt; it is optional and never fatal.
 
 On success ``main`` prints, on stdout, and exits 0 with::
 
     {"ok": true, "session": "<surface-ref>", "ran": "<word>",
      "type": "<agent|command>", "verified": <bool>,
      "foreground": "<process-or-null>", "exit_status": <int-or-null>,
+     "launch_outcome": {"version": 1, "state": "...", "reason_code": ...,
+                        "evidence_code": "...", "start_sentinel_seen": <bool>,
+                        "end_sentinel_seen": <bool>,
+                        "exit_status": <int-or-null>,
+                        "foreground": "<process-or-null>"},
      "note": "<one-line description of what was observed>"}
+
+``verified`` and ``note`` are the human-facing reading; ``launch_outcome`` is
+the machine-facing one and is the only field policy may branch on. Its
+``state`` is ``started``, ``prework_failure``, or ``unknown``; only
+``prework_failure`` licenses trying a different runtime or model, and the
+free-form ``note`` must never be parsed to reach that conclusion.
 
 ``verified`` may be false: the command was forked, its pane was left open,
 and the note explains what tfork saw. The agent then decides what to do —
@@ -38,6 +51,10 @@ On failure it prints a handoff object and exits non-zero::
     {"ok": false, "code": "...", "human_message": "...",
      "agent_instruction": "...", "retryable": <bool>,
      "suggested_next_command": "..."}
+
+The three failure codes where a launch was attempted and mechanically failed
+(``split_failed``, ``window_create_failed``, ``spawn_failed``) also carry a
+``launch_outcome`` in that object.
 """
 
 import argparse
@@ -105,6 +122,11 @@ def parse_args(argv):
                              "so it is immediately p2p-addressable")
     parser.add_argument("--delay", type=_nonneg_int, default=None,
                         help="seconds to wait before reading the new pane")
+    parser.add_argument("--launch-contract", default=None,
+                        help="path to the launch-contract sidecar afork wrote "
+                             "for this attempt. Optional; without it no "
+                             "runtime-specific evidence can be trusted and "
+                             "ambiguous launches report state 'unknown'.")
     parser.add_argument("command", nargs="*",
                         help="the command, after a '--' separator")
     return parser.parse_args(argv)
@@ -117,7 +139,8 @@ def main(argv=None):
                           anchor=args.anchor, type_override=args.type,
                           title=args.title, delay=args.delay,
                           workspace=args.workspace, cwd=args.cwd,
-                          window=args.window)
+                          window=args.window,
+                          launch_contract=args.launch_contract)
     except ForkError as exc:
         print(json.dumps(exc.handoff()))
         return EXIT_CODES.get(exc.code, 1)

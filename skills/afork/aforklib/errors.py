@@ -128,12 +128,24 @@ def err_unenforceable(runtime, agent, declared, reason):
 
 def ready_to_fork(runtime, agent, posture, command, title, cwd,
                   workdir, enforced=True, placement=None, observed=None,
-                  obs_tags=None, obs_warning=None):
+                  obs_tags=None, obs_warning=None, launch_contract=None,
+                  attempt_id=None, persona=False, deprecation_warning=None):
     """The success handoff: a fully-built launch command for the tfork skill.
 
     afork stops here by design — it does not invoke tfork. The calling agent
     takes ``command`` and forks it via the tfork skill with the carried
-    --title / --cwd / --type agent (and --placement when present).
+    --title / --cwd / --type agent / --launch-contract (and --placement when
+    present).
+
+    ``launch_contract`` is the 0600 sidecar in afork's private ``workdir``
+    naming this ``attempt_id``, the runtime/model really invoked, and the
+    adapter's failure signatures. tfork combines it with what it observes to
+    return the versioned ``launch_outcome``; without it tfork can still report
+    an outcome, but never a runtime-specific one.
+
+    ``deprecation_warning`` is set only when a legacy ``-agent`` name had to be
+    bridged to its suffixless port. ``agent`` is then already the canonical
+    suffixless name — the warning tells the caller to start passing it.
 
     ``observed`` is None when --observe was not requested at all, and the whole
     observability block is then omitted — a handoff without --observe is
@@ -145,12 +157,14 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
     """
     tfork_args = (f"--title {shlex.quote(str(title))} "
                   f"--cwd {shlex.quote(str(cwd))} --type agent")
+    if launch_contract:
+        tfork_args += f" --launch-contract {shlex.quote(str(launch_contract))}"
     if placement:
         tfork_args += f" --placement {shlex.quote(str(placement))}"
     who = f"agent {agent!r}" if agent else "plain agent"
-    # A persona payload is only written in custom mode (workdir set).
+    # A persona payload is only written in custom (definition-backed) mode.
     persona_note = (" Persona injected at system/developer level from a 0600 "
-                    "temp payload (not user prose).") if workdir else ""
+                    "temp payload (not user prose).") if persona else ""
     if posture == "none":
         note = (f"permission posture {posture!r} (yolo): nothing to enforce, so "
                 f"reported enforced.{persona_note}")
@@ -165,6 +179,8 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
                  "is fail-open and never changes the agent's exit code.")
     elif obs_warning:
         note += f" {obs_warning}"
+    if deprecation_warning:
+        note += f" {deprecation_warning}"
     out = {
         "ok": True,
         "action": "ready_to_fork",
@@ -179,14 +195,21 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
         "type": "agent",
         "placement": placement,
         "workdir": workdir,
+        "launch_contract": launch_contract,
+        "attempt_id": attempt_id,
         "human_message": (
             f"afork prepared {runtime} {who} with permission posture "
             f"{posture!r}. Hand the command to tfork to launch."),
         "agent_instruction": (
             "Invoke the tfork skill to fork this command verbatim after the "
-            f"-- separator, passing {tfork_args}. Do not edit the command."),
+            f"-- separator, passing {tfork_args}. Do not edit the command. "
+            "--launch-contract is what lets tfork return a trustworthy "
+            "launch_outcome; dropping it downgrades every ambiguous launch to "
+            "state 'unknown'."),
         "note": note,
     }
+    if deprecation_warning:
+        out["deprecation_warning"] = deprecation_warning
     if observed is not None:
         out["observed"] = observed
         out["obs_tags"] = obs_tags or None

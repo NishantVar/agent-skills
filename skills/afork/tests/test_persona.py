@@ -158,8 +158,10 @@ def test_launch_without_seated_router_succeeds(tmp_path):
 def test_plain_fork_has_no_launcher_and_no_preamble(tmp_path):
     out = run_afork("codex", cwd=str(tmp_path))
     assert out["agent"] is None
-    # Plain mode: flat argv, no temp launcher/payload dir.
-    assert out["workdir"] is None
+    # Plain mode: flat argv, no temp launcher/payload. The workdir still
+    # exists — it holds the launch-contract sidecar every fork gets.
+    assert not (Path(out["workdir"]) / "launch.sh").exists()
+    assert not (Path(out["workdir"]) / "persona.txt").exists()
     assert "Identity & Precedence" not in out["command"]
     assert "availability is not permission" not in out["command"]
     # A plain fork is a general runtime session: no role startup-read block and
@@ -223,7 +225,7 @@ def _assert_integration(tmp_path, runtime, seated_agent, boot_agent,
     # Plain fork: no startup-read block, no launcher.
     plain = run_afork(runtime, cwd=str(tmp_path))
     assert plain["agent"] is None
-    assert plain["workdir"] is None
+    assert not (Path(plain["workdir"]) / "launch.sh").exists()
     assert "Required Startup Reads" not in plain["command"]
 
     # No per-port churn: the block is inherited, not pasted into the port body.

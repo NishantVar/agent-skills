@@ -8,8 +8,12 @@ The package is split by concern:
     classify     post-hoc ``classify_observed`` — label from what was seen
     terminal     the ``Terminal`` abstraction, the cmux backend, and the
                  sentinel-wrapper builder
-    verify       ``verify_fork`` — the single post-spawn check that returns
-                 (verified, foreground, exit_status, note)
+    outcome      the versioned launch-outcome contract, kept byte-identical
+                 with ``aforklib/outcome.py`` so both halves agree
+    verify       ``observe_fork`` (one pane snapshot) + ``verdict`` (the
+                 human-facing (verified, foreground, exit_status, note))
+    result       ``derive_launch_outcome`` — the machine-facing reading of
+                 that same snapshot, combined with afork's sidecar
     orchestrate  ``run_fork`` — the fork -> verify -> label -> persist flow
     cli          argument parsing and the ``main`` entry point
 
@@ -46,7 +50,18 @@ from .terminal import (
     resolve_anchor,
     resolve_terminal,
 )
-from .verify import DEFAULT_DELAY, is_shell, verify_fork
+from .outcome import (
+    CONTRACT_VERSION,
+    EVIDENCE_CODES,
+    REASON_CODES,
+    STATES,
+    launch_outcome,
+    load_sidecar,
+    prework_failure,
+    unknown,
+)
+from .verify import DEFAULT_DELAY, Observation, is_shell, observe_fork, verdict, verify_fork
+from .result import derive_launch_outcome
 from .orchestrate import run_fork
 from .cli import PLACEMENT_CHOICES, main, parse_args
 
@@ -77,9 +92,21 @@ __all__ = [
     "is_workspace_ref",
     "resolve_anchor",
     "resolve_terminal",
+    "CONTRACT_VERSION",
+    "EVIDENCE_CODES",
+    "REASON_CODES",
+    "STATES",
+    "launch_outcome",
+    "load_sidecar",
+    "prework_failure",
+    "unknown",
     "DEFAULT_DELAY",
+    "Observation",
     "is_shell",
+    "observe_fork",
+    "verdict",
     "verify_fork",
+    "derive_launch_outcome",
     "run_fork",
     "PLACEMENT_CHOICES",
     "main",

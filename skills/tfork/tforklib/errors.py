@@ -5,7 +5,18 @@ an agent instruction, whether a retry is worthwhile, and a suggested next
 command, so the calling agent has everything it needs to recover. The ``err_*``
 factories build one per code in the failure taxonomy; ``EXIT_CODES`` maps each
 code to the binary's non-zero exit status.
+
+Three of them also carry a ``launch_outcome``: ``split_failed``,
+``window_create_failed`` and ``spawn_failed`` are the failures where a real
+launch was attempted and mechanically failed, which is exactly what the
+launch-outcome contract calls a ``prework_failure``. The rest deliberately do
+not. ``no_terminal`` and ``surface_resolution_failed`` are environment stops
+before any launch is attempted, and the argument/anchor/workspace codes are
+caller mistakes — reporting those as launch failures would invite a dispatcher
+to retry on a second runtime that would fail identically.
 """
+
+from .outcome import DELIVERY_ABSENT, prework_failure, unknown
 
 # Non-zero exit code per failure taxonomy code.
 EXIT_CODES = {
@@ -96,17 +107,37 @@ def err_split_failed(detail):
         "error to the user.",
         True,
         "<same fork_terminal.py invocation>",
+        extras={"launch_outcome": prework_failure("pane_creation_failed")},
     )
 
 
-def err_spawn_failed(detail):
+def err_spawn_failed(detail, delivery=DELIVERY_ABSENT):
+    """``delivery`` says how far the command got, and it is the whole
+    difference between a trusted failure and an ambiguous one.
+
+    ``absent`` — the paste itself failed, so the line never reached the pane's
+    shell and Enter was never sent: nothing ran, nothing has side effects, and
+    relaunching elsewhere is safe. ``ambiguous`` — the line was pasted and only
+    the Enter failed, so we cannot rule out that it executed. The pane is
+    closed either way, but "closed" is not proof it never started, so the
+    ambiguous case stays ``unknown`` and permits no fallback.
+    """
+    outcome = (prework_failure("command_delivery_absent")
+               if delivery == DELIVERY_ABSENT
+               else unknown("delivery_ambiguous"))
+    scope = ("The command never reached the pane." if delivery == DELIVERY_ABSENT
+             else "The command may already have started; side effects cannot "
+                  "be ruled out.")
     return ForkError(
         "spawn_failed",
         f"The command could not be delivered into the new pane: {detail}. "
-        "The created pane has been closed.",
-        "Retry the same invocation once.",
-        True,
+        f"{scope} The created pane has been closed.",
+        ("Retry the same invocation once." if delivery == DELIVERY_ABSENT else
+         "Do not retry blindly — check whether the command already ran before "
+         "forking it again."),
+        delivery == DELIVERY_ABSENT,
         "<same fork_terminal.py invocation>",
+        extras={"launch_outcome": outcome},
     )
 
 
@@ -231,6 +262,7 @@ def err_window_create_failed(detail):
         "error to the user.",
         True,
         "<same fork_terminal.py invocation>",
+        extras={"launch_outcome": prework_failure("pane_creation_failed")},
     )
 
 

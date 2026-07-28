@@ -9,7 +9,16 @@ runtime's CLI flags. Each adapter knows:
     where definitions live (``port_filename``) and how to parse them (``parse``),
   * which postures it can runtime-*enforce* (``enforceable`` — the fail-closed
     pivot), and the argv tokens for a posture / model / effort,
-  * how to inject a persona (``persona_inject``).
+  * how to inject a persona (``persona_inject``),
+  * which of its own error outputs are *trusted* signatures of a rejected model
+    or a failed launch (``launch_signatures``).
+
+``launch_signatures`` is the runtime knowledge the launch-outcome contract puts
+on this side of the boundary: tfork stays runtime-agnostic and only matches the
+patterns afork hands it in the sidecar. Keep them narrow. A pattern that fires
+on ordinary agent output would turn a normal run into a ``prework_failure``,
+and a prework_failure is the one state that lets a dispatcher launch a *second*
+agent. Anything not matched here degrades to ``unknown``, which is safe.
 
 Postures are agnostic: ``none`` (yolo) | ``read-only`` | ``workspace-write``.
 ``none`` is always enforceable (every runtime has a real flag, or yolo is its
@@ -21,9 +30,31 @@ tests/proof_codex_readonly.sh). claude and pi enforce only ``none``; their
 restricted modes are deferred and fail closed. antigravity has no adapter yet.
 """
 
+import re
 import tomllib
 
 from .errors import err_port_unparsable
+
+# Model-rejection phrasings, anchored on the word "model" next to an explicit
+# rejection verb so ordinary prose mentioning a model cannot match. These are
+# only ever consulted for a launch that already exited non-zero — tfork's
+# derivation enforces that — so a running agent's output is out of reach.
+_MODEL_REJECTED = (
+    r"(?i)\b(invalid|unknown|unsupported|unrecognized) model\b",
+    r"(?i)\bmodel\b[^\n]{0,80}?\bnot (found|available|supported|enabled)\b",
+)
+
+
+def _launch_error(binary):
+    """Startup errors a runtime emits before it is ever the agent talking: its
+    own ``<bin>: ...`` line, or argument-parser output. Deliberately excludes a
+    bare ``error:`` — a coding agent that prints one and exits would otherwise
+    be misread as a failed launch."""
+    return (
+        rf"(?im)^{re.escape(binary)}:\s",
+        r"(?im)^error:\s+(unexpected|unrecognized|invalid value|missing|"
+        r"the following required)\b",
+    )
 
 
 class CodexAdapter:
@@ -34,6 +65,10 @@ class CodexAdapter:
     default_effort = "xhigh"
     # codex injects the persona at developer level: -c key="$(cat payload)".
     persona_inject = {"style": "config_cat", "flag": "developer_instructions"}
+    launch_signatures = {
+        "model_rejected": _MODEL_REJECTED,
+        "runtime_launch_error": _launch_error("codex"),
+    }
 
     def port_filename(self, agent):
         return f"{agent}.toml"
@@ -99,6 +134,10 @@ class ClaudeAdapter:
     default_effort = "high"
     # claude injects the persona as a system-prompt append: --flag "$(cat payload)".
     persona_inject = {"style": "flag_cat", "flag": "--append-system-prompt"}
+    launch_signatures = {
+        "model_rejected": _MODEL_REJECTED,
+        "runtime_launch_error": _launch_error("claude"),
+    }
 
     def port_filename(self, agent):
         return f"{agent}.md"
@@ -144,6 +183,10 @@ class PiAdapter:
     default_effort = None
     # pi takes a file path directly: --flag <payload-path> (no $(cat)).
     persona_inject = {"style": "flag_path", "flag": "--append-system-prompt"}
+    launch_signatures = {
+        "model_rejected": _MODEL_REJECTED,
+        "runtime_launch_error": _launch_error("pi"),
+    }
 
     # No agent-definition directory -> no port_filename / parse / persona_body.
 

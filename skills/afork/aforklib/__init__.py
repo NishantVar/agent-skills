@@ -2,8 +2,15 @@
 
 Pipeline: pick the runtime adapter -> resolve posture (flag > definition > none)
 -> check the adapter can runtime-*enforce* a restricted posture (else fail
-closed) -> build the launch command (plain or custom-with-persona) -> return a
-``ready_to_fork`` handoff for the tfork skill. afork never forks itself.
+closed) -> build the launch command (plain or custom-with-persona) -> write the
+0600 launch-contract sidecar -> return a ``ready_to_fork`` handoff for the tfork
+skill. afork never forks itself.
+
+afork is the side that owns *runtime* knowledge, so the sidecar is where that
+knowledge crosses to tfork: which runtime/model were really invoked, the
+generated launcher's exec-failure marker, and the adapter's model-rejection and
+launch-error signatures. tfork stays runtime-agnostic and only matches what the
+sidecar hands it. See ``outcome.py``.
 
 The skill is agnostic to runtime flag names; the adapter owns the mapping.
 Fail-closed applies ONLY when a *declared restriction* can't be runtime-enforced.
@@ -100,13 +107,15 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     # --- Mode: plain (no agent) vs custom (definition-backed). ---
     parsed = {}
     agent_name = None
+    deprecation_warning = None
     if agent is not None:
         if not adapter.has_agent_dir:
             raise err_custom_unsupported(
                 runtime,
                 f"{runtime} has no agent-definition directory; launch plain "
                 f"`afork {runtime}` or inject persona another way.")
-        path, text, agent_name = resolve_agent_definition(adapter, agent, cwd)
+        path, text, agent_name, deprecation_warning = resolve_agent_definition(
+            adapter, agent, cwd)
         parsed = adapter.parse(text, agent_name, path)
 
     # --- Posture precedence: --permission > definition-declared > none. ---
@@ -136,20 +145,24 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     else:
         persona = ""
 
-    command, workdir = build_launch(
+    launch = build_launch(
         adapter, agent_name, posture, model, effort, persona,
         observe=wrap, obs_tags=tags)
     return ready_to_fork(
         runtime=runtime,
         agent=agent_name,
         posture=posture,
-        command=command,
+        command=launch.command,
         title=title or agent_name or runtime,
         cwd=cwd,
-        workdir=workdir,
+        workdir=launch.workdir,
         enforced=enforced,
         placement=placement,
         observed=wrap if observe else None,
         obs_tags=tags or None,
         obs_warning=obs_warning,
+        launch_contract=launch.launch_contract,
+        attempt_id=launch.attempt_id,
+        persona=bool(persona),
+        deprecation_warning=deprecation_warning,
     )

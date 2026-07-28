@@ -42,7 +42,7 @@ def test_parse_extracts_fields():
 def test_build_launcher_enforces_via_flag_and_payloads_persona(tmp_path):
     a = CodexAdapter()
     persona = 'You are the Reviewer.\n## Boundaries\n"quoted" #hash\n'
-    command, workdir = build_launch(
+    command, workdir, _, _ = build_launch(
         a, "reviewer", "read-only", None, "high", persona,
         root=str(tmp_path / "w"))
 
@@ -64,9 +64,12 @@ def test_build_launcher_enforces_via_flag_and_payloads_persona(tmp_path):
 
 def test_build_plain_no_launcher(tmp_path):
     a = CodexAdapter()
-    command, workdir = build_launch(a, None, "none", None, "xhigh", "")
-    # Plain mode: flat argv, no temp launcher.
-    assert workdir is None
+    command, workdir, contract, _ = build_launch(
+        a, None, "none", None, "xhigh", "")
+    # Plain mode: flat argv, no temp launcher. The workdir still exists — it
+    # holds the launch-contract sidecar — but nothing is generated to run.
+    assert not (Path(workdir) / "launch.sh").exists()
+    assert Path(contract).exists()
     assert command.startswith("codex")
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert 'model_reasoning_effort="xhigh"' in command
@@ -79,7 +82,7 @@ def test_returned_command_is_shell_safe_with_hostile_temp_root(tmp_path):
 
     a = CodexAdapter()
     hostile = tmp_path / "afork ;touch${IFS}AFORK_PWNED;#"
-    command, _ = build_launch(
+    command, _, _, _ = build_launch(
         a, "probe", "read-only", None, None, "x", root=str(hostile))
 
     # Run the command with codex stubbed so nothing real launches; the only
@@ -103,7 +106,7 @@ def test_launcher_command_survives_tfork_single_argument_invocation(tmp_path):
     import subprocess
 
     a = CodexAdapter()
-    command, _ = build_launch(
+    command, _, _, _ = build_launch(
         a, "probe", "read-only", None, None, "x", root=str(tmp_path / "w"))
 
     stub_bin = tmp_path / "bin"
@@ -139,7 +142,7 @@ def test_executed_launcher_neutralizes_hostile_persona_and_params(tmp_path):
     hostile_model = f'gpt";touch {marker};"'
     hostile_effort = f'high$(touch {marker})'
 
-    command, workdir = build_launch(
+    command, workdir, _, _ = build_launch(
         a, "probe", "read-only", hostile_model, hostile_effort, hostile_persona,
         root=str(tmp_path / "w"))
 
@@ -178,19 +181,19 @@ def test_persona_styles_render_per_adapter(tmp_path):
     from aforklib.adapters import ClaudeAdapter, PiAdapter
 
     persona = "ROLE BODY"
-    _, wd = build_launch(CodexAdapter(), "a", "read-only", None, None, persona,
+    _, wd, _, _ = build_launch(CodexAdapter(), "a", "read-only", None, None, persona,
                          root=str(tmp_path / "c"))
     assert ('-c developer_instructions="$(cat "$DIR/persona.txt")"'
             in (Path(wd) / "launch.sh").read_text())
 
-    _, wd = build_launch(ClaudeAdapter(), "a", "none", None, None, persona,
+    _, wd, _, _ = build_launch(ClaudeAdapter(), "a", "none", None, None, persona,
                          root=str(tmp_path / "cl"))
     assert ('--append-system-prompt "$(cat "$DIR/persona.txt")"'
             in (Path(wd) / "launch.sh").read_text())
 
     # pi: the payload PATH is passed directly — no $(cat), so the old
     # flag.startswith("--") heuristic (which forced $(cat)) is gone.
-    _, wd = build_launch(PiAdapter(), "a", "none", None, None, persona,
+    _, wd, _, _ = build_launch(PiAdapter(), "a", "none", None, None, persona,
                          root=str(tmp_path / "pi"))
     script = (Path(wd) / "launch.sh").read_text()
     assert '--append-system-prompt "$DIR/persona.txt"' in script

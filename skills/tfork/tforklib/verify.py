@@ -9,15 +9,20 @@ per-fork sentinel wrapper:
     __tfork_ec=$?;
     printf '\\n__tfork_end_%s=%d__\\n' "$__tfork_nonce" "$__tfork_ec"
 
-``verify_fork`` reads the pane's full scrollback, locates those markers, and
-returns ``(verified, foreground, exit_status, note)``. It never raises and
-never closes the pane — a False verdict is surfaced to the caller as an
-unverified success with the pane left open for the user to inspect.
+``observe_fork`` reads the pane once and returns the raw ``Observation`` — the
+generic, runtime-agnostic facts. ``verdict`` turns those facts into the
+human-facing ``(verified, foreground, exit_status, note)`` tuple, and
+``result.derive_launch_outcome`` turns the same facts (plus afork's sidecar)
+into the machine-facing ``launch_outcome``. Both consumers read one snapshot;
+the pane is never polled twice. Neither raises and neither closes the pane — a
+False verdict is surfaced as an unverified success with the pane left open.
 """
 
 import re
 import time
-from pathlib import Path
+from collections import namedtuple
+
+from .outcome import SHELL_NAMES, is_shell  # noqa: F401  (re-exported)
 
 # Seconds to wait after spawn before reading the pane. The wrapper needs
 # enough time to print the start marker and either let the command exit
@@ -25,18 +30,36 @@ from pathlib import Path
 # process; 2s covers shell startup on every machine seen so far.
 DEFAULT_DELAY = 2
 
-# Process names that count as "just a shell" — the pane shows no live
-# command/agent doing useful work.
-SHELL_NAMES = {"sh", "bash", "zsh", "fish", "dash", "tcsh", "csh", "ksh"}
+# One snapshot of the pane. ``readable`` is False when the pane could not be
+# read at all (``pane_text`` returns "" both for a read failure and for a pane
+# that has genuinely printed nothing — either way we observed nothing, which is
+# the only claim the launch_outcome contract makes from it).
+Observation = namedtuple(
+    "Observation",
+    "start_sentinel_seen end_sentinel_seen exit_status foreground pane_text "
+    "readable")
 
 
-def is_shell(process):
-    """True when ``process`` is a plain shell, not an agent or command."""
-    return Path((process or "").lstrip("-")).name in SHELL_NAMES
+def observe_fork(terminal, session, nonce, delay):
+    """Sleep once, read the pane once, and return the raw ``Observation``."""
+    time.sleep(delay)
+    text = terminal.pane_text(session)
+    foreground = terminal.pane_process(session)
+
+    start_seen = f"__tfork_start_{nonce}__" in text
+    end_match = re.search(rf"__tfork_end_{re.escape(nonce)}=(-?\d+)__", text)
+    return Observation(
+        start_sentinel_seen=start_seen,
+        end_sentinel_seen=end_match is not None,
+        exit_status=int(end_match.group(1)) if end_match else None,
+        foreground=foreground,
+        pane_text=text,
+        readable=bool(text),
+    )
 
 
-def verify_fork(terminal, session, nonce, delay):
-    """Single deterministic check; returns ``(verified, foreground, exit_status, note)``.
+def verdict(obs):
+    """``(verified, foreground, exit_status, note)`` from one ``Observation``.
 
     Verdict matrix:
 
@@ -52,35 +75,31 @@ def verify_fork(terminal, session, nonce, delay):
     start, no end, shell foreground          False     "state unknown ..."
     =======================================  ========  ======================
     """
-    time.sleep(delay)
-    text = terminal.pane_text(session)
-    foreground = terminal.pane_process(session)
-
-    start_marker = f"__tfork_start_{nonce}__"
-    end_re = re.compile(rf"__tfork_end_{re.escape(nonce)}=(-?\d+)__")
-
-    if start_marker not in text:
-        return False, foreground, None, (
+    if not obs.start_sentinel_seen:
+        return False, obs.foreground, None, (
             "start sentinel not observed; paste may be corrupted or the "
             "target shell may not support the verification wrapper"
         )
 
-    end_match = end_re.search(text)
-    if end_match:
-        exit_status = int(end_match.group(1))
-        if exit_status == 0:
-            return True, foreground, exit_status, "exited cleanly"
-        return (False, foreground, exit_status,
-                f"exited with status {exit_status}")
+    if obs.end_sentinel_seen:
+        if obs.exit_status == 0:
+            return True, obs.foreground, obs.exit_status, "exited cleanly"
+        return (False, obs.foreground, obs.exit_status,
+                f"exited with status {obs.exit_status}")
 
     # Start fired, no end yet — the command is either still running or it
     # died without the wrapper printing the end marker. Foreground decides:
     # a non-shell process means real work is happening (server, agent);
     # a shell means whatever ran is gone and we cannot account for it.
-    if foreground is not None and not is_shell(foreground):
-        return (True, foreground, None,
-                f"still running, foreground = {foreground}")
-    return False, foreground, None, (
+    if obs.foreground is not None and not is_shell(obs.foreground):
+        return (True, obs.foreground, None,
+                f"still running, foreground = {obs.foreground}")
+    return False, obs.foreground, None, (
         "state unknown: no end sentinel observed and no non-shell foreground "
         "process is running"
     )
+
+
+def verify_fork(terminal, session, nonce, delay):
+    """Observe once and return the verdict — the original single-call API."""
+    return verdict(observe_fork(terminal, session, nonce, delay))

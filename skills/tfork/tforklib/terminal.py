@@ -29,6 +29,7 @@ from .errors import (
     err_workspace_ambiguous,
     err_workspace_unknown,
 )
+from .outcome import DELIVERY_ABSENT, DELIVERY_AMBIGUOUS
 
 
 SURFACE_REF_RE = re.compile(r"^surface:\d+$")
@@ -780,15 +781,22 @@ class CmuxTerminal(Terminal):
         paste = _run(["cmux", "paste-buffer", "--name", "tfork",
                       "--surface", session, *ws_args])
         if set_buf.returncode != 0 or paste.returncode != 0:
+            # Enter was never sent, so even a partially pasted line sat at the
+            # prompt without executing: delivery is definitely absent.
             detail = (set_buf.stderr + paste.stderr).strip()
             self.kill(session)  # spawn_failed: the pane is killed first
-            raise err_spawn_failed(detail or "cmux buffer paste failed")
+            raise err_spawn_failed(detail or "cmux buffer paste failed",
+                                   delivery=DELIVERY_ABSENT)
         time.sleep(0.3)
         send = _run(["cmux", "send-key", "--surface", session, "enter",
                      *ws_args])
         if send.returncode != 0:
+            # The line IS in the pane and only the Enter reported failure — it
+            # may still have registered. Killing the pane does not prove the
+            # command never ran, so this delivery is ambiguous, not absent.
             self.kill(session)
-            raise err_spawn_failed(send.stderr.strip() or "cmux send-key failed")
+            raise err_spawn_failed(send.stderr.strip() or "cmux send-key failed",
+                                   delivery=DELIVERY_AMBIGUOUS)
 
     # -- inspection ---------------------------------------------------------
 

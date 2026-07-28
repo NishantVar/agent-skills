@@ -21,14 +21,17 @@ from .errors import (
     err_window_anchor_conflict,
     err_workspace_anchor_conflict,
 )
+from .outcome import load_sidecar
 from .registry import REGISTRY_PATH, read_registry, write_registry_entry
+from .result import derive_launch_outcome
 from .terminal import resolve_terminal
-from .verify import DEFAULT_DELAY, verify_fork
+from .verify import DEFAULT_DELAY, observe_fork, verdict
 
 
 def run_fork(command_words, placement=None, anchor=None, type_override=None,
              title=None, delay=None, workspace=None, cwd=None, window=None,
-             terminal=None, nonce=None, registry_path=REGISTRY_PATH):
+             terminal=None, nonce=None, registry_path=REGISTRY_PATH,
+             launch_contract=None):
     """Fork, verify, label, persist, and return the result dict.
 
     Raises ``ForkError`` only for argument, terminal, surface-resolution,
@@ -39,6 +42,11 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
 
     ``nonce`` is generated automatically; the parameter is exposed for tests
     that need a known marker to construct expected scrollback against.
+
+    ``launch_contract`` is the path to the sidecar afork wrote. It is optional
+    and never fatal: without it (or with an unreadable one) the fork still runs
+    and still reports a ``launch_outcome``, but no runtime-specific evidence can
+    be trusted, so every ambiguous launch degrades to state ``unknown``.
     """
     if not command_words:
         raise err_bad_arguments("no command given after '--'")
@@ -91,8 +99,12 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
                           f"{', '.join(duplicate_refs)} in the same workspace "
                           f"— p2p will report peer_ambiguous on this title")
 
-    verified, foreground, exit_status, note = verify_fork(
-        terminal, session, nonce, delay)
+    # One pane snapshot feeds both readers: the human-facing verdict/note and
+    # the machine-facing launch_outcome. They never disagree about what was
+    # seen because they are derived from the same observation.
+    observation = observe_fork(terminal, session, nonce, delay)
+    verified, foreground, exit_status, note = verdict(observation)
+    outcome = derive_launch_outcome(observation, load_sidecar(launch_contract))
     if title_note:
         note = f"{note}{title_note}"
     observed_type = classify_observed(exit_status, foreground)
@@ -174,5 +186,6 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
         "exit_status": exit_status,
         "workspace": ws_result,
         "window": win_result,
+        "launch_outcome": outcome,
         "note": note,
     }

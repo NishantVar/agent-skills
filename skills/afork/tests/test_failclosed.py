@@ -2,6 +2,8 @@
 fail-closed gate (a declared restriction the adapter can't enforce is a
 refusal, overridable only with explicit --allow-unenforced)."""
 
+from pathlib import Path
+
 import pytest
 
 from aforklib import run_afork
@@ -63,7 +65,9 @@ def test_codex_plain_none_yolo(tmp_path):
     assert out["agent"] is None
     assert out["posture"] == "none"
     assert out["enforced"] is True
-    assert out["workdir"] is None  # no temp launcher in plain mode
+    # No temp launcher in plain mode. The workdir itself still exists: it is
+    # where the launch-contract sidecar lives, which every fork gets.
+    assert not (Path(out["workdir"]) / "launch.sh").exists()
     assert "--dangerously-bypass-approvals-and-sandbox" in out["command"]
     assert 'model_reasoning_effort="xhigh"' in out["command"]
 

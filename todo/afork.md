@@ -1,6 +1,37 @@
 # afork — todo
 
-_Last refreshed: 2026-07-15_
+_Last refreshed: 2026-07-28_
+
+## Launch contract + legacy Claude name bridge (BUILT, branch `launch-contracts-01`, 2026-07-28)
+
+Issue 01 of the `agent-model-effort-policy` PRD. Two contracts, both afork-side:
+
+- **Generic legacy Claude naming bridge.** Exact-name lookup still runs first. Only when it
+  misses does a *claude* agent name ending in `-agent` fall back to its suffixless stem. The
+  handoff returns the canonical suffixless `agent` plus a `deprecation_warning`. It is a rule,
+  not a per-role map — an exact `*-agent` port still wins, and codex gets no inverse alias.
+  `resolve_agent_definition` now returns 4 fields (path, text, name, warning).
+  Tests: `tests/test_legacy_bridge.py` (needs an isolated `$HOME` — port lookup searches the
+  home base too, so the developer's own `~/.claude/agents` would otherwise satisfy the misses
+  these tests depend on).
+- **Launch contract sidecar.** *Every* launch — plain or custom — now gets a private workdir
+  holding a 0600 `launch-contract.json`: attempt id, runtime, agent, model, effort, the
+  exec-failure marker, and the adapter-owned regexes for a rejected model / runtime launch
+  error. This is the runtime-knowledge boundary: tfork holds no runtime table and only matches
+  what afork wrote. `Launch` is now a 4-field namedtuple (command, workdir, launch_contract,
+  attempt_id) and the handoff carries `launch_contract` + `attempt_id`.
+  The generated launcher uses `shopt -s execfail` and execs the intended runtime EXACTLY ONCE;
+  the marker line after the exec is reachable only when that real exec failed. Plain mode has
+  no launcher, so its `exec_marker` is `null` — the honest value, since nothing could print it.
+  Tests: `tests/test_launch_contract.py`.
+
+### Open follow-ups
+
+- **The bridge is temporary.** Remove it after one release/upgrade cycle, per the accepted
+  slice. Nothing currently enforces that deadline.
+- **`aforklib/outcome.py` is byte-duplicated into `tforklib/`.** The two skills install as
+  independent symlinked directories, so neither can import the other. A test in *both* suites
+  asserts byte identity. If the skills ever gain a shared install root, collapse the duplicate.
 
 ## agentlens observability (BUILT, branch `agentlens-observe`, 2026-07-15)
 

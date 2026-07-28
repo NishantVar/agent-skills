@@ -24,11 +24,12 @@ def test_codex_port_resolves_under_cwd(tmp_path):
 def test_bare_agent_definition_resolves_under_cwd(tmp_path):
     _write_port(tmp_path, "codex", "reviewer.toml",
                 'name = "reviewer"\nsandbox_mode = "read-only"\n')
-    path, text, name = resolve_agent_definition(
+    path, text, name, warning = resolve_agent_definition(
         CodexAdapter(), "reviewer", str(tmp_path))
     assert path.endswith(".codex/agents/reviewer.toml")
     assert "read-only" in text
     assert name == "reviewer"
+    assert warning is None
 
 
 def test_bare_agent_resolves_from_home_when_absent_in_cwd(tmp_path, monkeypatch):
@@ -38,11 +39,12 @@ def test_bare_agent_resolves_from_home_when_absent_in_cwd(tmp_path, monkeypatch)
     monkeypatch.setenv("HOME", str(home))
     _write_port(home, "claude", "reviewer.md", "# Global reviewer\n")
 
-    path, text, name = resolve_agent_definition(
+    path, text, name, warning = resolve_agent_definition(
         ClaudeAdapter(), "reviewer", str(repo))
     assert path == str(home / ".claude" / "agents" / "reviewer.md")
     assert "Global reviewer" in text
     assert name == "reviewer"
+    assert warning is None
 
 
 def test_repo_local_definition_shadows_home(tmp_path, monkeypatch):
@@ -113,12 +115,13 @@ def test_existing_file_without_separator_selects_explicit_path_mode(tmp_path,
     run_dir = tmp_path / "run-dir"
     run_dir.mkdir()
 
-    resolved, text, name = resolve_agent_definition(
+    resolved, text, name, warning = resolve_agent_definition(
         CodexAdapter(), "local-agent.toml", str(run_dir))
 
     assert resolved == str(path)
     assert "read-only" in text
     assert name == "local-agent"
+    assert warning is None
 
 
 def test_explicit_path_with_wrong_extension_is_bad_arguments(tmp_path):
