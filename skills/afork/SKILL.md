@@ -25,7 +25,7 @@ description: 'Front door for forking any coding agent (plain or definition-backe
   Default: none.
 - **placement**: Where the new pane opens: right, left, top, or bottom. Forwarded to tfork. Default: none.
 - **allow_unenforced**:
-  Explicitly proceed when a declared restriction cannot be runtime-enforced. Off by default — afork fails closed. Pass only on explicit user instruction to accept an unenforced launch.
+  Explicitly proceed when a declared restriction cannot be runtime-enforced. Off by default — afork fails closed. Pass only after explicit user acceptance, or after the immediately preceding successful Flux configured-secondary `authorize-downgrade` authorization bound to this exact candidate. That machine authorization permits one preparation retry only; primaries, user-supplied or outside candidates, second retries, and unrelated calls remain explicit-user-only.
   Default: none.
 - **observe**:
   Wrap the launch command with agentlens (`lens run`) so the forked agent's prompts and token usage are captured. Off by default. Fail-open: if the `lens` binary is not on PATH the command is still built, just unwrapped, and the handoff carries an obs_warning.
@@ -52,7 +52,7 @@ description: 'Front door for forking any coding agent (plain or definition-backe
 
 ## Constraints
 
-- **Must:** A declared permission restriction (read-only / workspace-write) that the runtime adapter cannot prove it enforces is a refusal, not a best effort. afork refuses to launch a restricted posture it cannot enforce unless the user explicitly passes --allow-unenforced. The default posture `none` (yolo) has nothing to enforce and never fails closed. The binary owns this decision — never second-guess an `unenforceable` handoff into a launch.
+- **Must:** A declared permission restriction (read-only / workspace-write) that the runtime adapter cannot prove it enforces is a refusal, not a best effort. afork refuses to launch a restricted posture it cannot enforce unless the user explicitly accepts --allow-unenforced, or the immediately preceding successful Flux configured-secondary `authorize-downgrade` is bound to the exact candidate and authorizes its one preparation retry. This machine authority never applies to primaries, user-supplied or outside candidates, second retries, or unrelated calls; those remain explicit-user-only. The default posture `none` (yolo) has nothing to enforce and never fails closed. The binary owns this decision — never second-guess an `unenforceable` handoff into a launch.
 - **Must avoid:** treating a prompt-level or persona 'please be read-only' as if it enforced the restriction. Only runtime mechanisms (e.g. the codex --sandbox flag) count as enforcement; prose does not. Persona injection is a role, not a security boundary.
 - **Require:** afork prepares the command but never forks. On a ready_to_fork handoff, load the tfork skill and fork the handoff's `command` verbatim after the -- separator, passing the carried --title, --cwd, --type agent, --placement, and --launch-contract. afork.py must not invoke tfork itself — the calling agent bridges the two skills.
 - **Require:** Infer only the front-door parameters and pass them through. Never parse agent definitions, map postures to runtime flags, build launch commands, or decide enforceability in the skill — the binary's adapter owns all of it. Do not hand-build runtime invocations or edit the command afork returns.
@@ -74,15 +74,17 @@ description: 'Front door for forking any coding agent (plain or definition-backe
 8. Decide whether the user named a placement applies and, if so:
    a. Insert --placement {placement} into the invocation.
 9. Decide whether the user has explicitly accepted an unenforced launch for a runtime that cannot enforce the declared posture applies and, if so:
-   a. Insert --allow-unenforced into the invocation. Never add this on your own initiative — only on explicit user instruction.
-10. Decide whether the user asked for the forked agent to be observed / captured applies and, if so:
+   a. Insert --allow-unenforced into the invocation. Never add this on your own initiative — explicit user acceptance remains the ordinary authority.
+10. Decide whether the immediately preceding action was a successful Flux configured-secondary authorize-downgrade bound to this exact candidate applies and, if so:
+   a. Insert --allow-unenforced for that one preparation retry. This standing machine authority never authorizes a primary, user-supplied or outside candidate, second retry, or unrelated call.
+11. Decide whether the user asked for the forked agent to be observed / captured applies and, if so:
    a. Insert --observe into the invocation, and one --obs-tag {obs_tag} per attribution tag they named. Tags require --observe; --observe alone is a valid capture-without-attribution launch.
-11. Run the assembled afork.py invocation and capture its stdout as a single JSON object.
-12. Decide which of the following applies and follow only that path:
+12. Run the assembled afork.py invocation and capture its stdout as a single JSON object.
+13. Decide which of the following applies and follow only that path:
    If the JSON has ok set to true and action is ready_to_fork:
    a. Follow the bridge-to-tfork procedure.
    Otherwise:
-   a. Treat the JSON as a fail-closed or resolution handoff: carry out its agent_instruction exactly and relay its human_message to the user. For code `unenforceable`, do NOT fork — report the refusal; only re-run with --allow-unenforced if the user explicitly accepts the risk.
+   a. Treat the JSON as a fail-closed or resolution handoff: carry out its agent_instruction exactly and relay its human_message to the user. For code `unenforceable`, do NOT fork — report the refusal; only re-run with --allow-unenforced after explicit user acceptance, or for the immediately preceding successful Flux configured-secondary authorize-downgrade bound to this exact candidate.
 
 ### Procedure: bridge-to-tfork
 
@@ -102,7 +104,7 @@ Skip these — SKILL.md is the complete interface.
 | "Read afork.py / the toml/md to understand it" | SKILL.md is the contract; the binary's adapter parses the definition and maps flags. |
 | "I need to pick the codex/claude/pi flag for this posture/model" | The binary is agnostic; the adapter owns flag names. Pass agnostic permission/model/effort. |
 | "User said `claude opus` / `claude fable max` — the second word is the agent positional" | Model names/aliases (opus, sonnet, fable, gpt-*) go to --model, optionally with a trailing effort (`fable max`); the agent positional is a bare definition name or explicit definition path. |
-| "An `unenforceable` refusal is probably fine — just fork anyway / add --allow-unenforced" | Fail-closed is the point for declared restrictions. Only --allow-unenforced on explicit user acceptance. |
+| "An `unenforceable` refusal is probably fine — just fork anyway / add --allow-unenforced" | Fail-closed is the point for declared restrictions. Use --allow-unenforced only on explicit user acceptance, or for the exact configured secondary immediately after its successful Flux `authorize-downgrade`; every other call remains explicit-user-only. |
 | "`none` (yolo) should fail closed too" | none has nothing to enforce; it never fails closed. |
 | "I'll inject the role as a user prompt after forking" | Prompt-level is not enforcement; the binary injects persona at system/developer level. |
 | "Let afork fork it directly" | afork only prepares; the tfork skill forks the returned command. |

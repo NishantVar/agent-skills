@@ -11,6 +11,9 @@ from aforklib.errors import AforkError
 from aforklib.persona import render_preamble
 
 
+SKILL_SOURCE = Path(__file__).resolve().parents[1] / "SKILL.glyph"
+
+
 def _codex_port(tmp_path, name, body):
     d = tmp_path / ".codex" / "agents"
     d.mkdir(parents=True, exist_ok=True)
@@ -158,6 +161,17 @@ def test_pi_read_only_unenforceable(tmp_path):
     with pytest.raises(AforkError) as exc:
         run_afork("pi", permission="read-only", cwd=str(tmp_path))
     assert exc.value.code == "unenforceable"
+
+
+def test_skill_limits_machine_authorization_to_one_bound_secondary_retry():
+    """The binary remains policy-agnostic; the front-door contract binds Flux."""
+    source = SKILL_SOURCE.read_text(encoding="utf-8")
+    assert "immediately preceding successful Flux configured-secondary" in source
+    assert "authorize-downgrade" in source
+    assert "bound to this exact candidate" in source
+    assert "one preparation retry" in source
+    assert "primaries, user-supplied or outside candidates, second retries" in source
+    assert "unrelated calls remain explicit-user-only" in source
 
 
 # --- pi has no agent dir: custom request errors ---
