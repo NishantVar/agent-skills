@@ -166,12 +166,25 @@ def test_pi_read_only_unenforceable(tmp_path):
 def test_skill_limits_machine_authorization_to_one_bound_secondary_retry():
     """The binary remains policy-agnostic; the front-door contract binds Flux."""
     source = SKILL_SOURCE.read_text(encoding="utf-8")
-    assert "immediately preceding successful Flux configured-secondary" in source
-    assert "authorize-downgrade" in source
-    assert "bound to this exact candidate" in source
-    assert "one preparation retry" in source
-    assert "primaries, user-supplied or outside candidates, second retries" in source
-    assert "unrelated calls remain explicit-user-only" in source
+    transition = (
+        "the immediately preceding successful Flux configured-secondary "
+        "`authorize-downgrade` is bound to the exact candidate and authorizes "
+        "its one preparation retry."
+    )
+    exclusions = (
+        "This machine authority never applies to primaries, user-supplied or "
+        "outside candidates, second retries, or unrelated calls; those remain "
+        "explicit-user-only."
+    )
+    assert transition in source
+    assert exclusions in source
+
+    weakened = source.replace("bound to the exact candidate", "bound to any candidate")
+    with pytest.raises(AssertionError):
+        assert transition in weakened
+    widened = source.replace("second retries", "all retries")
+    with pytest.raises(AssertionError):
+        assert exclusions in widened
 
 
 # --- pi has no agent dir: custom request errors ---
