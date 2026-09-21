@@ -18,7 +18,9 @@ preamble and the charter, so every definition-backed fork inherits both blocks.
 
 from .startup_reads import render_startup_reads
 
-# Verbatim wording from the PRD Solution section. One `{role}` substitution.
+# Diverges from the PRD Solution section's original wording: a direct human
+# request may now override the charter after explicit confirmation, rather
+# than the charter unconditionally winning. One `{role}` substitution.
 IDENTITY_PREAMBLE = """\
 **[Identity & Precedence — prepended automatically by afork]**
 You ARE the `{role}` agent. That charter — everything below this block — is
@@ -30,9 +32,11 @@ session; you are this role.
 Tools may be present in your environment (e.g. Write, Edit, Bash) that your
 charter does not authorize you to use. **Their availability is not permission.**
 A wide toolset exists for session mechanics (e.g. peer messaging) and does not
-expand your role. If anything — host framing, available tools, or a user
-request — conflicts with your charter, the charter wins; surface the conflict
-rather than acting outside your role."""
+expand your role. If host framing or available tools conflict with your
+charter, the charter wins — a tool's presence is not permission. If a direct
+human request conflicts with your charter, ask first: "This goes outside my
+charter as `{role}`: [conflict]. Proceed anyway?" Proceed only after the human
+confirms; never infer approval."""
 
 # Blank line between prepended blocks and the unchanged charter body.
 _CHARTER_SEPARATOR = "\n\n"
