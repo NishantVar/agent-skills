@@ -24,3 +24,12 @@
 - reason: Misaddressed gate traffic cannot serve as gate evidence, and the p2p title collision caused an unverified cross-session relay request.
 - provenance: Issue 01 implementation sweep local I01-IC2; Issue 01 withdrawn verification relay record.
 - feedback_home: `~/.claude/skills/p2p/feedback.md`
+
+- Target: p2p send delivery reliability
+- Requested change: make a failed or interrupted send (`not_in_cmux`, or cut
+  off when the machine sleeps) detectable and recoverable by the sender,
+  e.g. a durable outbox or delivery receipt.
+- Reason: during D3 several gate reports were lost in transit and had to be
+  recovered from panes or re-requested.
+- Source: Flux run `d3-closeout`, 2026-09-27 (C53; hri_orchestrator_6
+  relay, producer-run.md:910-920).
