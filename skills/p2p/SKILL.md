@@ -1,7 +1,6 @@
 ---
 name: p2p
-description: >-
-  P2P messaging between cmux agents: `send` handles first contact, follow-up, and reply; `send-one-way` supports tab-less callers. Routes first contact by cmux tab title with optional workspace/window scope, then returns a surface ref for follow-up; returns handoff JSON when a peer can't be resolved. p2p never spawns agents.
+description: 'P2P messaging between cmux agents: one verb (`send`) handles first contact, follow-up, and reply. Routes first contact by cmux tab title with optional workspace/window scope, then returns a surface ref for follow-up; returns handoff JSON when a peer can''t be resolved. p2p never spawns agents.'
 ---
 
 ## Parameters
@@ -22,18 +21,14 @@ description: >-
 
 ## Constraints
 
-- **Require:** For `send`, pick one short, lowercase, snake_case title on the first call and keep it for life. First contact routes by title plus workspace/window scope; successful sends return a `surface` ref that is the exact follow-up pointer. Renaming mid-session makes this agent unreachable under the prior title unless peers re-resolve. The helper renames the cmux tab cosmetically to match the registered title.
-- **Require:** All outgoing messages go through `agent_msg.py send` or the tab-less `agent_msg.py send-one-way`. Never call `cmux set-buffer`, `cmux paste-buffer`, or `cmux send-key` directly — the helper alone passes `--workspace` (without it cross-workspace delivery fails as `Surface is not a terminal`), applies the `[from: <me>]` prefix, and uses a per-op buffer name to avoid concurrent-sender interleaving.
-- **Require:** When `send` returns `ok: false`, the JSON contains an explicit `agent_instruction` field. Follow it verbatim — do not improvise around it. The handoff carries `code`, `human_message`, `agent_instruction`, `action_required`, `handoff_skill`, `rerun_argv`, and `retryable`, plus per-code extras.
+- **Require:** Pick one short, lowercase, snake_case title on the first call and keep it for life. First contact routes by title plus workspace/window scope; successful sends return a `surface` ref that is the exact follow-up pointer. Renaming mid-session makes this agent unreachable under the prior title unless peers re-resolve. The helper renames the cmux tab cosmetically to match the registered title.
+- **Require:** All outgoing messages go through `agent_msg.py send`. Never call `cmux set-buffer`, `cmux paste-buffer`, or `cmux send-key` directly — the helper alone passes `--workspace` (without it cross-workspace delivery fails as `Surface is not a terminal`), applies the `[from: <me>]` prefix, and uses a per-op buffer name to avoid concurrent-sender interleaving.
+- **Require:** When the helper returns `ok: false`, the JSON contains an explicit `agent_instruction` field. Follow it verbatim — do not improvise around it. The handoff carries `code`, `human_message`, `agent_instruction`, `action_required`, `handoff_skill`, `rerun_argv`, and `retryable`, plus per-code extras.
 - **Require:** When forking an agent via tfork (or afork) that you'll message, pass `--title <t>` — the new tab is renamed before the fork returns, so `send --peer <t>` resolves on the first try.
 - **Require:** If you receive a p2p message that appears routed to the wrong agent or role, do not silently act on it. Reply to the sender via p2p with a short misroute notice naming your current title/surface and what looked wrong, so the calling agent can update its peer ref or retarget.
 - **Avoid:** This skill never spawns agents and never invokes the tfork/afork skills itself. On a title miss it returns a `peer_not_found` handoff (listing sibling `candidates` when the scope has other registered agents) — it does not write a spawn payload. The calling agent decides whether to retarget a candidate or spawn a new peer itself via tfork/afork. Same rule in reverse: tfork never calls p2p.
 
 ## Context
-
-- **tabless-sender**
-
-  For processes without a cmux pane, use `agent_msg.py send-one-way` instead of the agent send procedures below. Read [the tab-less invocation and result contract](references/tabless.md). The caller supplies its sender, exact target workspace/surface and expected title; the body comes only from a file. This mode never discovers a calling pane, reads or writes manifests, or spawns processes.
 
 - **red-flags**
 

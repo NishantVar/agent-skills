@@ -1,5 +1,5 @@
 skill p2p(my_title = "" <"REQUIRED on first send for this agent EXCEPT on inline-bootstrap reply (see reply_to_inline_bootstrap block). Pick a snake_case role-reflective title (qa_lead, reviewer, builder, etc.) from your own role context BEFORE calling. Drop on subsequent calls; the title is sticky in the manifest. Carve-outs: (a) inline-bootstrap reply uses --bootstrap-suggested-title instead — DO NOT pass --my-title there, it overrides the initiator's expected title and breaks routing; (b) if your spawner already set a meaningful cmux tab title (anything outside {claude, claude-code, codex, gemini, shell, bash, zsh, \"\"}), you may omit --my-title and the helper will adopt it silently.">, peer = "" <"Cmux tab title of the destination peer. First-contact routing key. With no --workspace/--window modifier it resolves with locality: the caller's own workspace first, then other workspaces in the caller's window, then other windows — a single live match at the closest tier wins, two-plus at a tier returns candidates. Explicit modifiers force a single scope. By convention, the first word of an incoming message is treated as the peer's cmux tab title.">, workspace = "" <"Optional workspace scope for first contact or stale-surface recovery. Use a workspace title, `workspace:N`/UUID, or `all`. A workspace TITLE resolves with the same locality (caller's own workspace, then caller's window, then other windows), so `--peer renderer --workspace HTML` finds the nearest workspace titled HTML with no manual cmux inspection. Omit to let peer-title resolution cascade across the caller's workspace and window.">, window = "" <"Optional cmux window scope for first contact or stale-surface recovery. Use a window ref/UUID/index, or `all`. Omit when the peer is in the caller's window/workspace.">, message = "" <"Message body. Always passed via --message-file to side-step shell quoting.">)
-    description: "P2P messaging between cmux agents: `send` handles first contact, follow-up, and reply; `send-one-way` supports tab-less callers. Routes first contact by cmux tab title with optional workspace/window scope, then returns a surface ref for follow-up; returns handoff JSON when a peer can't be resolved. p2p never spawns agents."
+    description: "P2P messaging between cmux agents: one verb (`send`) handles first contact, follow-up, and reply. Routes first contact by cmux tab title with optional workspace/window scope, then returns a surface ref for follow-up; returns handoff JSON when a peer can't be resolved. p2p never spawns agents."
 
     require single_stable_title
     require always_use_send_verb
@@ -9,7 +9,6 @@ skill p2p(my_title = "" <"REQUIRED on first send for this agent EXCEPT on inline
     avoid skill_calls_skill
 
     context:
-        tabless_sender
         red_flags
 
     flow:
@@ -66,11 +65,11 @@ block recover_truncated_peer_message()
         "Run `cmux read-screen --surface surface:<N> --lines 3000` and scan the tail for the `[from: <peer>]` block; copy the full body from there."
 
 
-const single_stable_title = """For `send`, pick one short, lowercase, snake_case title on the first call and keep it for life. First contact routes by title plus workspace/window scope; successful sends return a `surface` ref that is the exact follow-up pointer. Renaming mid-session makes this agent unreachable under the prior title unless peers re-resolve. The helper renames the cmux tab cosmetically to match the registered title."""
+const single_stable_title = """Pick one short, lowercase, snake_case title on the first call and keep it for life. First contact routes by title plus workspace/window scope; successful sends return a `surface` ref that is the exact follow-up pointer. Renaming mid-session makes this agent unreachable under the prior title unless peers re-resolve. The helper renames the cmux tab cosmetically to match the registered title."""
 
-const always_use_send_verb = """All outgoing messages go through `agent_msg.py send` or the tab-less `agent_msg.py send-one-way`. Never call `cmux set-buffer`, `cmux paste-buffer`, or `cmux send-key` directly — the helper alone passes `--workspace` (without it cross-workspace delivery fails as `Surface is not a terminal`), applies the `[from: <me>]` prefix, and uses a per-op buffer name to avoid concurrent-sender interleaving."""
+const always_use_send_verb = """All outgoing messages go through `agent_msg.py send`. Never call `cmux set-buffer`, `cmux paste-buffer`, or `cmux send-key` directly — the helper alone passes `--workspace` (without it cross-workspace delivery fails as `Surface is not a terminal`), applies the `[from: <me>]` prefix, and uses a per-op buffer name to avoid concurrent-sender interleaving."""
 
-const honor_handoff_json = """When `send` returns `ok: false`, the JSON contains an explicit `agent_instruction` field. Follow it verbatim — do not improvise around it. The handoff carries `code`, `human_message`, `agent_instruction`, `action_required`, `handoff_skill`, `rerun_argv`, and `retryable`, plus per-code extras."""
+const honor_handoff_json = """When the helper returns `ok: false`, the JSON contains an explicit `agent_instruction` field. Follow it verbatim — do not improvise around it. The handoff carries `code`, `human_message`, `agent_instruction`, `action_required`, `handoff_skill`, `rerun_argv`, and `retryable`, plus per-code extras."""
 
 const skill_calls_skill = """This skill never spawns agents and never invokes the tfork/afork skills itself. On a title miss it returns a `peer_not_found` handoff (listing sibling `candidates` when the scope has other registered agents) — it does not write a spawn payload. The calling agent decides whether to retarget a candidate or spawn a new peer itself via tfork/afork. Same rule in reverse: tfork never calls p2p."""
 
@@ -88,6 +87,3 @@ const red_flags = """Skip these — SKILL.md is the complete interface.
 | "Check `--help` for the right flag" | All flags are listed in Parameters. |
 | "Read agent_msg.py to understand `send`" | SKILL.md is the contract. |
 | "`cmux identify` to know my surface first" | The helper handles it. |"""
-
-
-const tabless_sender = """For processes without a cmux pane, use `agent_msg.py send-one-way` instead of the agent send procedures below. Read [the tab-less invocation and result contract](references/tabless.md). The caller supplies its sender, exact target workspace/surface and expected title; the body comes only from a file. This mode never discovers a calling pane, reads or writes manifests, or spawns processes."""
