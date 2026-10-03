@@ -1,6 +1,15 @@
 # p2p — backlog
 
-_Last refreshed: 2026-06-23_
+_Last refreshed: 2026-10-03_
+
+## Implementation candidate (review pending)
+
+- **Tab-less exact-target one-way sender.** `agent_msg.py send-one-way`
+  accepts caller identity, exact workspace/surface, expected title and a body
+  file; no pane, manifest or child process is used. Its invocation, stable
+  socket defaults and distinct machine results are recorded in
+  [the contract](../skills/p2p/references/tabless.md). Fake-socket coverage is
+  in `tests/test_tabless.py`. This leaves the unrelated IR debt below open.
 
 ## Done
 

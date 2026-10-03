@@ -1,5 +1,5 @@
 """argparse front door. `_touch_self` bumps `last_seen` at the top of
-every invocation as a diagnostic heartbeat; routing does not depend
+every pane-based invocation as a diagnostic heartbeat; routing does not depend
 on it (a manifest-with-live-surface is always `live`)."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import bootstrap, errors, registry, send, surface, transport
+from . import bootstrap, errors, registry, send, surface, transport, tabless
 
 
 EXIT_OK = 0
@@ -310,6 +310,16 @@ def cmd_parse_incoming(_args) -> int:
     return EXIT_OK
 
 
+def cmd_send_one_way(args) -> int:
+    result = tabless.send_one_way(
+        sender=args.sender, peer_surface=args.peer_surface,
+        workspace=args.workspace, expected_title=args.expected_title,
+        message_file=args.message_file, socket_path=args.socket_path)
+    _print_json(result)
+    return {"delivered": EXIT_OK, "surface_missing": EXIT_HANDOFF,
+            "title_mismatch": EXIT_HANDOFF, "error": EXIT_SYSTEM}[result["code"]]
+
+
 # ---------------- dispatch ----------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -373,6 +383,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--message-file")
     s.set_defaults(func=cmd_send)
 
+    t = sub.add_parser("send-one-way",
+                       help="Tab-less exact-target send; body never enters argv.")
+    t.add_argument("--sender", required=True)
+    t.add_argument("--peer-surface", required=True)
+    t.add_argument("--workspace", required=True)
+    t.add_argument("--expected-title", required=True)
+    t.add_argument("--message-file", required=True)
+    t.add_argument("--socket-path", default=None,
+                   help="Optional exact cmux socket; defaults to owned stable sockets.")
+    t.set_defaults(func=cmd_send_one_way)
+
     sub.add_parser("parse-incoming").set_defaults(func=cmd_parse_incoming)
 
     return p
@@ -382,7 +403,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     # Bump last_seen before dispatch as a diagnostic heartbeat.
-    registry.touch_self(surface.my_surface())
+    if args.cmd != "send-one-way":
+        registry.touch_self(surface.my_surface())
     return args.func(args)
 
 
