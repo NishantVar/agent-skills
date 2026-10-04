@@ -106,13 +106,13 @@ def test_new_window_rename_failure_reports_actual_refs_without_delivery(monkeypa
     terminal.fork.assert_not_called()
 
 
-def test_creation_claim_rejects_cancelled_stale_and_consumed_handoffs(tmp_path):
+def test_creation_intent_rejects_superseded_and_consumed_handoffs(tmp_path):
     import json
     from tforklib.creation_claim import consume_creation_claim
     claim = tmp_path / "claim.json"
     claim.write_text(json.dumps({"dispatch_id": "new-owner", "record": None, "creation_started": False}))
     with pytest.raises(ForkError):
-        consume_creation_claim(claim, "cancelled-owner")
+        consume_creation_claim(claim, "superseded-owner")
     assert not json.loads(claim.read_text())["creation_started"]
     consume_creation_claim(claim, "new-owner")
     assert json.loads(claim.read_text())["creation_started"]
@@ -183,3 +183,45 @@ def test_simultaneous_create_launches_deliver_commands_to_their_returned_refs(mo
     for index, result in results:
         assert delivered[result["session"]] == f"echo {index}"
         assert result["session"] == result["workspace"]["ref"].replace("workspace:", "surface:")
+
+
+def test_waiting_old_descriptor_cannot_consume_replaced_intent(monkeypatch, tmp_path):
+    import json
+    import os
+    import threading
+    from tforklib.creation_claim import consume_creation_claim
+    claim = tmp_path / "claim.json"
+    original = {"dispatch_id": "old", "record": None, "creation_started": False}
+    claim.write_text(json.dumps(original))
+    entered, release = threading.Event(), threading.Event()
+    real_flock = __import__("fcntl").flock
+    def waiting_flock(stream, operation):
+        entered.set()
+        assert release.wait(timeout=5)
+        return real_flock(stream, operation)
+    monkeypatch.setattr("tforklib.creation_claim.fcntl.flock", waiting_flock)
+    with ThreadPoolExecutor(1) as pool:
+        pending = pool.submit(consume_creation_claim, claim, "old")
+        assert entered.wait(timeout=5)
+        replacement = tmp_path / "replacement.json"
+        replacement.write_text(json.dumps({**original, "dispatch_id": "new"}))
+        os.replace(replacement, claim)
+        release.set()
+        with pytest.raises(ForkError, match="removed or replaced"):
+            pending.result(timeout=5)
+    assert json.loads(claim.read_text()) == {**original, "dispatch_id": "new"}
+
+
+def test_invalid_intent_schema_cannot_create_or_deliver(tmp_path):
+    import json
+    claim = tmp_path / "claim.json"
+    claim.write_text(json.dumps({"dispatch_id": "owner", "record": None,
+                                 "creation_started": False, "unexpected": True}))
+    terminal = FakeTerminal()
+    terminal.create_named_workspace = Mock()
+    with pytest.raises(ForkError, match="invalid creation intent schema"):
+        run_fork(["agent"], workspace="feature", window="window:2",
+                 workspace_mode="create", workspace_claim=claim,
+                 workspace_claim_id="owner", terminal=terminal)
+    terminal.create_named_workspace.assert_not_called()
+    assert not any(call[0] == "fork" for call in terminal.calls)

@@ -28,10 +28,10 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
   Optional `--workspace-mode`: `reuse` preserves title/ref joining; `create` requires a workspace title and window, always creates a fresh workspace, and chooses the lowest free `_2`, `_3` suffix at creation. Consume the returned actual title and ref; never retry a runtime launch for a naming conflict.
   Default: reuse.
 - **workspace_claim**:
-  Optional one-shot creation reservation JSON path, passed only with create mode and --workspace-claim-id. The reservation contains dispatch_id, record=null, and creation_started=false. Before creation, validate that owner and atomically mark creation_started=true under the file lock. A removed, replaced, consumed, or mismatched reservation fails before creation or command delivery.
+  Optional dispatcher preparation-intent JSON path, passed only with create mode and --workspace-claim-id. The intent contains dispatch_id, record=null, and creation_started=false. Before creation, validate that owner and atomically mark creation_started=true under the file lock. A removed, replaced, consumed, or mismatched intent fails before creation or command delivery.
   Default: none.
 - **workspace_claim_id**:
-  Owner id for --workspace-claim; preserve both values from the dispatch handoff. Never reuse a canceled or consumed creation handoff.
+  Owner id for --workspace-claim; preserve both values from the dispatch handoff. Never reuse a superseded or consumed creation handoff.
   Default: none.
 - **window**:
   Optional cmux window to open the fork in: 'new' creates a fresh top-level window, or a window ref/index/UUID targets an existing one. Combine with --workspace to name the workspace inside the window. Mutually exclusive with --anchor.
