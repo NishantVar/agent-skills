@@ -8,6 +8,9 @@ modes, and the sentinel-wrapped spawn stay the backend's concern.
 """
 
 import json
+import secrets
+import fcntl
+from pathlib import Path
 import os
 import re
 import shlex
@@ -17,6 +20,7 @@ import time
 from abc import ABC, abstractmethod
 
 from .errors import (
+    ForkError,
     err_anchor_ambiguous,
     err_anchor_not_found,
     err_bad_arguments,
@@ -503,7 +507,7 @@ class CmuxTerminal(Terminal):
             return self._resolve_new_window(workspace)
         return self._resolve_existing_window(value, workspace, cwd)
 
-    def _resolve_new_window(self, workspace):
+    def _resolve_new_window(self, workspace, *, require_name=False):
         """Open a fresh window, reuse its seeded workspace.
 
         The window comes up with exactly one workspace; reusing it (renamed
@@ -533,10 +537,77 @@ class CmuxTerminal(Terminal):
         if workspace:
             self._rename_workspace(ws_ref, workspace, win_ref)
             title = workspace
+            if require_name:
+                observed_window = self._window_node(win_ref)
+                observed = next((ws for ws in (observed_window or {}).get("workspaces", [])
+                                 if ws.get("ref") == ws_ref), None)
+                actual_title = observed.get("title") if observed is not None else seeded.get("title")
+                if observed is None or actual_title != workspace:
+                    raise ForkError("workspace_naming_failed",
+                                    "Created workspace did not acquire the requested name; no command delivered.",
+                                    "Report the actual created refs for reconciliation; do not retry the runtime launch.",
+                                    False, None,
+                                    {"workspace": {"ref": ws_ref, "title": actual_title or "", "created": True},
+                                     "window": {"ref": win_ref, "created": True},
+                                     "requested_workspace_title": workspace})
         else:
             title = seeded.get("title") or ""
         return ({"ref": win_ref, "created": True},
                 {"ref": ws_ref, "title": title, "created": True})
+
+    def create_named_workspace(self, window, title, cwd):
+        """Create a fresh owned ref; title collisions never cause adoption."""
+        if is_workspace_ref(title):
+            raise err_bad_arguments("create mode requires a workspace title")
+        lock_home = Path.home() / ".flux" / "locks"
+        lock_home.mkdir(parents=True, exist_ok=True)
+        with (lock_home / "tfork-workspace-creation.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            occupied = {name for _ref, name in self._list_workspaces()}
+            chosen = title
+            ordinal = 2
+            while chosen in occupied:
+                chosen = f"{title}_{ordinal}"
+                ordinal += 1
+            if window == "new":
+                window_info, workspace_info = self._resolve_new_window(chosen, require_name=True)
+                return self._verify_created_name(window_info, workspace_info, title)
+            node = self._window_node(window)
+            if node is None:
+                raise err_window_unknown(window)
+            win_ref = node.get("ref") or window
+            # Always create, even if the topology changed after the snapshot.
+            ref, detail = self._create_workspace(chosen, cwd, window=win_ref)
+            if not ref:
+                raise err_window_unknown(win_ref, detail=detail)
+            return self._verify_created_name(
+                {"ref": win_ref, "created": False},
+                {"ref": ref, "title": chosen, "created": True}, title)
+
+    def _verify_created_name(self, window, workspace, base):
+        """Recheck/rename our owned ref after creation, before command delivery."""
+        actual = ""
+        for _attempt in range(10):
+            live = self._list_workspaces()
+            own = next((name for ref, name in live if ref == workspace["ref"]), None)
+            if own is None:
+                break
+            actual = own
+            occupied = {name for ref, name in live if ref != workspace["ref"]}
+            chosen = base
+            ordinal = 2
+            while chosen in occupied:
+                chosen = f"{base}_{ordinal}"
+                ordinal += 1
+            if actual == chosen:
+                return window, {**workspace, "title": actual}
+            self._rename_workspace(workspace["ref"], chosen, window["ref"])
+        raise ForkError("workspace_naming_failed",
+                        "Created workspace could not acquire a unique feature name; no command delivered.",
+                        "Report the actual created refs for reconciliation; do not retry the runtime launch.",
+                        False, None,
+                        {"workspace": {**workspace, "title": actual}, "window": window,
+                         "requested_workspace_title": base})
 
     def _resolve_existing_window(self, value, workspace, cwd):
         """Target an existing window. The window is resolved up front — a miss
@@ -777,8 +848,9 @@ class CmuxTerminal(Terminal):
         The pane is itself an interactive shell, so any user alias in
         ``line`` resolves there without any wrapper of our own."""
         ws_args = self._workspace_args(session)
-        set_buf = _run(["cmux", "set-buffer", "--name", "tfork", "--", line])
-        paste = _run(["cmux", "paste-buffer", "--name", "tfork",
+        buffer_name = f"tfork-{secrets.token_hex(12)}"
+        set_buf = _run(["cmux", "set-buffer", "--name", buffer_name, "--", line])
+        paste = _run(["cmux", "paste-buffer", "--name", buffer_name,
                       "--surface", session, *ws_args])
         if set_buf.returncode != 0 or paste.returncode != 0:
             # Enter was never sent, so even a partially pasted line sat at the

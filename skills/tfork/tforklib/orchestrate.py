@@ -16,7 +16,9 @@ import secrets
 import shlex
 
 from .classify import classify_observed
+from .creation_claim import consume_creation_claim
 from .errors import (
+    ForkError,
     err_bad_arguments,
     err_window_anchor_conflict,
     err_workspace_anchor_conflict,
@@ -31,7 +33,7 @@ from .verify import DEFAULT_DELAY, observe_fork, verdict
 def run_fork(command_words, placement=None, anchor=None, type_override=None,
              title=None, delay=None, workspace=None, cwd=None, window=None,
              terminal=None, nonce=None, registry_path=REGISTRY_PATH,
-             launch_contract=None):
+             launch_contract=None, workspace_mode="reuse", workspace_claim=None, workspace_claim_id=None):
     """Fork, verify, label, persist, and return the result dict.
 
     Raises ``ForkError`` only for argument, terminal, surface-resolution,
@@ -54,6 +56,12 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
         raise err_workspace_anchor_conflict()
     if window is not None and anchor is not None:
         raise err_window_anchor_conflict()
+    if workspace_mode not in {"reuse", "create"}:
+        raise err_bad_arguments("invalid workspace mode")
+    if workspace_mode == "create" and (not workspace or not window or anchor):
+        raise err_bad_arguments("create mode requires a workspace title and window")
+    if bool(workspace_claim) != bool(workspace_claim_id) or (workspace_claim and workspace_mode != "create"):
+        raise err_bad_arguments("creation claim requires create mode and both claim path and owner id")
     if cwd is None:
         cwd = os.getcwd()
     else:
@@ -80,14 +88,27 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
     # a fresh window is reused rather than left orphaned next to a second one.
     window_info = None
     workspace_info = None
-    if window is not None:
+    if workspace_mode == "create":
+        if workspace_claim:
+            consume_creation_claim(workspace_claim, workspace_claim_id)
+        window_info, workspace_info = terminal.create_named_workspace(window, workspace, cwd)
+    elif window is not None:
         window_info, workspace_info = terminal.resolve_window(
             window, workspace, cwd)
     elif workspace is not None:
         workspace_info = terminal.resolve_workspace(workspace, cwd)
 
-    session = terminal.fork(command_str, placement, cwd, nonce, anchor,
-                            workspace=workspace_info)
+    try:
+        session = terminal.fork(command_str, placement, cwd, nonce, anchor,
+                                workspace=workspace_info)
+    except ForkError as exc:
+        # Placement may have succeeded even when pane creation/delivery fails.
+        # Retain that evidence without changing the launch_outcome classification.
+        if workspace_info is not None:
+            exc.extras["workspace"] = workspace_info
+        if window_info is not None:
+            exc.extras["window"] = window_info
+        raise
 
     title_note = ""
     if title:

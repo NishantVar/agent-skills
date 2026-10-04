@@ -99,6 +99,6 @@ def test_taxonomy_codes_all_map_to_nonzero_exits():
                 "workspace_unknown", "workspace_ambiguous",
                 "workspace_anchor_conflict",
                 "window_unknown", "window_create_failed",
-                "window_anchor_conflict"}
+                "window_anchor_conflict", "workspace_naming_failed"}
     assert set(ft.EXIT_CODES) == expected
     assert all(code != 0 for code in ft.EXIT_CODES.values())
