@@ -31,6 +31,7 @@ EXIT_CODES = {
     "workspace_ambiguous": 8,
     "workspace_anchor_conflict": 2,
     "window_unknown": 9,
+    "workspace_naming_failed": 9,
     "window_create_failed": 4,
     "window_anchor_conflict": 2,
 }

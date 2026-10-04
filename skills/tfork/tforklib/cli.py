@@ -101,6 +101,10 @@ def parse_args(argv):
                         help="cmux workspace title or ref; created when "
                              "a title doesn't match. Mutually exclusive "
                              "with --anchor.")
+    parser.add_argument("--workspace-mode", choices=("reuse", "create"), default="reuse",
+                        help="create always makes a fresh workspace with a free numeric suffix")
+    parser.add_argument("--workspace-claim", default=None, help="optional one-shot creation reservation JSON path")
+    parser.add_argument("--workspace-claim-id", default=None, help="reservation owner id")
     parser.add_argument("--window", default=None,
                         help="open the fork in a window instead of the "
                              "caller's: 'new' creates a fresh window; a "
@@ -139,7 +143,8 @@ def main(argv=None):
                           anchor=args.anchor, type_override=args.type,
                           title=args.title, delay=args.delay,
                           workspace=args.workspace, cwd=args.cwd,
-                          window=args.window,
+                          window=args.window, workspace_mode=args.workspace_mode,
+                          workspace_claim=args.workspace_claim, workspace_claim_id=args.workspace_claim_id,
                           launch_contract=args.launch_contract)
     except ForkError as exc:
         print(json.dumps(exc.handoff()))

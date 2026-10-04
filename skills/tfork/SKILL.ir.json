@@ -8,7 +8,7 @@
         "node_id": "n32",
         "polarity": "require",
         "strength": "hard",
-        "text": "Infer only the front-door parameters from the user's request — command, placement, anchor, workspace, cwd, type_override, and window — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns. Do not pass --anchor together with --workspace or --window; the binary rejects those combinations."
+        "text": "Infer only the front-door parameters from the user's request — command, placement, anchor, workspace, cwd, type_override, workspace_mode, workspace_claim, workspace_claim_id, and window — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns. Do not pass --anchor together with --workspace or --window; the binary rejects those combinations."
       },
       {
         "kind": "constraint",
@@ -23,7 +23,7 @@
         "kind": "context",
         "name": "binary_contract",
         "node_id": "n34",
-        "text": "fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named, or the workspace --workspace targeted), opens the new pane or workspace, runs the command in --cwd (or the caller's current directory when --cwd is omitted) through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), workspace (`{ref, title, created}` when --workspace or --window was passed, else null — created=true means the workspace was just created, false means it already existed and was reused), window (`{ref, created}` when --window was passed, else null — created=true means a fresh window was opened, false means an existing window was targeted), launch_outcome (the versioned machine-readable reading of the same observation — see the launch-outcome contract), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel; with --workspace or --window, the note also reports the workspace title / window and whether each was created or reused). A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf."
+        "text": "fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named, or the workspace --workspace targeted), opens the new pane or workspace, runs the command in --cwd (or the caller's current directory when --cwd is omitted) through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), workspace (`{ref, title, created}` when --workspace or --window was passed, else null — created=true means the workspace was just created, false means it already existed and was reused), window (`{ref, created}` when --window was passed, else null — created=true means a fresh window was opened, false means an existing window was targeted), launch_outcome (the versioned machine-readable reading of the same observation — see the launch-outcome contract), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel; with --workspace or --window, the note also reports the workspace title / window and whether each was created or reused). Create mode rechecks the newly created owned ref for naming collisions and resolves them with numeric suffixes before command delivery. Failed name verification reports actual created refs with workspace_naming_failed and no launch_outcome; never retry a runtime for it. Mechanical failures after successful placement retain workspace/window evidence in their handoffs. Concurrent command delivery uses one buffer per spawn. A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf."
       },
       {
         "kind": "context",
@@ -40,7 +40,7 @@
         "local_refs": [],
         "node_id": "n10",
         "role": "step",
-        "text": "Extract the parameters from the user's request — {command}, {placement}, {anchor}, {workspace}, {cwd}, {type_override}, {window}, and {launch_contract} — and forward them as-is. Do not invent values; if the user did not name a placement, an anchor, a workspace, a cwd, or a window, use the defaults."
+        "text": "Extract the parameters from the user's request — {command}, {placement}, {anchor}, {workspace}, {cwd}, {type_override}, {workspace_mode}, {workspace_claim}, {workspace_claim_id}, {window}, and {launch_contract} — and forward them as-is. Do not invent values; if the user did not name a placement, an anchor, a workspace, a cwd, or a window, use the defaults."
       },
       {
         "kind": "inline_instruction",
@@ -112,6 +112,35 @@
             "node_id": "n17",
             "role": "step",
             "text": "Insert --anchor {anchor} into the invocation, before the -- separator."
+          }
+        ]
+      },
+      {
+        "condition": "\"the caller requested fresh workspace creation\"",
+        "elif_branches": [],
+        "else_body": null,
+        "kind": "branch",
+        "node_id": "n100",
+        "predicate_shape": {
+          "has_boolean_token": false,
+          "has_compositional_operator": false,
+          "has_predicate_token": true
+        },
+        "resolved_predicates": null,
+        "then_body": [
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n101",
+            "role": "step",
+            "text": "Insert --workspace-mode create before the -- separator, with a workspace title and window. Reuse is the default; do not infer create for existing workspaces."
+          },
+          {
+            "kind": "inline_instruction",
+            "local_refs": [],
+            "node_id": "n102",
+            "role": "step",
+            "text": "Preserve --workspace-claim and --workspace-claim-id when the dispatcher supplies them; they bind first creation to its still-current owner."
           }
         ]
       },
@@ -380,6 +409,33 @@
         "kind": "param",
         "name": "title",
         "node_id": "n0_6"
+      },
+      {
+        "kind": "param",
+        "name": "workspace_mode",
+        "node_id": "n0_9",
+        "default": {
+          "kind": "string",
+          "value": "reuse"
+        }
+      },
+      {
+        "kind": "param",
+        "name": "workspace_claim",
+        "node_id": "n0_10",
+        "default": {
+          "kind": "string",
+          "value": "none"
+        }
+      },
+      {
+        "kind": "param",
+        "name": "workspace_claim_id",
+        "node_id": "n0_11",
+        "default": {
+          "kind": "string",
+          "value": "none"
+        }
       },
       {
         "default": {

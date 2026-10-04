@@ -24,6 +24,15 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 - **title**:
   Optional cmux tab title for the new pane — renamed right after fork so it's immediately p2p-addressable. Pass a snake_case title (e.g. `worker_42`) for any agent you'll message. cmux allows duplicates in a workspace; collisions surface in `note`, not failures.
   Default: none.
+- **workspace_mode**:
+  Optional `--workspace-mode`: `reuse` preserves title/ref joining; `create` requires a workspace title and window, always creates a fresh workspace, and chooses the lowest free `_2`, `_3` suffix at creation. Consume the returned actual title and ref; never retry a runtime launch for a naming conflict.
+  Default: reuse.
+- **workspace_claim**:
+  Optional one-shot creation reservation JSON path, passed only with create mode and --workspace-claim-id. The reservation contains dispatch_id, record=null, and creation_started=false. Before creation, validate that owner and atomically mark creation_started=true under the file lock. A removed, replaced, consumed, or mismatched reservation fails before creation or command delivery.
+  Default: none.
+- **workspace_claim_id**:
+  Owner id for --workspace-claim; preserve both values from the dispatch handoff. Never reuse a canceled or consumed creation handoff.
+  Default: none.
 - **window**:
   Optional cmux window to open the fork in: 'new' creates a fresh top-level window, or a window ref/index/UUID targets an existing one. Combine with --workspace to name the workspace inside the window. Mutually exclusive with --anchor.
   Default: none.
@@ -35,7 +44,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 
 - **binary-contract**
 
-  fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named, or the workspace --workspace targeted), opens the new pane or workspace, runs the command in --cwd (or the caller's current directory when --cwd is omitted) through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), workspace (`{ref, title, created}` when --workspace or --window was passed, else null — created=true means the workspace was just created, false means it already existed and was reused), window (`{ref, created}` when --window was passed, else null — created=true means a fresh window was opened, false means an existing window was targeted), launch_outcome (the versioned machine-readable reading of the same observation — see the launch-outcome contract), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel; with --workspace or --window, the note also reports the workspace title / window and whether each was created or reused). A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf.
+  fork_terminal.py is deterministic and self-verifying: it resolves the caller's own cmux surface (or the anchor the user named, or the workspace --workspace targeted), opens the new pane or workspace, runs the command in --cwd (or the caller's current directory when --cwd is omitted) through a per-fork sentinel wrapper, observes what happened, and always prints exactly one JSON object — a success result or a handoff. The success result carries verified (true when the wrapper accounts for the outcome: clean exit, or still running with a non-shell foreground process), type (agent or command), foreground (the process running in the pane at observation time, or null when none was tracked), exit_status (the integer the command exited with, or null when it is still running), workspace (`{ref, title, created}` when --workspace or --window was passed, else null — created=true means the workspace was just created, false means it already existed and was reused), window (`{ref, created}` when --window was passed, else null — created=true means a fresh window was opened, false means an existing window was targeted), launch_outcome (the versioned machine-readable reading of the same observation — see the launch-outcome contract), and note (a one-line plain-language summary of what was observed — clean exit, exit status N, still running with foreground X, state unknown, or missing start sentinel; with --workspace or --window, the note also reports the workspace title / window and whether each was created or reused). Create mode rechecks the newly created owned ref for naming collisions and resolves them with numeric suffixes before command delivery. Failed name verification reports actual created refs with workspace_naming_failed and no launch_outcome; never retry a runtime for it. Mechanical failures after successful placement retain workspace/window evidence in their handoffs. Concurrent command delivery uses one buffer per spawn. A verified-false success is still a success: the pane is never killed and the command is never re-run on tfork's behalf.
 
 - **launch-outcome-contract**
 
@@ -49,7 +58,7 @@ description: 'Fork a coding agent or command into a new cmux pane via the determ
 
 ## Constraints
 
-- **Must:** Infer only the front-door parameters from the user's request — command, placement, anchor, workspace, cwd, type_override, and window — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns. Do not pass --anchor together with --workspace or --window; the binary rejects those combinations.
+- **Must:** Infer only the front-door parameters from the user's request — command, placement, anchor, workspace, cwd, type_override, workspace_mode, workspace_claim, workspace_claim_id, and window — using documented defaults when omitted. Pass the command through after the -- separator without reinterpreting it. Never hand-build cmux commands, inspect panes, classify agent vs command, verify success, retry/re-run, or override a runtime decision the binary owns. Do not pass --anchor together with --workspace or --window; the binary rejects those combinations.
 - **Require:** tfork only forks. Never message or brief the forked agent from this skill. When the user asks to communicate with, brief, or message the forked agent, load the p2p skill and use it with the session ref (or --title) returned from the fork — p2p owns all agent-to-agent messaging.
 
 ### Red Flags
@@ -71,7 +80,7 @@ Skip these — SKILL.md is the complete interface.
 
 ## Steps
 
-1. Extract the parameters from the user's request — {command}, {placement}, {anchor}, {workspace}, {cwd}, {type_override}, {window}, and {launch_contract} — and forward them as-is. Do not invent values; if the user did not name a placement, an anchor, a workspace, a cwd, or a window, use the defaults.
+1. Extract the parameters from the user's request — {command}, {placement}, {anchor}, {workspace}, {cwd}, {type_override}, {workspace_mode}, {workspace_claim}, {workspace_claim_id}, {window}, and {launch_contract} — and forward them as-is. Do not invent values; if the user did not name a placement, an anchor, a workspace, a cwd, or a window, use the defaults.
 2. Begin the invocation as: python3 <skill-dir>/fork_terminal.py -- {command}. Run the binary explicitly with python3, and resolve <skill-dir> to the absolute path of the directory this SKILL.md was loaded from — fork_terminal.py sits in that same directory, and the working directory is the user's project, not the skill directory, so a bare fork_terminal.py will not resolve. Everything after the -- separator is the command.
 3. Decide whether the user named a placement applies and, if so:
    a. Insert --placement {placement} into the invocation, before the -- separator.
@@ -79,18 +88,21 @@ Skip these — SKILL.md is the complete interface.
    a. Insert --workspace {workspace} into the invocation, before the -- separator. Do not also pass --anchor — the two are mutually exclusive.
 5. Decide whether the user named an anchor (a surface ref like surface:42 or a cmux tab title) applies and, if so:
    a. Insert --anchor {anchor} into the invocation, before the -- separator.
-6. Decide whether the user asked to open the fork in a new or separate window applies and, if so:
+6. Decide whether the caller requested fresh workspace creation applies and, if so:
+   a. Insert --workspace-mode create before the -- separator, with a workspace title and window. Reuse is the default; do not infer create for existing workspaces.
+   b. Preserve --workspace-claim and --workspace-claim-id when the dispatcher supplies them; they bind first creation to its still-current owner.
+7. Decide whether the user asked to open the fork in a new or separate window applies and, if so:
    a. Insert --window {window} into the invocation, before the -- separator — 'new' for a fresh window, or a window ref/index/UUID for an existing one. Do not also pass --anchor — the two are mutually exclusive.
-7. Decide whether the user named a working directory (e.g. a path to a different repo) applies and, if so:
+8. Decide whether the user named a working directory (e.g. a path to a different repo) applies and, if so:
    a. Insert --cwd {cwd} into the invocation, before the -- separator. The binary expands the path and rejects it with bad_arguments if the directory does not exist.
-8. Decide whether the user explicitly specified agent or command as the type applies and, if so:
+9. Decide whether the user explicitly specified agent or command as the type applies and, if so:
    a. Insert --type {type_override} into the invocation, before the -- separator.
-9. Decide whether the fork is an agent you'll p2p applies and, if so:
+10. Decide whether the fork is an agent you'll p2p applies and, if so:
    a. Pick a snake_case title and insert --title {title} before the -- separator. p2p can route to it on the first send.
-10. Decide whether you are forking a command afork prepared and its handoff carried a launch_contract path applies and, if so:
+11. Decide whether you are forking a command afork prepared and its handoff carried a launch_contract path applies and, if so:
    a. Insert --launch-contract {launch_contract} into the invocation, before the -- separator, using the path from the handoff verbatim. Dropping it silently costs you the ability to tell a missing runtime from an ordinary non-zero exit.
-11. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
-12. Decide which of the following applies and follow only that path:
+12. Run the assembled fork_terminal.py invocation and capture its stdout as a single JSON object.
+13. Decide which of the following applies and follow only that path:
    If the JSON result has ok set to true:
    a. Follow the report-success procedure.
    Otherwise:
