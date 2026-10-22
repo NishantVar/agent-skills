@@ -1,8 +1,28 @@
 # tfork todo
 
-_Last meaningful refresh: 2026-07-28_
+_Last meaningful refresh: 2026-10-22_
 
 ## Done
+
+- **Create mode gives back a failed creation** (2026-10-22, branch
+  `fix/tfork-release-failed-creation`). When a `--workspace-mode create`
+  launch fails before its command could run (`pane_creation_failed`,
+  `command_delivery_absent`, or `workspace_naming_failed`), tfork runs
+  `cmux close-workspace` on the workspace ref it got back from creating it.
+  Only after that close succeeds does it set the claim's `creation_started`
+  back to false. It does this under the same O_NOFOLLOW + flock lock, and only
+  when the file is the same inode it consumed, with the same owner,
+  `record: null`, and `creation_started: true`. A failed close keeps the claim
+  and reports the leftover workspace. A failed `send-key` (ambiguous) or any
+  success, including `unknown`, never closes or releases. The handoff gains
+  `workspace_cleanup: {ref, title, closed, claim_released, detail}`. Tests:
+  `tests/test_creation_cleanup.py`.
+  - Open: with `--window new`, only the created workspace is closed (with
+    `--window <ref>`), never the window. It is not live-verified whether cmux
+    then drops the empty window, leaves it, or refuses to close a window's
+    last workspace. A refusal surfaces as a close failure with the claim kept.
+    A `window_create_failed` raised after `new-window` succeeded is still not
+    cleaned up.
 
 - **Versioned `launch_outcome` + `--launch-contract`** (2026-07-28, branch
   `launch-contracts-01`). Issue 01 of the `agent-model-effort-policy` PRD.

@@ -16,18 +16,52 @@ import secrets
 import shlex
 
 from .classify import classify_observed
-from .creation_claim import consume_creation_claim
+from .creation_claim import consume_creation_claim, release_creation_claim
 from .errors import (
     ForkError,
     err_bad_arguments,
     err_window_anchor_conflict,
     err_workspace_anchor_conflict,
+    note_workspace_cleanup,
 )
-from .outcome import load_sidecar
+from .outcome import STATE_PREWORK_FAILURE, load_sidecar
 from .registry import REGISTRY_PATH, read_registry, write_registry_entry
 from .result import derive_launch_outcome
 from .terminal import resolve_terminal
 from .verify import DEFAULT_DELAY, observe_fork, verdict
+
+# Fork-stage evidence proving the command never ran: no pane was made, or the
+# paste failed so Enter was never sent. A failed Enter is ambiguous, not here.
+_NEVER_DELIVERED = ("pane_creation_failed", "command_delivery_absent")
+
+
+def _never_delivered(exc):
+    outcome = exc.extras.get("launch_outcome") or {}
+    return (outcome.get("state") == STATE_PREWORK_FAILURE
+            and outcome.get("evidence_code") in _NEVER_DELIVERED)
+
+
+def _undo_creation(terminal, exc, workspace_info, window_info, claim, owner,
+                   claim_identity):
+    """Close the workspace this create-mode call made, then give back the
+    creation claim it consumed — only once the close succeeded.
+
+    Reached only after a failure where the command definitely never ran, so
+    no agent can be inside. Only the ref tfork got back from creating the
+    workspace is addressed; a reused or named-but-existing one never is."""
+    if (not workspace_info or workspace_info.get("created") is not True
+            or not workspace_info.get("ref")):
+        return
+    ref = workspace_info["ref"]
+    close_error = terminal.close_workspace(ref, (window_info or {}).get("ref"))
+    released = claim_reason = None
+    if claim_identity is not None:
+        if close_error is None:
+            claim_reason = release_creation_claim(claim, owner, claim_identity)
+        released = close_error is None and claim_reason is None
+    note_workspace_cleanup(exc, ref, workspace_info.get("title") or "",
+                           close_error is None, close_error or claim_reason,
+                           released)
 
 
 def run_fork(command_words, placement=None, anchor=None, type_override=None,
@@ -38,9 +72,13 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
 
     Raises ``ForkError`` only for argument, terminal, surface-resolution,
     split, or spawn failures (the pane has been closed or never existed in
-    those cases). A verified-false outcome is *not* an error — the result is
-    returned with ``verified`` false and ``note`` describing what was
-    observed; the pane is left open for the user.
+    those cases). In create mode, a failure that proves the command never ran
+    also closes the workspace this call created and, once that close
+    succeeds, releases the creation claim this call consumed; the handoff's
+    ``workspace_cleanup`` says what happened. A possibly delivered command
+    is never cleaned up. A verified-false outcome is *not* an error — the
+    result is returned with ``verified`` false and ``note`` describing what
+    was observed; the pane is left open for the user.
 
     ``nonce`` is generated automatically; the parameter is exposed for tests
     that need a known marker to construct expected scrollback against.
@@ -88,10 +126,22 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
     # a fresh window is reused rather than left orphaned next to a second one.
     window_info = None
     workspace_info = None
+    claim_identity = None
     if workspace_mode == "create":
         if workspace_claim:
-            consume_creation_claim(workspace_claim, workspace_claim_id)
-        window_info, workspace_info = terminal.create_named_workspace(window, workspace, cwd)
+            claim_identity = consume_creation_claim(workspace_claim,
+                                                    workspace_claim_id)
+        try:
+            window_info, workspace_info = terminal.create_named_workspace(
+                window, workspace, cwd)
+        except ForkError as exc:
+            # A naming failure is raised after the workspace exists but
+            # before any command is delivered; its extras carry our refs.
+            if exc.code == "workspace_naming_failed":
+                _undo_creation(terminal, exc, exc.extras.get("workspace"),
+                               exc.extras.get("window"), workspace_claim,
+                               workspace_claim_id, claim_identity)
+            raise
     elif window is not None:
         window_info, workspace_info = terminal.resolve_window(
             window, workspace, cwd)
@@ -108,6 +158,9 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
             exc.extras["workspace"] = workspace_info
         if window_info is not None:
             exc.extras["window"] = window_info
+        if workspace_mode == "create" and _never_delivered(exc):
+            _undo_creation(terminal, exc, workspace_info, window_info,
+                           workspace_claim, workspace_claim_id, claim_identity)
         raise
 
     title_note = ""
