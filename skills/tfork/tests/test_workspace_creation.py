@@ -95,6 +95,7 @@ def test_new_window_rename_failure_reports_actual_refs_without_delivery(monkeypa
     terminal._new_window = Mock(return_value="window-id")
     terminal._window_node = Mock(return_value={"ref": "window:3", "workspaces": [{"ref": "workspace:30", "title": "Default"}]})
     terminal._rename_workspace = Mock()
+    terminal.close_workspace = Mock(return_value=None)
     terminal.fork = Mock(side_effect=AssertionError("no command may be delivered"))
     with pytest.raises(ForkError) as raised:
         run_fork(["agent"], workspace="feature", window="new", workspace_mode="create", terminal=terminal)
@@ -104,6 +105,9 @@ def test_new_window_rename_failure_reports_actual_refs_without_delivery(monkeypa
     assert result["window"] == {"ref": "window:3", "created": True}
     assert "launch_outcome" not in result
     terminal.fork.assert_not_called()
+    # Nothing was delivered, so the workspace this call created is closed.
+    terminal.close_workspace.assert_called_once_with("workspace:30", "window:3")
+    assert result["workspace_cleanup"]["closed"] is True
 
 
 def test_creation_intent_rejects_superseded_and_consumed_handoffs(tmp_path):

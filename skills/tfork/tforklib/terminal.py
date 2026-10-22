@@ -123,6 +123,14 @@ class Terminal(ABC):
         """Close the pane identified by ``session``."""
 
     @abstractmethod
+    def close_workspace(self, workspace_ref, window_ref=None) -> "str | None":
+        """Close the workspace ``workspace_ref`` (in ``window_ref`` when
+        known). Returns None once it is gone, else a one-line error.
+
+        Only for a workspace this same invocation created and returned —
+        never one tfork reused or was pointed at."""
+
+    @abstractmethod
     def rename_tab(self, session, title) -> tuple:
         """Rename the tab containing ``session`` to ``title``.
 
@@ -917,6 +925,27 @@ class CmuxTerminal(Terminal):
         cmd = ["cmux", "close-surface", "--surface", session,
                *self._workspace_args(session)]
         _run(cmd)
+
+    def close_workspace(self, workspace_ref, window_ref=None):
+        """Close a workspace this invocation created; None once it is gone.
+
+        A non-zero exit still counts as closed when a successful tree read no
+        longer lists the ref (closing its last pane may already have removed
+        it). Otherwise the cmux error is returned and the workspace is
+        presumed left behind."""
+        cmd = ["cmux", "close-workspace", "--workspace", workspace_ref]
+        if window_ref:
+            cmd += ["--window", window_ref]
+        result = _run(cmd)
+        if result.returncode == 0:
+            return None
+        windows = _cmux_tree().get("windows")
+        if windows is not None and not any(
+                ws.get("ref") == workspace_ref
+                for window in windows for ws in window.get("workspaces", [])):
+            return None
+        return (result.stderr.strip() or result.stdout.strip()
+                or "cmux close-workspace failed")
 
     def rename_tab(self, session, title):
         """Rename ``session``'s tab to ``title``; also report duplicates.

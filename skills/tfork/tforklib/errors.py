@@ -112,6 +112,9 @@ def err_split_failed(detail):
     )
 
 
+PANE_CLOSED = "The created pane has been closed."
+
+
 def err_spawn_failed(detail, delivery=DELIVERY_ABSENT):
     """``delivery`` says how far the command got, and it is the whole
     difference between a trusted failure and an ambiguous one.
@@ -132,7 +135,7 @@ def err_spawn_failed(detail, delivery=DELIVERY_ABSENT):
     return ForkError(
         "spawn_failed",
         f"The command could not be delivered into the new pane: {detail}. "
-        f"{scope} The created pane has been closed.",
+        f"{scope} {PANE_CLOSED}",
         ("Retry the same invocation once." if delivery == DELIVERY_ABSENT else
          "Do not retry blindly — check whether the command already ran before "
          "forking it again."),
@@ -140,6 +143,59 @@ def err_spawn_failed(detail, delivery=DELIVERY_ABSENT):
         "<same fork_terminal.py invocation>",
         extras={"launch_outcome": outcome},
     )
+
+
+def note_workspace_cleanup(exc, ref, title, closed, detail=None,
+                           claim_released=None):
+    """Make a failure handoff say what tfork did with the workspace it created.
+
+    Used only in create mode, after a failure where the command definitely
+    never ran. ``closed`` says whether that workspace is now gone;
+    ``claim_released`` is None when no creation claim was consumed, else
+    whether it was given back; ``detail`` is the close error or the reason
+    the claim was left alone. The ``launch_outcome`` is never touched."""
+    label = f"{title!r} ({ref})" if title else ref
+    message = exc.human_message.replace(f" {PANE_CLOSED}", "")
+    if not closed:
+        message += (f" tfork could not close the workspace it created, "
+                    f"{label}: {detail}. It is left behind with no command "
+                    f"in it")
+        message += (", and its creation claim was kept (still marked "
+                     "started)." if claim_released is False else ".")
+        exc.retryable = False
+        exc.agent_instruction = (
+            f"Do not retry the same invocation. Report the leftover "
+            f"workspace {label} so it can be closed or reconciled; no "
+            f"command ran in it.")
+    elif claim_released is False:
+        message += (f" tfork closed the workspace it created, {label}, but "
+                    f"left its creation claim alone ({detail}), so the same "
+                    f"invocation would be refused.")
+        exc.retryable = False
+        exc.agent_instruction = (
+            "Do not retry the same invocation: its creation claim was not "
+            "given back. Ask the dispatcher for a fresh creation claim.")
+    else:
+        message += f" tfork closed the workspace it created, {label}"
+        if claim_released:
+            message += ", and released its creation claim"
+            if exc.retryable:
+                message += ", so the same invocation can be retried"
+        message += "."
+        if not exc.retryable:
+            exc.agent_instruction = (
+                "Nothing was left behind: tfork closed the workspace it "
+                "created. Do not retry the runtime launch; report the "
+                "failure to the user.")
+    exc.human_message = message
+    exc.args = (message,)
+    exc.extras["workspace_cleanup"] = {
+        "ref": ref,
+        "title": title,
+        "closed": closed,
+        "claim_released": claim_released,
+        "detail": detail,
+    }
 
 
 def err_anchor_not_found(value):

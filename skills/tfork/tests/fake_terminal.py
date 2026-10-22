@@ -15,11 +15,14 @@ class FakeTerminal(Terminal):
                           workspace dict, or raising. Tests set this to
                           script workspace_unknown / workspace_ambiguous
                           / created / reused.
+    close_error        -- what ``close_workspace`` returns (None means the
+                          workspace closed; a string is the cmux error)
     """
 
     def __init__(self, *, process=None, text="", fork_error=None,
                  session="surface:fake", rename_result=(None, []),
-                 workspace_resolver=None, window_resolver=None):
+                 workspace_resolver=None, window_resolver=None,
+                 close_error=None):
         self.process = process
         self.text = text
         self.fork_error = fork_error
@@ -27,8 +30,10 @@ class FakeTerminal(Terminal):
         self.rename_result = rename_result
         self.workspace_resolver = workspace_resolver
         self.window_resolver = window_resolver
+        self.close_error = close_error
         self.calls = []
         self.killed = []
+        self.closed_workspaces = []
 
     @classmethod
     def detect(cls):
@@ -68,6 +73,12 @@ class FakeTerminal(Terminal):
     def kill(self, session):
         self.calls.append(("kill", session))
         self.killed.append(session)
+
+    def close_workspace(self, workspace_ref, window_ref=None):
+        self.calls.append(("close_workspace", workspace_ref, window_ref))
+        if self.close_error is None:
+            self.closed_workspaces.append(workspace_ref)
+        return self.close_error
 
     def rename_tab(self, session, title):
         self.calls.append(("rename_tab", session, title))
