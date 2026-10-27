@@ -45,6 +45,8 @@ _WORKSPACE_REF_RE = re.compile(r"^(?:workspace:\d+|[0-9a-fA-F-]{16,})$")
 # (cmux speaks ``up``/``down``; tfork keeps the more intuitive
 # ``top``/``bottom`` at the front door).
 SPLIT_DIRS = ("right", "left", "top", "bottom")
+# Wait between name-verification reads; ten reads bound it to under 1 s.
+NAME_VERIFY_POLL = 0.1
 _CMUX_DIRECTION = {"right": "right", "left": "left",
                    "top": "up", "bottom": "down"}
 
@@ -593,13 +595,18 @@ class CmuxTerminal(Terminal):
                 {"ref": ref, "title": chosen, "created": True}, title)
 
     def _verify_created_name(self, window, workspace, base):
-        """Recheck/rename our owned ref after creation, before command delivery."""
+        """Recheck/rename our owned ref after creation, before command delivery.
+
+        cmux's tree lags a create or rename by ~100 ms, so a missing ref or
+        old name is re-read after a short wait rather than treated as final."""
         actual = ""
-        for _attempt in range(10):
+        for attempt in range(10):
+            if attempt:
+                time.sleep(NAME_VERIFY_POLL)
             live = self._list_workspaces()
             own = next((name for ref, name in live if ref == workspace["ref"]), None)
             if own is None:
-                break
+                continue
             actual = own
             occupied = {name for ref, name in live if ref != workspace["ref"]}
             chosen = base

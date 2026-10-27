@@ -40,6 +40,32 @@ def test_stale_snapshot_renames_only_owned_ref_before_delivery(monkeypatch, tmp_
     terminal._rename_workspace.assert_called_once_with("workspace:99", "feature_2", "window:2")
 
 
+def test_lagging_tree_waits_for_created_ref(monkeypatch, tmp_path):
+    terminal = backend(monkeypatch, tmp_path)
+    sleeps = []
+    monkeypatch.setattr("tforklib.terminal.time.sleep", sleeps.append)
+    # cmux's tree omits a just-created workspace for ~100 ms.
+    terminal._list_workspaces = Mock(side_effect=[[("workspace:10", "other")], [("workspace:10", "other")],
+                                                  [("workspace:10", "other"), ("workspace:20", "feature")]])
+    terminal._create_workspace = Mock(return_value=("workspace:20", None))
+    terminal._rename_workspace = Mock()
+    result = terminal.create_named_workspace("window:2", "feature", "/repo")[1]
+    assert result == {"ref": "workspace:20", "title": "feature", "created": True}
+    assert len(sleeps) == 1
+    terminal._rename_workspace.assert_not_called()
+
+
+def test_created_ref_never_visible_still_fails_bounded(monkeypatch, tmp_path):
+    terminal = backend(monkeypatch, tmp_path)
+    monkeypatch.setattr("tforklib.terminal.time.sleep", lambda _: None)
+    terminal._list_workspaces = Mock(return_value=[("workspace:10", "other")])
+    terminal._create_workspace = Mock(return_value=("workspace:20", None))
+    with pytest.raises(ForkError) as exc:
+        terminal.create_named_workspace("window:2", "feature", "/repo")
+    assert exc.value.code == "workspace_naming_failed"
+    assert terminal._list_workspaces.call_count == 11
+
+
 def test_concurrent_creation_serializes_names(monkeypatch, tmp_path):
     terminal = backend(monkeypatch, tmp_path)
     live = []
