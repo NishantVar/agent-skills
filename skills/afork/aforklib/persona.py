@@ -7,16 +7,14 @@ identities at once. This deep module prepends a single shared preamble — the
 role declared as the sole operating identity, plus an "availability is not
 permission" posture line — ahead of the charter, templated with the role name.
 
-Pure function of (role_name, charter_body, launched working repo): no
-runtime-adapter knowledge. The identity template is one module-level constant
-with a single ``{role}`` substitution; the composed string is plain prose
-carried by the existing persona payload (which already handles escaping).
+Pure function of (role_name, charter_body): no runtime-adapter knowledge. The
+identity template is one module-level constant with a single ``{role}``
+substitution; the composed string is plain prose carried by the existing
+persona payload (which already handles escaping).
 
-The Required Startup Reads block (its own deep module) is composed between the
-preamble and the charter, so every definition-backed fork inherits both blocks.
+A forked role's startup reading is no longer composed here: the session's start
+step hands it its reading list, keyed on the ``FLUX_ROLE_ID`` the launch stamps.
 """
-
-from .startup_reads import render_startup_reads
 
 # Diverges from the PRD Solution section's original wording: a direct human
 # request may now override the charter after explicit confirmation, rather
@@ -38,7 +36,7 @@ human request conflicts with your charter, ask first: "This goes outside my
 charter as `{role}`: [conflict]. Proceed anyway?" Proceed only after the human
 confirms; never infer approval."""
 
-# Blank line between prepended blocks and the unchanged charter body.
+# Blank line between the preamble and the unchanged charter body.
 _CHARTER_SEPARATOR = "\n\n"
 
 
@@ -47,11 +45,8 @@ def render_preamble(role_name):
     return IDENTITY_PREAMBLE.replace("{role}", role_name)
 
 
-def compose_persona(role_name, charter_body, repo_root=None):
-    """Return the composed persona: identity+precedence preamble, then the
-    Required Startup Reads block, then the charter body unchanged — both
-    prepended blocks role-templated. Pure; no escaping (the payload handles
-    that)."""
-    return (render_preamble(role_name)
-            + _CHARTER_SEPARATOR + render_startup_reads(role_name, repo_root)
-            + _CHARTER_SEPARATOR + charter_body)
+def compose_persona(role_name, charter_body):
+    """Return the composed persona: the role-templated identity+precedence
+    preamble, then the charter body unchanged. Pure; no escaping (the payload
+    handles that)."""
+    return render_preamble(role_name) + _CHARTER_SEPARATOR + charter_body
