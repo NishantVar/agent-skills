@@ -17,6 +17,7 @@ Fail-closed applies ONLY when a *declared restriction* can't be runtime-enforced
 """
 
 import os
+import re
 import shutil
 
 from .adapters import _PLACEHOLDER_RUNTIMES, get_adapter
@@ -35,6 +36,11 @@ from .resolve import resolve_agent_definition
 # "fable max" or "gpt-5.3-codex xhigh" into model + effort. This set only
 # decides what splits off; the runtime validates the actual values.
 _EFFORT_TOKENS = {"minimal", "low", "medium", "high", "xhigh", "max"}
+
+# The Flux agent-name rule FLUX_ROLE_ID must satisfy: [A-Za-z0-9._-]+, no
+# leading dot. The session's start step refuses anything else, so --role
+# refuses it here first rather than launching an agent that loses its name.
+_ROLE_RE = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*")
 
 
 def _split_model_spec(model, effort):
@@ -91,12 +97,25 @@ def _resolve_observability(observe, obs_tags):
 
 def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
               title=None, cwd=None, placement=None, allow_unenforced=False,
-              observe=False, obs_tags=None):
+              observe=False, obs_tags=None, role=None):
     """Resolve, enforce, and return one handoff dict. Raises AforkError on any
-    fail-closed or resolution failure."""
+    fail-closed or resolution failure.
+
+    ``role`` names the role for a launch with no port. A port launch is
+    already named by its port, so passing both is a bad_arguments error."""
     cwd = os.path.abspath(os.path.expanduser(cwd)) if cwd else os.getcwd()
 
     wrap, tags, obs_warning = _resolve_observability(observe, obs_tags)
+
+    if role is not None:
+        if agent is not None:
+            raise err_bad_arguments(
+                "--role names a launch with no agent definition; a port launch "
+                "is already named by its port")
+        if not _ROLE_RE.fullmatch(role):
+            raise err_bad_arguments(
+                f"--role {role!r} breaks the agent-name rule "
+                "[A-Za-z0-9._-]+, no leading dot")
 
     adapter = get_adapter(runtime)
     if adapter is None:
@@ -147,13 +166,13 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
 
     launch = build_launch(
         adapter, agent_name, posture, model, effort, persona,
-        observe=wrap, obs_tags=tags)
+        observe=wrap, obs_tags=tags, role_id=agent_name or role)
     return ready_to_fork(
         runtime=runtime,
         agent=agent_name,
         posture=posture,
         command=launch.command,
-        title=title or agent_name or runtime,
+        title=title or agent_name or role or runtime,
         cwd=cwd,
         workdir=launch.workdir,
         enforced=enforced,

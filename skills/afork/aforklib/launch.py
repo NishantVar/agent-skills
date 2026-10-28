@@ -19,6 +19,13 @@ Two shapes:
 Permission enforcement stays on the *flags* (e.g. codex ``--sandbox``), never on
 prompt text.
 
+Role identity: a launch for a role carries ``FLUX_ROLE_ID=<role name>`` in the
+child environment — the port name for a definition-backed launch, or the
+``--role`` name for a portless one. It goes in the environment, never the
+persona, because its reader is the session's start step, not the agent. Plain
+argv gets it through the same ``env`` prefix as AGENTLENS_TAGS; the launcher
+exports it.
+
 Observability (opt-in) wraps whichever shape applies with ``lens run --`` and
 carries attribution through ``AGENTLENS_TAGS`` in the child environment (env
 beats agentlens's own ``--tag`` flags on collision, so the outer orchestrator's
@@ -66,7 +73,7 @@ def _persona_tail(style, flag):
     raise ValueError(f"unknown persona_inject style {style!r}")
 
 
-def _launcher_lines(head, tail, tags, observe, marker):
+def _launcher_lines(head, tail, tags, observe, marker, role_id=None):
     """Render the generated launch.sh.
 
     The runtime is attempted EXACTLY ONCE, with ``exec``. On success the shell
@@ -94,6 +101,9 @@ def _launcher_lines(head, tail, tags, observe, marker):
         "# enforced via flags and its persona injected from a 0600 payload.",
         'DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
     ]
+    if role_id:
+        # Exported so the runtime's session start step reads it.
+        lines.append(f"export FLUX_ROLE_ID={shlex.quote(role_id)}")
     if tags:
         # Exported so the tags reach `lens run` *and* anything the agent itself
         # spawns — inherited env is what keeps nested spawns attributed.
@@ -111,11 +121,12 @@ def _launcher_lines(head, tail, tags, observe, marker):
 
 
 def build_launch(adapter, agent, posture, model, effort, persona, root=None,
-                 observe=False, obs_tags=None, attempt_id=None):
+                 observe=False, obs_tags=None, attempt_id=None, role_id=None):
     """Return a ``Launch``. ``persona`` is the persona body (or empty for plain
     agents). ``root`` and ``attempt_id`` are injectable for tests. ``observe``
     wraps the runtime invocation in ``lens run --``; ``obs_tags`` is the
-    attribution dict carried to it through AGENTLENS_TAGS."""
+    attribution dict carried to it through AGENTLENS_TAGS. ``role_id`` is
+    stamped as FLUX_ROLE_ID in the launched environment when set."""
     argv = [adapter.bin]
     argv += adapter.permission_flags(posture)
     if model:
@@ -146,10 +157,13 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
         # Plain / no persona: a flat, safe argv. No temp launcher.
         if observe:
             argv = ["lens", "run", "--"] + argv
-            if tags:
-                # `env VAR=… cmd` keeps the whole thing one flat argv — no shell
-                # assignment syntax, so it survives shlex.join unchanged.
-                argv = ["env", f"AGENTLENS_TAGS={tags}"] + argv
+        # `env VAR=… cmd` keeps the whole thing one flat argv — no shell
+        # assignment syntax, so it survives shlex.join unchanged.
+        assigns = [f"AGENTLENS_TAGS={tags}"] if tags else []
+        if role_id:
+            assigns.append(f"FLUX_ROLE_ID={role_id}")
+        if assigns:
+            argv = ["env"] + assigns + argv
         return Launch(shlex.join(argv), str(workdir), contract_path, attempt_id)
 
     # Custom with persona: payload + generated launch.sh.
@@ -166,7 +180,8 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
 
     launcher = workdir / "launch.sh"
     launcher.write_text("\n".join(_launcher_lines(
-        head, tail, tags, observe, exec_marker(attempt_id))) + "\n")
+        head, tail, tags, observe, exec_marker(attempt_id),
+        role_id)) + "\n")
     os.chmod(launcher, 0o700)
 
     # tfork pastes this string into an interactive shell, so it is shell syntax
