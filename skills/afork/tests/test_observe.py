@@ -39,7 +39,7 @@ def test_plain_with_tags_wraps_with_env_prefix(tmp_path, lens_on_path):
                     obs_tags=["agent=reviewer", "run=42"])
 
     assert out["command"].startswith(
-        "env AGENTLENS_TAGS=agent=reviewer,run=42 lens run -- claude ")
+        "env -u FLUX_ROLE_ID AGENTLENS_TAGS=agent=reviewer,run=42 lens run -- claude ")
     # The runtime argv is preserved verbatim after the `--` separator.
     assert "--dangerously-skip-permissions" in out["command"]
     assert "--model opus" in out["command"]
@@ -50,7 +50,7 @@ def test_plain_with_tags_wraps_with_env_prefix(tmp_path, lens_on_path):
 def test_plain_without_tags_omits_env_prefix(tmp_path, lens_on_path):
     out = run_afork("codex", cwd=str(tmp_path), observe=True)
 
-    assert out["command"].startswith("lens run -- codex ")
+    assert out["command"].startswith("env -u FLUX_ROLE_ID lens run -- codex ")
     assert "AGENTLENS_TAGS" not in out["command"]
     assert out["observed"] is True
     assert out["obs_tags"] is None
@@ -60,7 +60,7 @@ def test_tag_order_preserved_and_last_duplicate_wins(tmp_path, lens_on_path):
     out = run_afork("codex", cwd=str(tmp_path), observe=True,
                     obs_tags=["run=1", "agent=rev", "run=2"])
 
-    assert out["command"].startswith("env AGENTLENS_TAGS=run=2,agent=rev lens run -- ")
+    assert out["command"].startswith("env -u FLUX_ROLE_ID AGENTLENS_TAGS=run=2,agent=rev lens run -- ")
     assert out["obs_tags"] == {"run": "2", "agent": "rev"}
 
 
@@ -102,7 +102,7 @@ def test_missing_lens_builds_unwrapped_command_and_warns(tmp_path, no_lens_on_pa
 
     # Fail-OPEN: the launch is still prepared, just without observability.
     assert out["ok"] is True
-    assert out["command"].startswith("claude ")
+    assert out["command"].startswith("env -u FLUX_ROLE_ID claude ")
     assert "lens" not in out["command"]
     assert "AGENTLENS_TAGS" not in out["command"]
     assert out["observed"] is False
@@ -160,7 +160,7 @@ def test_cli_observe_handoff_fields(tmp_path, capsys, lens_on_path):
     assert out["observed"] is True
     assert out["obs_tags"] == {"agent": "reviewer", "run": "42"}
     assert "obs_warning" not in out
-    assert out["command"].startswith("env AGENTLENS_TAGS=agent=reviewer,run=42 lens run -- ")
+    assert out["command"].startswith("env -u FLUX_ROLE_ID AGENTLENS_TAGS=agent=reviewer,run=42 lens run -- ")
 
 
 def test_cli_obs_tag_without_observe_exits_bad_arguments(tmp_path, capsys):
@@ -181,5 +181,5 @@ def test_no_observe_omits_every_obs_field(tmp_path, capsys, lens_on_path):
     assert "observed" not in out
     assert "obs_tags" not in out
     assert "obs_warning" not in out
-    assert out["command"].startswith("codex ")
+    assert out["command"].startswith("env -u FLUX_ROLE_ID codex ")
     assert "lens" not in out["command"]

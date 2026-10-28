@@ -4,7 +4,7 @@ object, and exit with a code that reflects the outcome.
     afork.py <runtime> [agent] [--permission {none,read-only,workspace-write}]
              [--model M] [--effort E] [--title T] [--cwd DIR]
              [--placement {right,left,top,bottom}] [--allow-unenforced]
-             [--observe] [--obs-tag k=v ...]
+             [--observe] [--obs-tag k=v ...] [--role NAME]
 """
 
 import argparse
@@ -57,6 +57,11 @@ def build_parser():
                    help="Attribution tag for the observed session, repeatable "
                         "(e.g. --obs-tag agent=reviewer --obs-tag run=42). "
                         "Requires --observe.")
+    p.add_argument("--role", default=None, metavar="NAME",
+                   help="Role name for a launch with no agent definition, "
+                        "stamped as FLUX_ROLE_ID in the launched environment "
+                        "(a port launch is stamped with its port name). Not "
+                        "allowed with an agent.")
     return p
 
 
@@ -82,6 +87,7 @@ def main(argv=None):
             allow_unenforced=args.allow_unenforced,
             observe=args.observe,
             obs_tags=args.obs_tags,
+            role=args.role,
         )
     except AforkError as exc:
         print(json.dumps(exc.handoff(), indent=2))

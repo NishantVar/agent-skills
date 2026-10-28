@@ -70,7 +70,7 @@ def test_build_plain_no_launcher(tmp_path):
     # holds the launch-contract sidecar — but nothing is generated to run.
     assert not (Path(workdir) / "launch.sh").exists()
     assert Path(contract).exists()
-    assert command.startswith("codex")
+    assert command.startswith("env -u FLUX_ROLE_ID codex")
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert 'model_reasoning_effort="xhigh"' in command
 
