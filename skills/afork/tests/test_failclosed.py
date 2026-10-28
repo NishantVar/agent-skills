@@ -87,7 +87,7 @@ def test_claude_plain_none_launches(tmp_path):
 def test_pi_plain_none_no_bypass_flag(tmp_path):
     out = run_afork("pi", cwd=str(tmp_path))
     assert out["ok"] is True
-    assert out["command"].startswith("pi")
+    assert out["command"].startswith("env -u FLUX_ROLE_ID pi")
     assert "--dangerously" not in out["command"]
 
 

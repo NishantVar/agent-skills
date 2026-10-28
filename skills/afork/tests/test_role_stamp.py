@@ -51,11 +51,14 @@ def _afork(argv, capsys):
     return rc, json.loads(capsys.readouterr().out)
 
 
-def _launched_env(out, tmp_path, stub_bin):
+def _launched_env(out, tmp_path, stub_bin, inherited=None):
     """Run the handoff command as tfork would and return what the runtime saw:
-    (FLUX_ROLE_ID, AGENTLENS_TAGS)."""
+    (FLUX_ROLE_ID, AGENTLENS_TAGS). ``inherited`` is a FLUX_ROLE_ID already in
+    the caller's environment."""
     record = tmp_path / "launched-env"
     env = {"PATH": f"{stub_bin}:/usr/bin:/bin", "OUT": str(record)}
+    if inherited is not None:
+        env["FLUX_ROLE_ID"] = inherited
     result = subprocess.run(out["command"], shell=True, env=env,
                             cwd=str(tmp_path), capture_output=True)
     assert result.returncode == 0, result.stderr.decode()
@@ -128,8 +131,69 @@ def test_role_option_under_observe_carries_both_vars(tmp_path, capsys,
 def test_plain_launch_without_role_is_unstamped(tmp_path, capsys, stub_bin):
     rc, out = _afork(["claude", "--cwd", str(tmp_path)], capsys)
     assert rc == 0
-    assert "FLUX_ROLE_ID" not in out["command"]
+    assert out["command"].startswith("env -u FLUX_ROLE_ID claude ")
     assert _launched_env(out, tmp_path, stub_bin)[0] == UNSET
+
+
+# --- A caller that is itself a named session (FLUX_ROLE_ID=reviewer) ---
+
+@pytest.fixture
+def observe_flags(request, stub_bin, monkeypatch):
+    """Parametrized by observe on/off; returns the extra CLI flags."""
+    if not request.param:
+        return []
+    monkeypatch.setattr("aforklib.shutil.which",
+                        lambda name: str(stub_bin / name))
+    return ["--observe"]
+
+
+@pytest.mark.parametrize("observe_flags", [False, True], indirect=True,
+                         ids=["unobserved", "observed"])
+@pytest.mark.parametrize("runtime", ["claude", "codex"])
+def test_unnamed_launch_clears_inherited_role(tmp_path, capsys, stub_bin,
+                                              runtime, observe_flags):
+    rc, out = _afork([runtime, "--cwd", str(tmp_path)] + observe_flags, capsys)
+    assert rc == 0
+    role_id, _ = _launched_env(out, tmp_path, stub_bin, inherited="reviewer")
+    assert role_id == UNSET
+
+
+def test_unnamed_launcher_shape_clears_inherited_role(tmp_path, stub_bin):
+    """An unnamed launch with a persona (direct build_launch caller) still
+    unsets the inherited name before exec."""
+    from aforklib.adapters import ClaudeAdapter
+    from aforklib.launch import build_launch
+    command, workdir, _, _ = build_launch(
+        ClaudeAdapter(), None, "none", None, None, "persona",
+        root=str(tmp_path / "w"))
+    assert "unset FLUX_ROLE_ID\n" in (Path(workdir) / "launch.sh").read_text()
+    out = {"command": command}
+    assert _launched_env(out, tmp_path, stub_bin, inherited="reviewer")[0] == UNSET
+
+
+@pytest.mark.parametrize("observe_flags", [False, True], indirect=True,
+                         ids=["unobserved", "observed"])
+@pytest.mark.parametrize("runtime", ["claude", "codex"])
+def test_port_launch_overrides_inherited_role(tmp_path, capsys, stub_bin,
+                                              runtime, observe_flags):
+    _port(tmp_path, runtime, "runtime-integration-engineer")
+    rc, out = _afork([runtime, "runtime-integration-engineer",
+                      "--cwd", str(tmp_path)] + observe_flags, capsys)
+    assert rc == 0
+    role_id, _ = _launched_env(out, tmp_path, stub_bin, inherited="reviewer")
+    assert role_id == "runtime-integration-engineer"
+
+
+@pytest.mark.parametrize("observe_flags", [False, True], indirect=True,
+                         ids=["unobserved", "observed"])
+@pytest.mark.parametrize("runtime", ["claude", "codex"])
+def test_role_option_overrides_inherited_role(tmp_path, capsys, stub_bin,
+                                              runtime, observe_flags):
+    rc, out = _afork([runtime, "--role", "griller", "--cwd", str(tmp_path)]
+                     + observe_flags, capsys)
+    assert rc == 0
+    role_id, _ = _launched_env(out, tmp_path, stub_bin, inherited="reviewer")
+    assert role_id == "griller"
 
 
 def test_role_option_with_agent_is_bad_arguments(tmp_path, capsys):

@@ -24,7 +24,8 @@ child environment — the port name for a definition-backed launch, or the
 ``--role`` name for a portless one. It goes in the environment, never the
 persona, because its reader is the session's start step, not the agent. Plain
 argv gets it through the same ``env`` prefix as AGENTLENS_TAGS; the launcher
-exports it.
+exports it. A launch afork does not name clears any inherited value
+(``env -u`` / ``unset``), so an unnamed session never runs as the caller's role.
 
 Observability (opt-in) wraps whichever shape applies with ``lens run --`` and
 carries attribution through ``AGENTLENS_TAGS`` in the child environment (env
@@ -104,6 +105,9 @@ def _launcher_lines(head, tail, tags, observe, marker, role_id=None):
     if role_id:
         # Exported so the runtime's session start step reads it.
         lines.append(f"export FLUX_ROLE_ID={shlex.quote(role_id)}")
+    else:
+        # Unnamed: never let the caller's role leak into this session.
+        lines.append("unset FLUX_ROLE_ID")
     if tags:
         # Exported so the tags reach `lens run` *and* anything the agent itself
         # spawns — inherited env is what keeps nested spawns attributed.
@@ -159,11 +163,14 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
             argv = ["lens", "run", "--"] + argv
         # `env VAR=… cmd` keeps the whole thing one flat argv — no shell
         # assignment syntax, so it survives shlex.join unchanged.
-        assigns = [f"AGENTLENS_TAGS={tags}"] if tags else []
+        # An unnamed launch clears any inherited FLUX_ROLE_ID (`-u` is accepted
+        # by both BSD and GNU env).
+        prefix = ["env"] if role_id else ["env", "-u", "FLUX_ROLE_ID"]
+        if tags:
+            prefix.append(f"AGENTLENS_TAGS={tags}")
         if role_id:
-            assigns.append(f"FLUX_ROLE_ID={role_id}")
-        if assigns:
-            argv = ["env"] + assigns + argv
+            prefix.append(f"FLUX_ROLE_ID={role_id}")
+        argv = prefix + argv
         return Launch(shlex.join(argv), str(workdir), contract_path, attempt_id)
 
     # Custom with persona: payload + generated launch.sh.
