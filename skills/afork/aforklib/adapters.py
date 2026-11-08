@@ -10,6 +10,8 @@ runtime's CLI flags. Each adapter knows:
   * which postures it can runtime-*enforce* (``enforceable`` — the fail-closed
     pivot), and the argv tokens for a posture / model / effort,
   * how to inject a persona (``persona_inject``),
+  * the argv tokens for per-session MCP servers (``mcp_flags``; an adapter
+    without it cannot take ``--mcp-server``),
   * which of its own error outputs are *trusted* signatures of a rejected model
     or a failed launch (``launch_signatures``).
 
@@ -30,6 +32,7 @@ tests/proof_codex_readonly.sh). claude and pi enforce only ``none``; their
 restricted modes are deferred and fail closed. antigravity has no adapter yet.
 """
 
+import json
 import re
 import tomllib
 
@@ -125,6 +128,16 @@ class CodexAdapter:
     def effort_flag(self, e):
         return ["-c", f'model_reasoning_effort="{e}"']
 
+    def mcp_flags(self, servers):
+        # One -c override pair per server; JSON strings and string arrays are
+        # valid TOML values, so json.dumps renders them exactly.
+        argv = []
+        for server in servers:
+            key = f"mcp_servers.{server['name']}"
+            argv += ["-c", f"{key}.command={json.dumps(server['command'])}",
+                     "-c", f"{key}.args={json.dumps(server['args'])}"]
+        return argv
+
 
 class ClaudeAdapter:
     runtime = "claude"
@@ -173,6 +186,13 @@ class ClaudeAdapter:
 
     def effort_flag(self, e):
         return ["--effort", e]
+
+    def mcp_flags(self, servers):
+        # --mcp-config takes a JSON string as well as a file; one string holds
+        # every server, so nothing is written for it.
+        config = {"mcpServers": {s["name"]: {"type": "stdio", "command": s["command"],
+                                             "args": s["args"]} for s in servers}}
+        return ["--mcp-config", json.dumps(config, separators=(",", ":"))]
 
 
 class PiAdapter:

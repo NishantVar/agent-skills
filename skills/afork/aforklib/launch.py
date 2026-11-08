@@ -128,7 +128,7 @@ def _launcher_lines(head, tail, tags, observe, marker, role_id=None, env=None):
 
 def build_launch(adapter, agent, posture, model, effort, persona, root=None,
                  observe=False, obs_tags=None, attempt_id=None, role_id=None,
-                 scoped_view=None):
+                 scoped_view=None, mcp_servers=None):
     """Return a ``Launch``. ``persona`` is the persona body (or empty for plain
     agents). ``root`` and ``attempt_id`` are injectable for tests. ``observe``
     wraps the runtime invocation in ``lens run --``; ``obs_tags`` is the
@@ -136,13 +136,17 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
     stamped as FLUX_ROLE_ID in the launched environment when set.
     ``scoped_view`` is a callable ``(workdir) -> (env, argv)`` (see
     ``native_view.build``): its env is set in the launched session like
-    FLUX_ROLE_ID and its argv is appended to the host flags."""
+    FLUX_ROLE_ID and its argv is appended to the host flags. ``mcp_servers``
+    is a list of ``{name, command, args}`` stdio servers given to this session
+    through the adapter's ``mcp_flags``."""
     argv = [adapter.bin]
     argv += adapter.permission_flags(posture)
     if model:
         argv += adapter.model_flag(model)
     if effort:
         argv += adapter.effort_flag(effort)
+    if mcp_servers:
+        argv += adapter.mcp_flags(mcp_servers)
 
     tags = _tag_string(obs_tags) if observe else ""
     persona = persona or ""

@@ -16,6 +16,7 @@ The skill is agnostic to runtime flag names; the adapter owns the mapping.
 Fail-closed applies ONLY when a *declared restriction* can't be runtime-enforced.
 """
 
+import json
 import os
 import re
 import shutil
@@ -42,6 +43,34 @@ _EFFORT_TOKENS = {"minimal", "low", "medium", "high", "xhigh", "max"}
 # leading dot. The session's start step refuses anything else, so --role
 # refuses it here first rather than launching an agent that loses its name.
 _ROLE_RE = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*")
+_MCP_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _parse_mcp_servers(specs):
+    """Each --mcp-server is a JSON object ``{"name", "command", "args"?}``
+    naming one stdio MCP server for this session only."""
+    servers = []
+    for spec in specs or []:
+        try:
+            value = json.loads(spec)
+        except ValueError:
+            raise err_bad_arguments(f"--mcp-server {spec!r} is not JSON")
+        if not isinstance(value, dict) or set(value) - {"name", "command", "args"}:
+            raise err_bad_arguments(
+                f"--mcp-server {spec!r} must be an object with name, command "
+                "and optional args")
+        name, command = value.get("name"), value.get("command")
+        args = value.get("args", [])
+        if not isinstance(name, str) or not _MCP_NAME_RE.fullmatch(name):
+            raise err_bad_arguments(f"--mcp-server name {name!r} must match [A-Za-z0-9_-]+")
+        if not isinstance(command, str) or not command:
+            raise err_bad_arguments(f"--mcp-server {name!r} needs a non-empty command")
+        if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+            raise err_bad_arguments(f"--mcp-server {name!r} args must be a list of strings")
+        if any(s["name"] == name for s in servers):
+            raise err_bad_arguments(f"--mcp-server {name!r} is given twice")
+        servers.append({"name": name, "command": command, "args": list(args)})
+    return servers
 
 
 def _split_model_spec(model, effort):
@@ -99,7 +128,7 @@ def _resolve_observability(observe, obs_tags):
 def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
               title=None, cwd=None, placement=None, allow_unenforced=False,
               observe=False, obs_tags=None, role=None, scoped_view=False,
-              startup_hooks=None):
+              startup_hooks=None, mcp_servers=None):
     """Resolve, enforce, and return one handoff dict. Raises AforkError on any
     fail-closed or resolution failure.
 
@@ -108,7 +137,10 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
 
     ``scoped_view`` hides personal/plugin skills and competing startup hooks
     from the launched session for this launch only, keeping ``startup_hooks``
-    (the SessionStart hook commands the caller needs) — see ``native_view``."""
+    (the SessionStart hook commands the caller needs) — see ``native_view``.
+
+    ``mcp_servers`` are JSON ``--mcp-server`` specs: stdio MCP servers this
+    session gets through launch flags, with no configuration written."""
     cwd = os.path.abspath(os.path.expanduser(cwd)) if cwd else os.getcwd()
 
     wrap, tags, obs_warning = _resolve_observability(observe, obs_tags)
@@ -136,6 +168,11 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
         reason = ("named in the design brief but has no adapter yet"
                   if runtime in _PLACEHOLDER_RUNTIMES else "unknown runtime")
         raise err_runtime_unsupported(runtime, reason)
+
+    servers = _parse_mcp_servers(mcp_servers)
+    if servers and not hasattr(adapter, "mcp_flags"):
+        raise err_bad_arguments(
+            f"--mcp-server is not supported for {runtime}; claude and codex take it")
 
     if scoped_view:
         native_view.check_supported(runtime)
@@ -191,7 +228,7 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     launch = build_launch(
         adapter, agent_name, posture, model, effort, persona,
         observe=wrap, obs_tags=tags, role_id=agent_name or role,
-        scoped_view=scope if scoped_view else None)
+        scoped_view=scope if scoped_view else None, mcp_servers=servers)
     return ready_to_fork(
         runtime=runtime,
         agent=agent_name,

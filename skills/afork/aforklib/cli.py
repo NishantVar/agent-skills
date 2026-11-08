@@ -5,7 +5,7 @@ object, and exit with a code that reflects the outcome.
              [--model M] [--effort E] [--title T] [--cwd DIR]
              [--placement {right,left,top,bottom}] [--allow-unenforced]
              [--observe] [--obs-tag k=v ...] [--role NAME]
-             [--scoped-view --startup-hook CMD ...]
+             [--scoped-view --startup-hook CMD ...] [--mcp-server JSON ...]
 """
 
 import argparse
@@ -72,6 +72,12 @@ def build_parser():
                    default=None, metavar="CMD",
                    help="SessionStart hook command a scoped session keeps, "
                         "repeatable, in run order. Requires --scoped-view.")
+    p.add_argument("--mcp-server", dest="mcp_servers", action="append",
+                   default=None, metavar="JSON",
+                   help='Stdio MCP server for this session only, repeatable: '
+                        '{"name": N, "command": C, "args": [..]}. claude gets '
+                        "--mcp-config, codex -c mcp_servers.N overrides; no "
+                        "configuration is written.")
     return p
 
 
@@ -100,6 +106,7 @@ def main(argv=None):
             role=args.role,
             scoped_view=args.scoped_view,
             startup_hooks=args.startup_hooks,
+            mcp_servers=args.mcp_servers,
         )
     except AforkError as exc:
         print(json.dumps(exc.handoff(), indent=2))
