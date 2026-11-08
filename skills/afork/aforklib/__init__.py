@@ -128,7 +128,7 @@ def _resolve_observability(observe, obs_tags):
 def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
               title=None, cwd=None, placement=None, allow_unenforced=False,
               observe=False, obs_tags=None, role=None, scoped_view=False,
-              startup_hooks=None, mcp_servers=None):
+              startup_hooks=None, mcp_servers=None, view_root=None):
     """Resolve, enforce, and return one handoff dict. Raises AforkError on any
     fail-closed or resolution failure.
 
@@ -138,6 +138,7 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     ``scoped_view`` hides personal/plugin skills and competing startup hooks
     from the launched session for this launch only, keeping ``startup_hooks``
     (the SessionStart hook commands the caller needs) — see ``native_view``.
+    ``view_root`` puts the scoped files outside afork's temp workdir.
 
     ``mcp_servers`` are JSON ``--mcp-server`` specs: stdio MCP servers this
     session gets through launch flags, with no configuration written."""
@@ -162,6 +163,10 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
         raise err_bad_arguments(
             "--scoped-view needs at least one --startup-hook: a scoped session "
             "runs only the startup hooks it is given")
+    if view_root is not None:
+        if not scoped_view:
+            raise err_bad_arguments("--view-root requires --scoped-view")
+        view_root = os.path.abspath(os.path.expanduser(view_root))
 
     adapter = get_adapter(runtime)
     if adapter is None:
@@ -222,7 +227,7 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
 
     def scope(workdir):
         env, argv, view["report"] = native_view.build(
-            runtime, workdir, startup_hooks, cwd)
+            runtime, workdir, startup_hooks, cwd, view_root)
         return env, argv
 
     launch = build_launch(

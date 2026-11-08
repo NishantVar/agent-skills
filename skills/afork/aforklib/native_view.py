@@ -20,6 +20,11 @@ launch flag or a file in afork's private workdir.
     copy with SessionStart replaced by the named startup hooks. Hook trust is
     carried to the copied hooks by copying the personal ``trusted_hash``.
 
+With ``view_root`` (``--view-root``) the scoped files go in
+``<view_root>/<workdir name>/`` instead of the workdir: Codex declines to make
+its PATH helper aliases under a CODEX_HOME inside the temp dir, and afork's
+workdir is a temp dir. afork never deletes either location.
+
 Any personal setup this cannot represent fails closed with
 ``scoped_view_unenforceable``; pi and antigravity have no scoped view and fail
 with ``scoped_view_unsupported``.
@@ -28,6 +33,7 @@ with ``scoped_view_unsupported``.
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 
 from .errors import err_scoped_view_unenforceable, err_scoped_view_unsupported
@@ -51,6 +57,16 @@ def _read_json(path, runtime):
     if not isinstance(data, dict):
         raise err_scoped_view_unenforceable(runtime, f"{path} is not a JSON object")
     return data
+
+
+def _under_temp(path):
+    """True when ``path`` is inside the temp dir, by spelling or resolved."""
+    temp = tempfile.gettempdir()
+    for p, t in ((os.path.abspath(path), os.path.abspath(temp)),
+                 (os.path.realpath(path), os.path.realpath(temp))):
+        if p == t or p.startswith(t.rstrip(os.sep) + os.sep):
+            return True
+    return False
 
 
 def _selected_groups(groups, commands):
@@ -110,10 +126,20 @@ def _claude(workdir, hooks, cwd):
         "plugins_disabled": sorted(plugins),
         "kept": _KEPT,
         "lost": ["custom slash commands (--disable-slash-commands hides "
-                 "commands as well as skills)"],
+                 "commands as well as skills)",
+                 "the user setting source: ~/.claude/CLAUDE.md, ~/.claude/rules, "
+                 "and user skills, commands and agents under ~/.claude are not "
+                 "read (--setting-sources project,local)",
+                 "plugin-supplied skills, commands, agents, hooks and MCP "
+                 "servers (every plugin disabled)"],
         "unverified": [],
         "notes": ["project and local settings are read unchanged, including any "
-                  "hooks they declare"],
+                  "hooks they declare",
+                  "user settings keys other than SessionStart and enabledPlugins "
+                  "(permissions, other hooks) are carried in the --settings copy",
+                  "user-scope MCP servers in ~/.claude.json and auto memory are "
+                  "still loaded",
+                  f"the settings copy is {path}, mode 0600; afork does not delete it"],
     }
     return {}, argv, report
 
@@ -265,14 +291,24 @@ def _codex(workdir, hooks, cwd):
         "plugins_disabled": sorted((check.get("plugins") or {})),
         "skills_disabled": skills,
         "kept": _KEPT,
-        "lost": ["the personal ~/.codex/skills root, including bundled system skills",
-                 "config changes the session writes (they go to the scoped copy)",
-                 "Codex PATH helper aliases (Codex declines to create them under "
-                 "a CODEX_HOME inside the temp dir and proceeds without them)"],
+        "lost": ["personal user skills under ~/.codex/skills (Codex re-creates "
+                 "its bundled system skills in the scoped home)",
+                 "plugin-supplied skills, MCP servers, apps and hooks (every "
+                 "plugin disabled)",
+                 "config changes the session writes, including a trust answer "
+                 "for a new project directory (they go to the scoped copy)"],
         "unverified": ["hook trust carried by copying trusted_hash to the scoped "
                        "hooks.json path"],
+        "notes": ["project trust levels in the personal config.toml are carried "
+                  "in the scoped copy",
+                  f"the scoped home is {home}; afork does not delete it"],
         "untrusted_hooks": untrusted,
     }
+    if _under_temp(home):
+        report["lost"].append(
+            "Codex PATH helper aliases such as apply_patch (Codex declines to "
+            "create them under a CODEX_HOME inside the temp dir; pass "
+            "--view-root outside it to keep them)")
     return {"CODEX_HOME": str(home)}, [], report
 
 
@@ -284,10 +320,22 @@ def check_supported(runtime):
         raise err_scoped_view_unsupported(runtime)
 
 
-def build(runtime, workdir, hooks, cwd):
+def build(runtime, workdir, hooks, cwd, view_root=None):
     """Return ``(env, argv, report)`` for a scoped launch of ``runtime``: env
     to set in the launched session, host argv to append, and the
-    ``native_view`` report for the handoff."""
+    ``native_view`` report for the handoff. ``view_root`` places the scoped
+    files in ``<view_root>/<workdir name>/`` instead of the workdir."""
     check_supported(runtime)
-    env, argv, report = _BUILDERS[runtime](workdir, list(hooks), cwd)
-    return env, argv, {"runtime": runtime, "startup_hooks": list(hooks), **report}
+    target = Path(workdir)
+    if view_root is not None:
+        root = Path(view_root)
+        try:
+            root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            target = root / target.name
+            target.mkdir(mode=0o700)
+        except OSError as exc:
+            raise err_scoped_view_unenforceable(
+                runtime, f"cannot create the scoped view under {root}: {exc}")
+    env, argv, report = _BUILDERS[runtime](target, list(hooks), cwd)
+    return env, argv, {"runtime": runtime, "startup_hooks": list(hooks),
+                       "view_dir": str(target), **report}

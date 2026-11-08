@@ -214,3 +214,71 @@ def test_unscoped_handoff_is_unchanged(home, capsys):
     rc, out = _afork(["claude", "--cwd", str(_repo(home))], capsys)
     assert rc == 0 and "native_view" not in out
     assert "--disable-slash-commands" not in out["command"]
+
+
+# --- --view-root, trust carry-over and the reported losses -------------------
+
+def _alias_lost(view):
+    return any("PATH helper aliases" in item for item in view["lost"])
+
+
+def test_codex_in_the_temp_workdir_reports_the_alias_loss(home, capsys):
+    rc, out = _scoped("codex", home, capsys)
+    assert rc == 0, out
+    view = out["native_view"]
+    assert _alias_lost(view) and view["view_dir"] == out["workdir"]
+    assert not any("system skills" in item and "including" in item for item in view["lost"])
+
+
+@pytest.mark.parametrize("runtime", ["claude", "codex"])
+def test_view_root_places_the_scoped_files_outside_the_workdir(home, capsys, runtime):
+    root = home.parent / "state/scoped-view"
+    before = _snapshot(home)
+    rc, out = _scoped(runtime, home, capsys, "--view-root", str(root))
+    assert rc == 0, out
+    target = root / Path(out["workdir"]).name
+    view = out["native_view"]
+    assert view["view_dir"] == str(target)
+    assert target.stat().st_mode & 0o777 == 0o700
+    env, argv = _argv(out["command"])
+    if runtime == "codex":
+        assert Path(env["CODEX_HOME"]) == target / "codex-home"
+        assert (target / "codex-home/config.toml").is_file()
+        assert not _alias_lost(view)
+        state = tomllib.loads((target / "codex-home/config.toml").read_text())["hooks"]["state"]
+        assert state[f"{target / 'codex-home/hooks.json'}:session_start:0:0"][
+            "trusted_hash"] == "sha256:flux"
+    else:
+        settings = Path(argv[argv.index("--settings") + 1])
+        assert settings.parent == target and settings.stat().st_mode & 0o777 == 0o600
+    assert not (Path(out["workdir"]) / "codex-home").exists()
+    assert not (Path(out["workdir"]) / "settings.json").exists()
+    assert _snapshot(home) == before
+
+
+def test_view_root_requires_scoped_view(home, capsys):
+    rc, out = _afork(["codex", "--cwd", str(_repo(home)), "--view-root",
+                      str(home.parent / "v")], capsys)
+    assert rc == EXIT_CODES["bad_arguments"] and out["code"] == "bad_arguments"
+
+
+def test_codex_project_trust_is_carried(home, capsys):
+    trusted = home.parent / "trusted-repo"
+    path = home / ".codex/config.toml"
+    path.write_text(f'[projects."{trusted}"]\ntrust_level = "trusted"\n\n' + path.read_text())
+    rc, out = _scoped("codex", home, capsys)
+    assert rc == 0, out
+    env, _ = _argv(out["command"])
+    config = tomllib.loads((Path(env["CODEX_HOME"]) / "config.toml").read_text())
+    assert config["projects"][str(trusted)]["trust_level"] == "trusted"
+    assert any("trust answer" in item for item in out["native_view"]["lost"])
+
+
+def test_claude_reports_the_user_source_and_plugin_losses(home, capsys):
+    rc, out = _scoped("claude", home, capsys)
+    assert rc == 0, out
+    view = out["native_view"]
+    lost = " ".join(view["lost"])
+    assert "CLAUDE.md" in lost and "MCP" in lost and "slash commands" in lost
+    assert any("~/.claude.json" in note for note in view["notes"])
+    assert any("0600" in note for note in view["notes"])

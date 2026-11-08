@@ -5,7 +5,7 @@ object, and exit with a code that reflects the outcome.
              [--model M] [--effort E] [--title T] [--cwd DIR]
              [--placement {right,left,top,bottom}] [--allow-unenforced]
              [--observe] [--obs-tag k=v ...] [--role NAME]
-             [--scoped-view --startup-hook CMD ...] [--mcp-server JSON ...]
+             [--scoped-view --startup-hook CMD ... [--view-root DIR]] [--mcp-server JSON ...]
 """
 
 import argparse
@@ -72,6 +72,11 @@ def build_parser():
                    default=None, metavar="CMD",
                    help="SessionStart hook command a scoped session keeps, "
                         "repeatable, in run order. Requires --scoped-view.")
+    p.add_argument("--view-root", default=None, metavar="DIR",
+                   help="Put the scoped view's files in DIR/<workdir name>/ "
+                        "instead of afork's temp workdir (Codex makes no PATH "
+                        "helper aliases under a temp CODEX_HOME). Requires "
+                        "--scoped-view.")
     p.add_argument("--mcp-server", dest="mcp_servers", action="append",
                    default=None, metavar="JSON",
                    help='Stdio MCP server for this session only, repeatable: '
@@ -106,6 +111,7 @@ def main(argv=None):
             role=args.role,
             scoped_view=args.scoped_view,
             startup_hooks=args.startup_hooks,
+            view_root=args.view_root,
             mcp_servers=args.mcp_servers,
         )
     except AforkError as exc:
