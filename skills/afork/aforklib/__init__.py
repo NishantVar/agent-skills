@@ -28,6 +28,7 @@ from .errors import (
     err_unenforceable,
     ready_to_fork,
 )
+from . import native_view
 from .launch import build_launch
 from .persona import compose_persona
 from .resolve import resolve_agent_definition
@@ -97,12 +98,17 @@ def _resolve_observability(observe, obs_tags):
 
 def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
               title=None, cwd=None, placement=None, allow_unenforced=False,
-              observe=False, obs_tags=None, role=None):
+              observe=False, obs_tags=None, role=None, scoped_view=False,
+              startup_hooks=None):
     """Resolve, enforce, and return one handoff dict. Raises AforkError on any
     fail-closed or resolution failure.
 
     ``role`` names the role for a launch with no port. A port launch is
-    already named by its port, so passing both is a bad_arguments error."""
+    already named by its port, so passing both is a bad_arguments error.
+
+    ``scoped_view`` hides personal/plugin skills and competing startup hooks
+    from the launched session for this launch only, keeping ``startup_hooks``
+    (the SessionStart hook commands the caller needs) — see ``native_view``."""
     cwd = os.path.abspath(os.path.expanduser(cwd)) if cwd else os.getcwd()
 
     wrap, tags, obs_warning = _resolve_observability(observe, obs_tags)
@@ -117,11 +123,22 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
                 f"--role {role!r} breaks the agent-name rule "
                 "[A-Za-z0-9._-]+, no leading dot")
 
+    startup_hooks = list(startup_hooks or [])
+    if startup_hooks and not scoped_view:
+        raise err_bad_arguments("--startup-hook requires --scoped-view")
+    if scoped_view and not startup_hooks:
+        raise err_bad_arguments(
+            "--scoped-view needs at least one --startup-hook: a scoped session "
+            "runs only the startup hooks it is given")
+
     adapter = get_adapter(runtime)
     if adapter is None:
         reason = ("named in the design brief but has no adapter yet"
                   if runtime in _PLACEHOLDER_RUNTIMES else "unknown runtime")
         raise err_runtime_unsupported(runtime, reason)
+
+    if scoped_view:
+        native_view.check_supported(runtime)
 
     # --- Mode: plain (no agent) vs custom (definition-backed). ---
     parsed = {}
@@ -164,9 +181,17 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
     else:
         persona = ""
 
+    view = {}
+
+    def scope(workdir):
+        env, argv, view["report"] = native_view.build(
+            runtime, workdir, startup_hooks, cwd)
+        return env, argv
+
     launch = build_launch(
         adapter, agent_name, posture, model, effort, persona,
-        observe=wrap, obs_tags=tags, role_id=agent_name or role)
+        observe=wrap, obs_tags=tags, role_id=agent_name or role,
+        scoped_view=scope if scoped_view else None)
     return ready_to_fork(
         runtime=runtime,
         agent=agent_name,
@@ -184,4 +209,5 @@ def run_afork(runtime, agent=None, permission=None, model=None, effort=None,
         attempt_id=launch.attempt_id,
         persona=bool(persona),
         deprecation_warning=deprecation_warning,
+        native_view=view.get("report"),
     )

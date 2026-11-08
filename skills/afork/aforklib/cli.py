@@ -5,6 +5,7 @@ object, and exit with a code that reflects the outcome.
              [--model M] [--effort E] [--title T] [--cwd DIR]
              [--placement {right,left,top,bottom}] [--allow-unenforced]
              [--observe] [--obs-tag k=v ...] [--role NAME]
+             [--scoped-view --startup-hook CMD ...]
 """
 
 import argparse
@@ -62,6 +63,15 @@ def build_parser():
                         "stamped as FLUX_ROLE_ID in the launched environment "
                         "(a port launch is stamped with its port name). Not "
                         "allowed with an agent.")
+    p.add_argument("--scoped-view", action="store_true",
+                   help="Hide personal and plugin skills and competing startup "
+                        "hooks from this session only (claude/codex), keeping "
+                        "tools, authentication, repo instructions and the "
+                        "--startup-hook commands. Changes no global setting.")
+    p.add_argument("--startup-hook", dest="startup_hooks", action="append",
+                   default=None, metavar="CMD",
+                   help="SessionStart hook command a scoped session keeps, "
+                        "repeatable, in run order. Requires --scoped-view.")
     return p
 
 
@@ -88,6 +98,8 @@ def main(argv=None):
             observe=args.observe,
             obs_tags=args.obs_tags,
             role=args.role,
+            scoped_view=args.scoped_view,
+            startup_hooks=args.startup_hooks,
         )
     except AforkError as exc:
         print(json.dumps(exc.handoff(), indent=2))

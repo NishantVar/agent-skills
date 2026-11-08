@@ -74,7 +74,7 @@ def _persona_tail(style, flag):
     raise ValueError(f"unknown persona_inject style {style!r}")
 
 
-def _launcher_lines(head, tail, tags, observe, marker, role_id=None):
+def _launcher_lines(head, tail, tags, observe, marker, role_id=None, env=None):
     """Render the generated launch.sh.
 
     The runtime is attempted EXACTLY ONCE, with ``exec``. On success the shell
@@ -112,6 +112,8 @@ def _launcher_lines(head, tail, tags, observe, marker, role_id=None):
         # Exported so the tags reach `lens run` *and* anything the agent itself
         # spawns — inherited env is what keeps nested spawns attributed.
         lines.append(f"export AGENTLENS_TAGS={shlex.quote(tags)}")
+    for key, value in (env or {}).items():
+        lines.append(f"export {key}={shlex.quote(value)}")
     lines += [
         f'exec {"lens run -- " if observe else ""}{head} \\',
         f'  {tail}',
@@ -125,12 +127,16 @@ def _launcher_lines(head, tail, tags, observe, marker, role_id=None):
 
 
 def build_launch(adapter, agent, posture, model, effort, persona, root=None,
-                 observe=False, obs_tags=None, attempt_id=None, role_id=None):
+                 observe=False, obs_tags=None, attempt_id=None, role_id=None,
+                 scoped_view=None):
     """Return a ``Launch``. ``persona`` is the persona body (or empty for plain
     agents). ``root`` and ``attempt_id`` are injectable for tests. ``observe``
     wraps the runtime invocation in ``lens run --``; ``obs_tags`` is the
     attribution dict carried to it through AGENTLENS_TAGS. ``role_id`` is
-    stamped as FLUX_ROLE_ID in the launched environment when set."""
+    stamped as FLUX_ROLE_ID in the launched environment when set.
+    ``scoped_view`` is a callable ``(workdir) -> (env, argv)`` (see
+    ``native_view.build``): its env is set in the launched session like
+    FLUX_ROLE_ID and its argv is appended to the host flags."""
     argv = [adapter.bin]
     argv += adapter.permission_flags(posture)
     if model:
@@ -157,6 +163,11 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
         has_launcher=bool(persona))
     contract_path = write_sidecar(workdir, sidecar)
 
+    view_env = {}
+    if scoped_view is not None:
+        view_env, view_argv = scoped_view(workdir)
+        argv += view_argv
+
     if not persona:
         # Plain / no persona: a flat, safe argv. No temp launcher.
         if observe:
@@ -170,6 +181,7 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
             prefix.append(f"AGENTLENS_TAGS={tags}")
         if role_id:
             prefix.append(f"FLUX_ROLE_ID={role_id}")
+        prefix += [f"{key}={value}" for key, value in view_env.items()]
         argv = prefix + argv
         return Launch(shlex.join(argv), str(workdir), contract_path, attempt_id)
 
@@ -188,7 +200,7 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
     launcher = workdir / "launch.sh"
     launcher.write_text("\n".join(_launcher_lines(
         head, tail, tags, observe, exec_marker(attempt_id),
-        role_id)) + "\n")
+        role_id, view_env)) + "\n")
     os.chmod(launcher, 0o700)
 
     # tfork pastes this string into an interactive shell, so it is shell syntax

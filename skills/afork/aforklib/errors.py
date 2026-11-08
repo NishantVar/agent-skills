@@ -24,6 +24,8 @@ EXIT_CODES = {
     "unenforceable": 5,
     "port_unparsable": 7,
     "custom_unsupported": 8,
+    "scoped_view_unsupported": 9,
+    "scoped_view_unenforceable": 10,
 }
 
 
@@ -82,6 +84,29 @@ def err_custom_unsupported(runtime, reason):
     )
 
 
+def err_scoped_view_unsupported(runtime):
+    """--scoped-view was requested for a runtime with no scoped-view controls."""
+    return AforkError(
+        "scoped_view_unsupported",
+        f"Runtime {runtime!r} has no scoped native view: afork cannot hide "
+        "personal or plugin skills and competing startup hooks for it.",
+        "Do not retry verbatim and do not launch without --scoped-view as a "
+        "substitute. Tell the user the scoped view is claude/codex only.",
+        extras={"runtime": runtime},
+    )
+
+
+def err_scoped_view_unenforceable(runtime, detail):
+    """The personal setup has something the scoped view cannot represent."""
+    return AforkError(
+        "scoped_view_unenforceable",
+        f"Refusing a scoped {runtime} launch: {detail}.",
+        "Do NOT fork. Report the refusal to the user; the personal host "
+        "configuration needs a change only the user can make.",
+        extras={"runtime": runtime},
+    )
+
+
 def err_port_not_found(runtime, agent, path):
     """``path`` is the location(s) searched: a single string (explicit-path
     mode) or a list of bare-name candidates (repo-local then home)."""
@@ -129,7 +154,8 @@ def err_unenforceable(runtime, agent, declared, reason):
 def ready_to_fork(runtime, agent, posture, command, title, cwd,
                   workdir, enforced=True, placement=None, observed=None,
                   obs_tags=None, obs_warning=None, launch_contract=None,
-                  attempt_id=None, persona=False, deprecation_warning=None):
+                  attempt_id=None, persona=False, deprecation_warning=None,
+                  native_view=None):
     """The success handoff: a fully-built launch command for the tfork skill.
 
     afork stops here by design — it does not invoke tfork. The calling agent
@@ -146,6 +172,9 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
     ``deprecation_warning`` is set only when a legacy ``-agent`` name had to be
     bridged to its suffixless port. ``agent`` is then already the canonical
     suffixless name — the warning tells the caller to start passing it.
+
+    ``native_view`` is the --scoped-view report (controls applied, startup
+    hooks kept, capabilities lost or unverified); it is omitted otherwise.
 
     ``observed`` is None when --observe was not requested at all, and the whole
     observability block is then omitted — a handoff without --observe is
@@ -210,6 +239,8 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
     }
     if deprecation_warning:
         out["deprecation_warning"] = deprecation_warning
+    if native_view is not None:
+        out["native_view"] = native_view
     if observed is not None:
         out["observed"] = observed
         out["obs_tags"] = obs_tags or None
