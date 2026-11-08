@@ -10,7 +10,8 @@ Imports the production module at `p2plib.surface` (the new package the
 refactor introduced). Run after any change to `my_surface()`,
 `_ancestor_ttys()`, or `_surface_from_tty_walk()` in p2plib/surface.py.
 
-Usage:  python3 ~/.claude/skills/p2p/tools/test_resolve.py
+Usage:  python3 <skill-dir>/tools/test_resolve.py
+        (<skill-dir>: the directory the p2p SKILL.md was loaded from)
 Exit:   0 on success, 1 on any failure.
 """
 
@@ -22,7 +23,7 @@ from pathlib import Path
 
 # p2plib lives one directory up from tools/. Add the skill root so
 # `import p2plib.surface` resolves whether this file is run in-tree
-# (this repo) or via the installed copy at ~/.claude/skills/p2p/.
+# (this repo) or from an installed copy of the skill directory.
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SKILL_ROOT))
 from p2plib import surface as surface_mod  # noqa: E402

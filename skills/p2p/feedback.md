@@ -23,7 +23,7 @@
 - requested_change: p2p should serve a cross-session relay request so that overlapping live role titles cannot cause a p2p title collision and gate traffic cannot be misaddressed.
 - reason: Misaddressed gate traffic cannot serve as gate evidence, and the p2p title collision caused an unverified cross-session relay request.
 - provenance: Issue 01 implementation sweep local I01-IC2; Issue 01 withdrawn verification relay record.
-- feedback_home: `~/.claude/skills/p2p/feedback.md`
+- feedback_home: `skills/p2p/feedback.md` in NishantVar/agent-skills
 
 - Target: p2p send delivery reliability
 - Requested change: make a failed or interrupted send (`not_in_cmux`, or cut
