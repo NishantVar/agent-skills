@@ -4,8 +4,10 @@ If you change `my_surface()`, `_ancestor_ttys()`, or `_surface_from_tty_walk()` 
 
 ## Run
 
+`<skill-dir>` is the absolute path of the directory the p2p `SKILL.md` was loaded from.
+
 ```bash
-python3 ~/.claude/skills/p2p/tools/test_resolve.py
+python3 <skill-dir>/tools/test_resolve.py
 ```
 
 Exit 0 with all PASS lines = good. Anything else = regression.
@@ -16,7 +18,7 @@ For a stronger anti-regression check, **focus a different cmux pane than the one
 
 Paste this into each agent (Claude Code, Codex, Gemini) and confirm exit 0:
 
-> Run `python3 ~/.claude/skills/p2p/tools/test_resolve.py` and report the output. Should exit 0 with all checks passing. If any check fails, paste the full output plus `ps -o pid,ppid,tty,command -p $$ -p $PPID` and `env | grep CMUX` so the resolution path can be debugged. For a stronger test, focus a different cmux pane than yours before running.
+> Run `python3 <skill-dir>/tools/test_resolve.py` and report the output. Should exit 0 with all checks passing. If any check fails, paste the full output plus `ps -o pid,ppid,tty,command -p $$ -p $PPID` and `env | grep CMUX` so the resolution path can be debugged. For a stronger test, focus a different cmux pane than yours before running.
 
 ## What it covers
 
