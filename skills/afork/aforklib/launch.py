@@ -4,17 +4,15 @@ argv = [bin] + permission_flags(posture) + model_flags + effort_flags.
 
 Two shapes:
 
-  * Plain / no persona -> command = shlex.join(argv), no temp launcher. The
-    whole command is a flat argv with nothing multiline, so it crosses the
-    agent->tfork shell boundary safely once shell-quoted.
+  * Plain / no persona -> forward the runtime argv with its environment and
+    observability prefixes.
 
   * Custom WITH persona (codex/claude) -> the persona is a large multiline body
     with embedded quotes / ``#``. Putting it on the command line would force the
     *calling agent* to quote it through its own shell when invoking tfork. So we
     write a controlled temp launcher: the raw persona goes to a 0600 payload, and
     a tiny executable launch.sh reads it back with ``$(cat …)`` inside its own
-    shell. The only thing crossing the boundary is the launcher path —
-    shlex-quoted so a temp path with spaces/metacharacters can't break out.
+    shell. The handoff argv contains just the literal launcher path.
 
 Permission enforcement stays on the *flags* (e.g. codex ``--sandbox``), never on
 prompt text.
@@ -44,14 +42,23 @@ import os
 import secrets
 import shlex
 import tempfile
-from collections import namedtuple
+from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import err_bad_arguments
 from .outcome import build_sidecar, exec_marker, write_sidecar
 
-# What build_launch hands back: the command tfork forks, afork's private
-# workdir, the sidecar path tfork reads, and the id tying them together.
-Launch = namedtuple("Launch", "command workdir launch_contract attempt_id")
+
+@dataclass(frozen=True)
+class Launch:
+    command_argv: list[str]
+    workdir: str
+    launch_contract: str
+    attempt_id: str
+
+    @property
+    def command(self):
+        return shlex.join(self.command_argv)
 
 
 def _tag_string(obs_tags):
@@ -140,6 +147,8 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
 
     tags = _tag_string(obs_tags) if observe else ""
     persona = persona or ""
+    if any("\0" in value for value in [*argv, tags, role_id or "", persona]):
+        raise err_bad_arguments("launch arguments must not contain NUL")
     attempt_id = attempt_id or secrets.token_hex(8)
 
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in (agent or "agent"))
@@ -171,7 +180,7 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
         if role_id:
             prefix.append(f"FLUX_ROLE_ID={role_id}")
         argv = prefix + argv
-        return Launch(shlex.join(argv), str(workdir), contract_path, attempt_id)
+        return Launch(argv, str(workdir), contract_path, attempt_id)
 
     # Custom with persona: payload + generated launch.sh.
     payload = workdir / "persona.txt"
@@ -191,9 +200,4 @@ def build_launch(adapter, agent, posture, model, effort, persona, root=None,
         role_id)) + "\n")
     os.chmod(launcher, 0o700)
 
-    # tfork pastes this string into an interactive shell, so it is shell syntax
-    # — not a safe argv array. The launcher is executable; returning just that
-    # one path avoids a `bash <launcher>` string becoming a literal filename if
-    # a caller passes the handoff command to tfork as one argv token.
-    return Launch(shlex.join([str(launcher)]), str(workdir), contract_path,
-                  attempt_id)
+    return Launch([str(launcher)], str(workdir), contract_path, attempt_id)

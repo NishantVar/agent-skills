@@ -42,16 +42,16 @@ def test_parse_extracts_fields():
 def test_build_launcher_enforces_via_flag_and_payloads_persona(tmp_path):
     a = CodexAdapter()
     persona = 'You are the Reviewer.\n## Boundaries\n"quoted" #hash\n'
-    command, workdir, _, _ = build_launch(
+    launch = build_launch(
         a, "reviewer", "read-only", None, "high", persona,
         root=str(tmp_path / "w"))
 
-    launcher = Path(workdir) / "launch.sh"
-    payload = Path(workdir) / "persona.txt"
+    launcher = Path(launch.workdir) / "launch.sh"
+    payload = Path(launch.workdir) / "persona.txt"
     script = launcher.read_text()
 
     # The command handed to tfork is a short, shell-quoted executable launcher.
-    assert command == shlex.join([str(launcher)])
+    assert launch.command == shlex.join([str(launcher)])
     # Posture is enforced via the FLAG, not prose.
     assert "--sandbox read-only" in script
     # Persona is injected at developer level, read from the payload file.
@@ -64,15 +64,15 @@ def test_build_launcher_enforces_via_flag_and_payloads_persona(tmp_path):
 
 def test_build_plain_no_launcher(tmp_path):
     a = CodexAdapter()
-    command, workdir, contract, _ = build_launch(
+    launch = build_launch(
         a, None, "none", None, "xhigh", "")
     # Plain mode: flat argv, no temp launcher. The workdir still exists — it
     # holds the launch-contract sidecar — but nothing is generated to run.
-    assert not (Path(workdir) / "launch.sh").exists()
-    assert Path(contract).exists()
-    assert command.startswith("env -u FLUX_ROLE_ID codex")
-    assert "--dangerously-bypass-approvals-and-sandbox" in command
-    assert 'model_reasoning_effort="xhigh"' in command
+    assert not (Path(launch.workdir) / "launch.sh").exists()
+    assert Path(launch.launch_contract).exists()
+    assert launch.command.startswith("env -u FLUX_ROLE_ID codex")
+    assert "--dangerously-bypass-approvals-and-sandbox" in launch.command
+    assert 'model_reasoning_effort="xhigh"' in launch.command
 
 
 def test_returned_command_is_shell_safe_with_hostile_temp_root(tmp_path):
@@ -82,7 +82,7 @@ def test_returned_command_is_shell_safe_with_hostile_temp_root(tmp_path):
 
     a = CodexAdapter()
     hostile = tmp_path / "afork ;touch${IFS}AFORK_PWNED;#"
-    command, _, _, _ = build_launch(
+    launch = build_launch(
         a, "probe", "read-only", None, None, "x", root=str(hostile))
 
     # Run the command with codex stubbed so nothing real launches; the only
@@ -93,7 +93,7 @@ def test_returned_command_is_shell_safe_with_hostile_temp_root(tmp_path):
     (stub_bin / "codex").write_text("#!/usr/bin/env bash\nexit 0\n")
     (stub_bin / "codex").chmod(0o755)
     env = {"PATH": f"{stub_bin}:/usr/bin:/bin"}
-    subprocess.run(command, shell=True, env=env, cwd=str(tmp_path),
+    subprocess.run(launch.command, shell=True, env=env, cwd=str(tmp_path),
                    capture_output=True)
     assert not marker.exists(), "shell injection via temp root path executed"
 
@@ -106,7 +106,7 @@ def test_launcher_command_survives_tfork_single_argument_invocation(tmp_path):
     import subprocess
 
     a = CodexAdapter()
-    command, _, _, _ = build_launch(
+    launch = build_launch(
         a, "probe", "read-only", None, None, "x", root=str(tmp_path / "w"))
 
     stub_bin = tmp_path / "bin"
@@ -115,7 +115,7 @@ def test_launcher_command_survives_tfork_single_argument_invocation(tmp_path):
     (stub_bin / "codex").chmod(0o755)
     env = {"PATH": f"{stub_bin}:/usr/bin:/bin"}
 
-    tfork_style_command = shlex.join([command])
+    tfork_style_command = shlex.join([launch.command])
     result = subprocess.run(tfork_style_command, shell=True, env=env,
                             cwd=str(tmp_path), capture_output=True)
     assert result.returncode == 0, result.stderr.decode()
@@ -142,7 +142,7 @@ def test_executed_launcher_neutralizes_hostile_persona_and_params(tmp_path):
     hostile_model = f'gpt";touch {marker};"'
     hostile_effort = f'high$(touch {marker})'
 
-    command, workdir, _, _ = build_launch(
+    launch = build_launch(
         a, "probe", "read-only", hostile_model, hostile_effort, hostile_persona,
         root=str(tmp_path / "w"))
 
@@ -157,7 +157,7 @@ def test_executed_launcher_neutralizes_hostile_persona_and_params(tmp_path):
     (stub_bin / "codex").chmod(0o755)
 
     env = {"PATH": f"{stub_bin}:/usr/bin:/bin"}
-    subprocess.run(command, shell=True, env=env, cwd=str(tmp_path),
+    subprocess.run(launch.command, shell=True, env=env, cwd=str(tmp_path),
                    capture_output=True)
 
     # 1. Nothing fired — not from persona, not from model/effort.
@@ -181,20 +181,20 @@ def test_persona_styles_render_per_adapter(tmp_path):
     from aforklib.adapters import ClaudeAdapter, PiAdapter
 
     persona = "ROLE BODY"
-    _, wd, _, _ = build_launch(CodexAdapter(), "a", "read-only", None, None, persona,
-                         root=str(tmp_path / "c"))
+    launch = build_launch(CodexAdapter(), "a", "read-only", None, None, persona,
+                          root=str(tmp_path / "c"))
     assert ('-c developer_instructions="$(cat "$DIR/persona.txt")"'
-            in (Path(wd) / "launch.sh").read_text())
+            in (Path(launch.workdir) / "launch.sh").read_text())
 
-    _, wd, _, _ = build_launch(ClaudeAdapter(), "a", "none", None, None, persona,
-                         root=str(tmp_path / "cl"))
+    launch = build_launch(ClaudeAdapter(), "a", "none", None, None, persona,
+                          root=str(tmp_path / "cl"))
     assert ('--append-system-prompt "$(cat "$DIR/persona.txt")"'
-            in (Path(wd) / "launch.sh").read_text())
+            in (Path(launch.workdir) / "launch.sh").read_text())
 
     # pi: the payload PATH is passed directly — no $(cat), so the old
     # flag.startswith("--") heuristic (which forced $(cat)) is gone.
-    _, wd, _, _ = build_launch(PiAdapter(), "a", "none", None, None, persona,
-                         root=str(tmp_path / "pi"))
-    script = (Path(wd) / "launch.sh").read_text()
+    launch = build_launch(PiAdapter(), "a", "none", None, None, persona,
+                          root=str(tmp_path / "pi"))
+    script = (Path(launch.workdir) / "launch.sh").read_text()
     assert '--append-system-prompt "$DIR/persona.txt"' in script
     assert "$(cat" not in script

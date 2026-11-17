@@ -163,11 +163,11 @@ def test_unnamed_launcher_shape_clears_inherited_role(tmp_path, stub_bin):
     unsets the inherited name before exec."""
     from aforklib.adapters import ClaudeAdapter
     from aforklib.launch import build_launch
-    command, workdir, _, _ = build_launch(
+    launch = build_launch(
         ClaudeAdapter(), None, "none", None, None, "persona",
         root=str(tmp_path / "w"))
-    assert "unset FLUX_ROLE_ID\n" in (Path(workdir) / "launch.sh").read_text()
-    out = {"command": command}
+    assert "unset FLUX_ROLE_ID\n" in (Path(launch.workdir) / "launch.sh").read_text()
+    out = {"command": launch.command}
     assert _launched_env(out, tmp_path, stub_bin, inherited="reviewer")[0] == UNSET
 
 
