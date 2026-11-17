@@ -41,6 +41,19 @@ def _never_delivered(exc):
             and outcome.get("evidence_code") in _NEVER_DELIVERED)
 
 
+def _creation_fields(terminal, workspace, window):
+    """Project only native creation/bind facts retained by this invocation."""
+    if not workspace or workspace.get('created') is not True:
+        return {}
+    reader = getattr(terminal, 'creation_identity', None)
+    facts = reader(workspace['ref']) if reader else {}
+    if facts.get('workspace_id'):
+        workspace['id'] = facts['workspace_id']
+    if window is not None and facts.get('window_id'):
+        window['id'] = facts['window_id']
+    return {'surface_id': facts['surface_id']} if facts.get('surface_id') else {}
+
+
 def _undo_creation(terminal, exc, workspace_info, window_info, claim, owner,
                    claim_identity):
     """Close the workspace this create-mode call made, then give back the
@@ -138,6 +151,7 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
             # A naming failure is raised after the workspace exists but
             # before any command is delivered; its extras carry our refs.
             if exc.code == "workspace_naming_failed":
+                exc.extras.update(_creation_fields(terminal, exc.extras.get('workspace'), exc.extras.get('window')))
                 _undo_creation(terminal, exc, exc.extras.get("workspace"),
                                exc.extras.get("window"), workspace_claim,
                                workspace_claim_id, claim_identity)
@@ -148,10 +162,12 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
     elif workspace is not None:
         workspace_info = terminal.resolve_workspace(workspace, cwd)
 
+    identity_fields = _creation_fields(terminal, workspace_info, window_info)
     try:
         session = terminal.fork(command_str, placement, cwd, nonce, anchor,
                                 workspace=workspace_info)
     except ForkError as exc:
+        exc.extras.update(_creation_fields(terminal, workspace_info, window_info))
         # Placement may have succeeded even when pane creation/delivery fails.
         # Retain that evidence without changing the launch_outcome classification.
         if workspace_info is not None:
@@ -163,6 +179,7 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
                            workspace_claim, workspace_claim_id, claim_identity)
         raise
 
+    identity_fields = _creation_fields(terminal, workspace_info, window_info)
     title_note = ""
     if title:
         rename_error, duplicate_refs = terminal.rename_tab(session, title)
@@ -235,6 +252,7 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
             "ref": workspace_info.get("ref"),
             "title": ws_title,
             "created": ws_created,
+            **({'id': workspace_info['id']} if ws_created and workspace_info.get('id') else {}),
         }
     else:
         ws_result = None
@@ -246,6 +264,7 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
         win_result = {
             "ref": window_info.get("ref"),
             "created": win_created,
+            **({'id': window_info['id']} if workspace_info and workspace_info.get('created') and window_info.get('id') else {}),
         }
     else:
         win_result = None
@@ -253,6 +272,7 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
     return {
         "ok": True,
         "session": session,
+        **identity_fields,
         "ran": word,
         "type": label,
         "verified": verified,

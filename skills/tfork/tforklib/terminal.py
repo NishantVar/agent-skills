@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import time
 from abc import ABC, abstractmethod
+from uuid import UUID
 
 from .errors import (
     ForkError,
@@ -49,6 +50,13 @@ SPLIT_DIRS = ("right", "left", "top", "bottom")
 NAME_VERIFY_POLL = 0.1
 _CMUX_DIRECTION = {"right": "right", "left": "left",
                    "top": "up", "bottom": "down"}
+
+
+def _native_uuid(value):
+    try:
+        return str(UUID(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def is_workspace_ref(value):
@@ -257,7 +265,7 @@ def _find_surface_node(data, surface_ref):
     while stack:
         node = stack.pop()
         if isinstance(node, dict):
-            if node.get("kind") == "surface" and node.get("ref") == surface_ref:
+            if node.get("kind") == "surface" and surface_ref in (node.get('ref'), node.get('id')):
                 return node
             stack.extend(node.values())
         elif isinstance(node, list):
@@ -316,6 +324,44 @@ class CmuxTerminal(Terminal):
         # ``not_found``. Caching at fork time keeps us from re-walking the
         # tree on every per-pane call.
         self._workspaces = {}
+        # Creation-event facts only. Never populate these from a later ref lookup.
+        self._creations = {}
+        self._surface_bindings = {}
+
+    def creation_identity(self, workspace_ref):
+        event = self._creations.get(workspace_ref, {})
+        return {key: event[key] for key in ('workspace_id', 'window_id', 'surface_id')
+                if event.get(key)}
+
+    def _remember_creation(self, payload):
+        ref = payload.get('workspace_ref')
+        if not ref:
+            return
+        event = dict(seed_surface_ref=payload.get('surface_ref'),
+                     seed_surface_id=_native_uuid(payload.get('surface_id')))
+        for key in ('workspace_id', 'window_id'):
+            value = _native_uuid(payload.get(key))
+            if value:
+                event[key] = value
+        self._creations[ref] = event
+
+    def _bind_created_surface(self, workspace, session):
+        if not workspace or workspace.get('created') is not True:
+            return
+        event = self._creations.get(workspace['ref'])
+        if event is None:
+            return
+        binding = self._surface_bindings.get(session, {})
+        # A response must bind the actual surface to our original container.
+        if (binding.get('workspace_id') == event.get('workspace_id')
+                and binding.get('window_id') == event.get('window_id')
+                and binding.get('surface_id')):
+            event['surface_id'] = binding['surface_id']
+        else:
+            event.pop('surface_id', None)
+
+    def _surface_target(self, session):
+        return self._surface_bindings.get(session, {}).get('surface_id') or session
 
     @classmethod
     def detect(cls):
@@ -327,6 +373,7 @@ class CmuxTerminal(Terminal):
              workspace=None):
         """Open the new surface and paste the sentinel-wrapped command into it."""
         session = self._open_surface(placement, anchor, workspace)
+        self._bind_created_surface(workspace, session)
         self._wait_ready(session)
         line = _build_wrapper(nonce, cwd, command)
         self._spawn(session, line)
@@ -406,6 +453,14 @@ class CmuxTerminal(Terminal):
                 # a single surface; reusing it avoids leaving an orphan
                 # blank pane next to the one tfork actually runs in.
                 if workspace.get("created"):
+                    event = self._creations.get(ws_ref, {})
+                    seeded = event.get('seed_surface_ref')
+                    if seeded:
+                        self._surface_bindings[seeded] = dict(
+                            surface_id=event.get('seed_surface_id'),
+                            workspace_id=event.get('workspace_id'), window_id=event.get('window_id'))
+                        self._workspaces[seeded] = event.get('workspace_id') or ws_ref
+                        return seeded
                     seeded = self._initial_workspace_surface(ws_ref)
                     if seeded:
                         self._workspaces[seeded] = ws_ref
@@ -442,7 +497,7 @@ class CmuxTerminal(Terminal):
         ``$CMUX_WORKSPACE_ID`` and would return ``not_found`` for a
         cross-workspace anchor otherwise."""
         cmux_dir = _CMUX_DIRECTION.get(direction, direction)
-        cmd = ["cmux", "--json", "new-split", cmux_dir,
+        cmd = ["cmux", "--json", "--id-format", "both", "new-split", cmux_dir,
                "--surface", origin_surface, "--focus", "false"]
         cmd += self._workspace_args(origin_surface)
         result = _run(cmd)
@@ -450,7 +505,11 @@ class CmuxTerminal(Terminal):
             raise err_split_failed(
                 result.stderr.strip() or "cmux new-split failed")
         try:
-            ref = json.loads(result.stdout).get("surface_ref")
+            payload = json.loads(result.stdout)
+            ref = payload.get("surface_ref")
+            if ref:
+                self._surface_bindings[ref] = {key: _native_uuid(payload.get(key))
+                    for key in ('surface_id', 'workspace_id', 'window_id')}
         except json.JSONDecodeError:
             ref = None
         if not ref:
@@ -535,15 +594,28 @@ class CmuxTerminal(Terminal):
         win_uuid = self._new_window()
         window = self._window_node(win_uuid)
         if window is None:
-            raise err_window_create_failed(
-                "the new window did not appear in the cmux tree")
+            error = err_window_create_failed("the new window did not appear in the cmux tree")
+            if _native_uuid(win_uuid):
+                error.extras['window'] = dict(ref=win_uuid, created=True, id=_native_uuid(win_uuid))
+            raise error
         win_ref = window.get("ref") or win_uuid
         workspaces = window.get("workspaces", []) or []
         if len(workspaces) != 1:
-            raise err_window_create_failed(
-                "the new window did not come up with a single workspace")
+            error = err_window_create_failed("the new window did not come up with a single workspace")
+            if _native_uuid(win_uuid):
+                error.extras['window'] = dict(ref=win_ref, created=True, id=_native_uuid(win_uuid))
+            raise error
         seeded = workspaces[0]
         ws_ref = seeded.get("ref")
+        # The seed is bound through the NEW WINDOW UUID, never a short ref.
+        if _native_uuid(win_uuid):
+            anchored = _native_uuid(window.get('id')) == _native_uuid(win_uuid)
+            panes = seeded.get('panes') or [] if anchored else []
+            surfaces = panes[0].get('surfaces', []) if len(panes) == 1 else []
+            surface = surfaces[0] if len(surfaces) == 1 else {}
+            self._remember_creation(dict(workspace_ref=ws_ref,
+                workspace_id=seeded.get('id') if anchored else None,
+                window_id=win_uuid, surface_ref=surface.get('ref'), surface_id=surface.get('id')))
         if workspace:
             self._rename_workspace(ws_ref, workspace, win_ref)
             title = workspace
@@ -708,8 +780,9 @@ class CmuxTerminal(Terminal):
         """Best-effort rename of ``ws_ref`` to ``title``. A rename miss is not
         fatal — the fork still lands in the right workspace, just under cmux's
         default name."""
-        _run(["cmux", "rename-workspace", "--workspace", ws_ref,
-              "--window", win_ref, title])
+        event = self._creations.get(ws_ref, {})
+        _run(["cmux", "rename-workspace", "--workspace", event.get('workspace_id') or ws_ref,
+              "--window", event.get('window_id') or win_ref, title])
 
     def _list_workspaces(self):
         """Yield ``(ref, title)`` for every live cmux workspace.
@@ -738,7 +811,7 @@ class CmuxTerminal(Terminal):
         my view bouncing around." A future ``--focus`` toggle can be
         added if needed.
         """
-        cmd = ["cmux", "new-workspace", "--cwd", cwd, "--focus", "false"]
+        cmd = ["cmux", "--json", "--id-format", "both", "workspace", "create", "--cwd", cwd, "--focus", "false"]
         if title:
             cmd += ["--name", title]
         if window:
@@ -748,11 +821,14 @@ class CmuxTerminal(Terminal):
             return None, result.stderr.strip() or "cmux new-workspace failed"
         ws_ref = None
         try:
-            ws_ref = (json.loads(result.stdout) or {}).get("workspace_ref")
+            payload = json.loads(result.stdout) or {}
+            ws_ref = payload.get("workspace_ref")
+            self._remember_creation(payload)
         except json.JSONDecodeError:
             for token in result.stdout.split():
                 if token.startswith("workspace:"):
                     ws_ref = token
+                    self._creations.pop(ws_ref, None)
                     break
         if not ws_ref:
             return None, "could not capture the new workspace ref"
@@ -786,8 +862,10 @@ class CmuxTerminal(Terminal):
         the path the spec names; ``--focus false`` keeps the cmux window
         from jumping.
         """
-        cmd = ["cmux", "--json", "new-pane",
-               "--workspace", ws_ref, "--focus", "false"]
+        event = self._creations.get(ws_ref, {})
+        target = event.get('workspace_id') or ws_ref
+        cmd = ["cmux", "--json", "--id-format", "both", "new-pane",
+               "--workspace", target, "--focus", "false"]
         if direction:
             cmux_dir = _CMUX_DIRECTION.get(direction, direction)
             cmd += ["--direction", cmux_dir]
@@ -800,6 +878,9 @@ class CmuxTerminal(Terminal):
         except json.JSONDecodeError:
             payload = {}
         ref = payload.get("surface_ref")
+        if ref:
+            self._surface_bindings[ref] = {key: _native_uuid(payload.get(key))
+                for key in ('surface_id', 'workspace_id', 'window_id')}
         if not ref:
             # Fall back to walking the tree: the newest pane in ws_ref
             # whose ref we don't already know is the new one.
@@ -822,7 +903,7 @@ class CmuxTerminal(Terminal):
                     break
         if not ref:
             raise err_split_failed("could not capture the new surface ref")
-        self._workspaces[ref] = ws_ref
+        self._workspaces[ref] = target
         return ref
 
     # -- readiness ----------------------------------------------------------
@@ -843,13 +924,13 @@ class CmuxTerminal(Terminal):
         deadline = time.monotonic() + self.READY_TIMEOUT
         ws_args = self._workspace_args(session)
         while time.monotonic() < deadline:
-            ready = _run(["cmux", "read-screen", "--surface", session,
+            ready = _run(["cmux", "read-screen", "--surface", self._surface_target(session),
                           "--lines", "1", *ws_args])
             if ready.returncode == 0:
                 return
             # Best-effort wake for an unfocused lazy split; harmless (an empty
             # prompt line) on a pane that was already coming up.
-            _run(["cmux", "send-key", "--surface", session, "enter", *ws_args])
+            _run(["cmux", "send-key", "--surface", self._surface_target(session), "enter", *ws_args])
             time.sleep(0.5)
 
     # -- spawn --------------------------------------------------------------
@@ -866,7 +947,7 @@ class CmuxTerminal(Terminal):
         buffer_name = f"tfork-{secrets.token_hex(12)}"
         set_buf = _run(["cmux", "set-buffer", "--name", buffer_name, "--", line])
         paste = _run(["cmux", "paste-buffer", "--name", buffer_name,
-                      "--surface", session, *ws_args])
+                      "--surface", self._surface_target(session), *ws_args])
         if set_buf.returncode != 0 or paste.returncode != 0:
             # Enter was never sent, so even a partially pasted line sat at the
             # prompt without executing: delivery is definitely absent.
@@ -875,7 +956,7 @@ class CmuxTerminal(Terminal):
             raise err_spawn_failed(detail or "cmux buffer paste failed",
                                    delivery=DELIVERY_ABSENT)
         time.sleep(0.3)
-        send = _run(["cmux", "send-key", "--surface", session, "enter",
+        send = _run(["cmux", "send-key", "--surface", self._surface_target(session), "enter",
                      *ws_args])
         if send.returncode != 0:
             # The line IS in the pane and only the Enter reported failure — it
@@ -892,14 +973,16 @@ class CmuxTerminal(Terminal):
         surface is gone. Reads cmux's own process accounting: the surface node
         carries ``foreground_pgids``; the process in its tree whose ``pgid``
         matches is the one in the foreground."""
-        result = _run(["cmux", "--json", "top", "--processes", "--all"])
+        target = self._surface_target(session)
+        identity_args = ['--id-format', 'both'] if target != session else []
+        result = _run(["cmux", "--json", *identity_args, "top", "--processes", "--all"])
         if result.returncode != 0:
             return None
         try:
             data = json.loads(result.stdout)
         except json.JSONDecodeError:
             return None
-        node = _find_surface_node(data, session)
+        node = _find_surface_node(data, target)
         if node is None:
             return None
         foreground = set(node.get("foreground_pgids") or [])
@@ -921,7 +1004,7 @@ class CmuxTerminal(Terminal):
         first line the wrapper ever prints) is always in range, regardless
         of how much output the command has produced since.
         """
-        result = _run(["cmux", "read-screen", "--surface", session,
+        result = _run(["cmux", "read-screen", "--surface", self._surface_target(session),
                        "--scrollback", *self._workspace_args(session)])
         return result.stdout if result.returncode == 0 else ""
 
@@ -929,7 +1012,7 @@ class CmuxTerminal(Terminal):
         """Close the pane. ``--workspace`` is passed when known for the same
         cross-workspace reason as ``_new_split`` — ``close-surface`` is
         workspace-scoped too."""
-        cmd = ["cmux", "close-surface", "--surface", session,
+        cmd = ["cmux", "close-surface", "--surface", self._surface_target(session),
                *self._workspace_args(session)]
         _run(cmd)
 
@@ -940,15 +1023,17 @@ class CmuxTerminal(Terminal):
         longer lists the ref (closing its last pane may already have removed
         it). Otherwise the cmux error is returned and the workspace is
         presumed left behind."""
-        cmd = ["cmux", "close-workspace", "--workspace", workspace_ref]
+        event = self._creations.get(workspace_ref, {})
+        target = event.get('workspace_id') or workspace_ref
+        cmd = ["cmux", "close-workspace", "--workspace", target]
         if window_ref:
-            cmd += ["--window", window_ref]
+            cmd += ["--window", event.get('window_id') or window_ref]
         result = _run(cmd)
         if result.returncode == 0:
             return None
         windows = _cmux_tree().get("windows")
         if windows is not None and not any(
-                ws.get("ref") == workspace_ref
+                (ws.get('id') == target if event.get('workspace_id') else ws.get('ref') == workspace_ref)
                 for window in windows for ws in window.get("workspaces", [])):
             return None
         return (result.stderr.strip() or result.stdout.strip()
@@ -965,7 +1050,7 @@ class CmuxTerminal(Terminal):
         ``peer_ambiguous`` on this title.
         """
         ws_args = self._workspace_args(session)
-        result = _run(["cmux", "rename-tab", "--surface", session,
+        result = _run(["cmux", "rename-tab", "--surface", self._surface_target(session),
                        *ws_args, title])
         if result.returncode != 0:
             return result.stderr.strip() or "cmux rename-tab failed", []
@@ -973,7 +1058,7 @@ class CmuxTerminal(Terminal):
         duplicates = []
         for window in _cmux_tree().get("windows", []):
             for ws in window.get("workspaces", []):
-                if ws_ref and ws.get("ref") != ws_ref:
+                if ws_ref and ws_ref not in (ws.get('ref'), ws.get('id')):
                     continue
                 for pane in ws.get("panes", []):
                     for surface in pane.get("surfaces", []):

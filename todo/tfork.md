@@ -1,8 +1,16 @@
 # tfork todo
 
-_Last meaningful refresh: 2026-10-22_
+_Last meaningful refresh: 2026-11-17_
 
 ## Done
+
+- **Creation-time UUID handoff** (2026-11-17, branch
+  `flux/repo-workspace-groups-creation-identity`; local, awaiting independent
+  review/landing). Adds native `workspace.id`, `window.id`, `surface_id` for
+  created workspace launches, retaining partial evidence on failures. Uses
+  structured creation responses and a new-window-UUID-anchored seed; never
+  promotes later short-ref lookup into creation evidence. `launch_outcome` v1
+  remains unchanged. Tests: `tests/test_creation_identity.py`.
 
 - **Create mode gives back a failed creation** (2026-10-22, branch
   `fix/tfork-release-failed-creation`). When a `--workspace-mode create`
