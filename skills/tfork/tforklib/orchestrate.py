@@ -15,6 +15,9 @@ import os
 import secrets
 import shlex
 
+from .presentation import apply_presentation
+from .group_ownership import group_claim
+
 from .classify import classify_observed
 from .creation_claim import consume_creation_claim, release_creation_claim
 from .errors import (
@@ -80,7 +83,9 @@ def _undo_creation(terminal, exc, workspace_info, window_info, claim, owner,
 def run_fork(command_words, placement=None, anchor=None, type_override=None,
              title=None, delay=None, workspace=None, cwd=None, window=None,
              terminal=None, nonce=None, registry_path=REGISTRY_PATH,
-             launch_contract=None, workspace_mode="reuse", workspace_claim=None, workspace_claim_id=None):
+             launch_contract=None, workspace_mode="reuse", workspace_claim=None, workspace_claim_id=None,
+             workspace_group=None, workspace_color=None, workspace_group_owner=None,
+             workspace_group_ownership_dir=None):
     """Fork, verify, label, persist, and return the result dict.
 
     Raises ``ForkError`` only for argument, terminal, surface-resolution,
@@ -113,6 +118,9 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
         raise err_bad_arguments("create mode requires a workspace title and window")
     if bool(workspace_claim) != bool(workspace_claim_id) or (workspace_claim and workspace_mode != "create"):
         raise err_bad_arguments("creation claim requires create mode and both claim path and owner id")
+    presentation_inputs = (workspace_group, workspace_color, workspace_group_owner, workspace_group_ownership_dir)
+    if any(value is not None for value in presentation_inputs) and not all(presentation_inputs):
+        raise err_bad_arguments("workspace presentation requires group, color, owner and ownership directory")
     if cwd is None:
         cwd = os.getcwd()
     else:
@@ -269,7 +277,22 @@ def run_fork(command_words, placement=None, anchor=None, type_override=None,
     else:
         win_result = None
 
+    warnings = []
+    if workspace_group and workspace_info and workspace_info.get('created') is True:
+        try:
+            # Only identities returned by creation/binding are mutation targets.
+            facts = terminal.creation_identity(workspace_info['ref'])
+            workspace_id, window_id = facts['workspace_id'], facts['window_id']
+            with group_claim(workspace_group_ownership_dir, window_id, workspace_group,
+                             workspace_group_owner) as claim:
+                presentation = apply_presentation(group_name=workspace_group, color=workspace_color,
+                    workspace_id=workspace_id, window_id=window_id, claim_group=claim)
+            warnings = presentation['warnings']
+        except Exception as exc:
+            warnings = [dict(step='presentation_identity_or_ownership', message=str(exc),
+                action='Inspect workspace presentation; correct future launch inputs. Do not relaunch the agent.')]
     return {
+        **({'warnings': warnings} if warnings else {}),
         "ok": True,
         "session": session,
         **identity_fields,

@@ -105,6 +105,9 @@ def parse_args(argv):
                         help="create always makes a fresh workspace with a free numeric suffix")
     parser.add_argument("--workspace-claim", default=None, help="optional one-shot creation reservation JSON path")
     parser.add_argument("--workspace-claim-id", default=None, help="reservation owner id")
+    for flag in ('--workspace-group', '--workspace-color', '--workspace-group-owner',
+                 '--workspace-group-ownership-dir'):
+        parser.add_argument(flag, default=None)
     parser.add_argument("--window", default=None,
                         help="open the fork in a window instead of the "
                              "caller's: 'new' creates a fresh window; a "
@@ -145,6 +148,9 @@ def main(argv=None):
                           workspace=args.workspace, cwd=args.cwd,
                           window=args.window, workspace_mode=args.workspace_mode,
                           workspace_claim=args.workspace_claim, workspace_claim_id=args.workspace_claim_id,
+                          workspace_group=args.workspace_group, workspace_color=args.workspace_color,
+                          workspace_group_owner=args.workspace_group_owner,
+                          workspace_group_ownership_dir=args.workspace_group_ownership_dir,
                           launch_contract=args.launch_contract)
     except ForkError as exc:
         print(json.dumps(exc.handoff()))

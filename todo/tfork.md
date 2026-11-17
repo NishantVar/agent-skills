@@ -1,8 +1,15 @@
 # tfork todo
 
-_Last meaningful refresh: 2026-11-17_
+_Last meaningful refresh: 2026-11-18_
 
 ## Done
+
+- **Dispatch-owned presentation recipe** (2026-11-18, `flux/single-record-launch`).
+  Resolver supplies group, color, canonical owner and ownership directory;
+  tfork applies only to its own newly created workspace using creation UUIDs.
+  Native and ownership failures return warnings without changing launch state.
+  Per-window ownership storage and directory locking preserve cross-repo isolation.
+  No result file or presentation retry. Paired Flux branch has resolver/daemon changes.
 
 - **Creation-time UUID handoff** (2026-11-17, branch
   `flux/repo-workspace-groups-creation-identity`; local, awaiting independent
