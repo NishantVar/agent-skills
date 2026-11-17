@@ -126,14 +126,14 @@ def err_unenforceable(runtime, agent, declared, reason):
     )
 
 
-def ready_to_fork(runtime, agent, posture, command, title, cwd,
+def ready_to_fork(runtime, agent, posture, command, command_argv, title, cwd,
                   workdir, enforced=True, placement=None, observed=None,
                   obs_tags=None, obs_warning=None, launch_contract=None,
                   attempt_id=None, persona=False, deprecation_warning=None):
     """The success handoff: a fully-built launch command for the tfork skill.
 
     afork stops here by design — it does not invoke tfork. The calling agent
-    takes ``command`` and forks it via the tfork skill with the carried
+    forwards each ``command_argv`` entry to the tfork skill with the carried
     --title / --cwd / --type agent / --launch-contract (and --placement when
     present).
 
@@ -148,8 +148,7 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
     suffixless name — the warning tells the caller to start passing it.
 
     ``observed`` is None when --observe was not requested at all, and the whole
-    observability block is then omitted — a handoff without --observe is
-    byte-for-byte what it always was, so existing consumers see no new fields.
+    observability block is then omitted.
     When requested, ``observed`` is True only if the command was really wrapped;
     the fail-open path (no `lens` on PATH) reports False plus ``obs_warning``.
     ``obs_tags`` echoes the attribution that was *requested*; ``observed`` is the
@@ -190,6 +189,7 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
         "posture": posture,
         "enforced": enforced,
         "command": command,
+        "command_argv": command_argv,
         "title": title,
         "cwd": cwd,
         "type": "agent",
@@ -201,8 +201,9 @@ def ready_to_fork(runtime, agent, posture, command, title, cwd,
             f"afork prepared {runtime} {who} with permission posture "
             f"{posture!r}. Hand the command to tfork to launch."),
         "agent_instruction": (
-            "Invoke the tfork skill to fork this command verbatim after the "
-            f"-- separator, passing {tfork_args}. Do not edit the command. "
+            f"Invoke the tfork skill with {tfork_args} before the -- separator. "
+            "After --, pass each command_argv entry verbatim as a separate "
+            "argument in order. "
             "--launch-contract is what lets tfork return a trustworthy "
             "launch_outcome; dropping it downgrades every ambiguous launch to "
             "state 'unknown'."),
